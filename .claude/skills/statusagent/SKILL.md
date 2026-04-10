@@ -1,5 +1,5 @@
 ---
-name: status
+name: statusagent
 description: 프로젝트의 agent 역할, 사용 LLM/API, 코드 라인 수를 한눈에 보여줍니다.
 argument-hint: [경로 (선택)]
 allowed-tools: Read Bash Glob Grep Agent

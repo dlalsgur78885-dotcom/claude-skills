@@ -1234,10 +1234,14 @@ export default function CreatePage() {
               }
               if (slideEntries.length === 0) return null;
 
+              // Body / subtext preview lets the user see step 1 context while
+              // picking images. Two lines max so a long body doesn't push the
+              // image grid off-screen — full text stays in step 1.
+              const bodyPreview = (slide.body || slide.subtext || "").trim();
               return (
                 <div key={slide.index} style={{ paddingBottom: 16, borderBottom: "1px solid var(--border)" }}>
                   {/* Slide header */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: bodyPreview ? 6 : 12 }}>
                     <span style={{
                       fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4,
                       background: slide.type === "cover" ? "var(--accent-muted)" : "var(--bg-overlay)",
@@ -1263,6 +1267,24 @@ export default function CreatePage() {
                       );
                     })()}
                   </div>
+                  {bodyPreview && (
+                    <p
+                      title={bodyPreview}
+                      style={{
+                        fontSize: 12,
+                        lineHeight: 1.5,
+                        color: "var(--text-secondary)",
+                        margin: "0 0 12px",
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {bodyPreview}
+                    </p>
+                  )}
 
                   {/* One picker per cell (or one for the whole slide) */}
                   {slideEntries.map(({ itemIndex, label }) => {
@@ -1287,8 +1309,16 @@ export default function CreatePage() {
                           transition: "border-color 0.2s, background 0.2s",
                         }}
                       >
-                        {cellKws.length > 0 && (
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                        {cellKws.length > 0 && (() => {
+                          // Show the cell's description right under the label so
+                          // the user can pick an image with full text context
+                          // (matches step 1's content card).
+                          const cellDesc = itemIndex != null
+                            ? ((slide.items?.[itemIndex]?.description || slide.items?.[itemIndex]?.subtitle) || "").trim()
+                            : "";
+                          return (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 6 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             <span style={{ fontSize: 12, fontWeight: 500, color: "var(--text-primary)" }}>{label}</span>
                             {missing && (
                               <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3, background: "rgba(232,91,91,0.18)", color: "#ff8a8a" }}>
@@ -1327,7 +1357,28 @@ export default function CreatePage() {
                               </div>
                             )}
                           </div>
-                        )}
+                          {cellDesc && (
+                            <p
+                              title={cellDesc}
+                              style={{
+                                fontSize: 11,
+                                lineHeight: 1.5,
+                                color: "var(--text-tertiary)",
+                                margin: 0,
+                                paddingLeft: 2,
+                                display: "-webkit-box",
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: "vertical",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              {cellDesc}
+                            </p>
+                          )}
+                          </div>
+                          );
+                        })()}
                         {/* When single-slide picker, render the original toolbar */}
                         {cellKws.length === 0 && selected && (
                           <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>

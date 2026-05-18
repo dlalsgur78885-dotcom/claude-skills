@@ -98,9 +98,11 @@ export default function CreatePage() {
 
   // Per-slide layout override (slide_index → layout name). Empty when the user
   // hasn't deviated from the auto-pick; populated from the dropdown in Step 1.
+  // Reset explicitly inside handleGenerate when a new set of slides comes in —
+  // NOT via a `[slides]` effect, because every text edit / paraphrase rebuilds
+  // the slides array and would silently wipe the user's layout choices, which
+  // is exactly the "레이아웃을 바꿔도 결과에 반영 안 됨" bug.
   const [layoutOverrides, setLayoutOverrides] = useState<Record<number, string>>({});
-  // Reset overrides whenever slides reload (new generation invalidates prior choices).
-  useEffect(() => { setLayoutOverrides({}); }, [slides]);
 
   // Template picker popover
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
@@ -157,6 +159,10 @@ export default function CreatePage() {
           post_urls: postUrls,
         }),
       }) as any;
+      // Fresh blueprint → previous per-slide layout choices no longer apply.
+      // Reset here (not in a [slides] effect) so subsequent in-place edits
+      // (text/paraphrase) preserve the user's layout picks.
+      setLayoutOverrides({});
       setSlides(res.slides || []);
       setCaption(res.caption || "");
       setHashtags(res.hashtags || []);

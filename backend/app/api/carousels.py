@@ -771,35 +771,23 @@ class ParaphraseRequest(BaseModel):
     tone: str = "marketing"  # "marketing" | "casual" | "punchy"
 
 
-@router.post("/paraphrase")
-async def paraphrase_endpoint(
-    body: ParaphraseRequest,
-    user: User = Depends(get_current_user),
-):
-    """Rewrite a batch of short Korean descriptions: same meaning, fresh wording.
+def default_paraphrase_body(n: int, tone: str = "marketing") -> str:
+    """Render the system-default body for the /paraphrase prompt.
 
-    Used by the Step 1 (콘텐츠 확인) UI when the user wants alternative phrasing
-    for one cell or all cells of a grid slide. One LLM call handles the whole
-    batch — much cheaper than per-cell round trips.
+    Public so the per-user settings endpoint can hand the same text to the UI
+    as the placeholder/starting point. The input + JSON output framing is
+    added by the caller, not here.
+
+    한국어 AI-티 제거 규칙은 epoko77-ai/im-not-ai 의 분류·처방집 기반.
+    길이는 원문(±10%) 그대로 유지 — 정보 누락 없이 표현만 바꾸기.
     """
-    import json as _json
-    from app.agents.llm_client import _call_api
-
-    texts = [t for t in (body.texts or []) if isinstance(t, str)]
-    if not texts:
-        return {"paraphrased": []}
-
-    numbered = "\n".join(f"{i+1}. {t}" for i, t in enumerate(texts))
     tone_hint = {
         "marketing": "인스타 캡션에 사람이 직접 쓴 듯한 평범한 한국어",
         "casual": "친구에게 말하듯 가볍고 편한 한국어",
         "punchy": "짧고 또박또박한 한국어",
-    }.get(body.tone, "인스타 캡션에 사람이 직접 쓴 듯한 평범한 한국어")
-
-    # 한국어 AI-티 제거 규칙은 epoko77-ai/im-not-ai 의 분류·처방집 기반.
-    # 길이는 원문(±10%) 그대로 유지 — 정보 누락 없이 표현만 바꾸기.
-    prompt = (
-        f"다음 {len(texts)}개의 한국어 설명(인스타 카드뉴스 셀에 들어갈 텍스트)을 다시 써주세요.\n\n"
+    }.get(tone, "인스타 캡션에 사람이 직접 쓴 듯한 평범한 한국어")
+    return (
+        f"다음 {n}개의 한국어 설명(인스타 카드뉴스 셀에 들어갈 텍스트)을 다시 써주세요.\n\n"
         f"# 핵심 원칙 (반드시 지킬 것)\n"
         f"**원본 내용의 요소는 모두 살리되, 같은 내용을 다른 표현 방식으로 나타낸다.**\n"
         f"- 의미·정보는 그대로, 표현 방식만 새롭게.\n"
@@ -853,7 +841,42 @@ async def paraphrase_endpoint(
         f"  나쁨: '제 인생 보물 같은 부다페스트 일몰 풍경!' ← 도시 뷰·여행지 맥락 누락\n\n"
         f"  원문: '1층은 식료품 2층은 잡화와 군것질거리가 있어요. 소세지·술·과일·향신료 등을 주로 팔고 구경하기 좋아요.' (54자)\n"
         f"  좋음: '1층에는 식료품이 있고 2층에는 잡화와 간식거리가 있어요. 소세지와 술, 과일, 향신료 등이 주를 이루고 둘러보기 좋아요.' (58자)\n"
-        f"  나쁨: '1층 식료품, 2층 잡화·간식' ← 부연 설명 통째 삭제\n\n"
+        f"  나쁨: '1층 식료품, 2층 잡화·간식' ← 부연 설명 통째 삭제"
+    )
+
+
+@router.post("/paraphrase")
+async def paraphrase_endpoint(
+    body: ParaphraseRequest,
+    user: User = Depends(get_current_user),
+):
+    """Rewrite a batch of short Korean descriptions: same meaning, fresh wording.
+
+    Used by the Step 1 (콘텐츠 확인) UI when the user wants alternative phrasing
+    for one cell or all cells of a grid slide. One LLM call handles the whole
+    batch — much cheaper than per-cell round trips.
+    """
+    import json as _json
+    from app.agents.llm_client import _call_api
+
+    texts = [t for t in (body.texts or []) if isinstance(t, str)]
+    if not texts:
+        return {"paraphrased": []}
+
+    numbered = "\n".join(f"{i+1}. {t}" for i, t in enumerate(texts))
+
+    # User-supplied body wins when present — accounts that want a different
+    # voice / set of rules can override without touching server code. The
+    # input + JSON output framing is still added by the system so the LLM
+    # response shape stays consistent regardless of what the user wrote.
+    user_body = (getattr(user, "paraphrase_prompt", None) or "").strip()
+    if user_body:
+        body_text = user_body
+    else:
+        body_text = default_paraphrase_body(len(texts), body.tone)
+
+    prompt = (
+        f"{body_text}\n\n"
         f"입력:\n{numbered}\n\n"
         f"출력: 위 {len(texts)}개에 대응하는 JSON 배열만. 예: [\"새 표현1\", \"새 표현2\", ...]"
     )

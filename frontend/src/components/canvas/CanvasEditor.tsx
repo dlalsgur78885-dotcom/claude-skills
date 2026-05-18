@@ -11,10 +11,67 @@ import { CanvasSizeSelector } from "@/components/CanvasSizeSelector";
 import type { SlideData, TemplateSummary } from "@/lib/types";
 
 const DISPLAY_MAX = 540;
+// Padding (canvas-space px) around the page on every side. Fabric draws into a
+// buffer of (page + 2·PAD), and a viewportTransform shifts every object by PAD
+// so object coordinates stay page-relative — only the pixel buffer changes.
+// Result: selection chrome (border + handles) on objects that extend past the
+// page is no longer clipped by the canvas edge. Set to 0 to disable.
+const PAGE_PAD = 120;
 
 function displayDims(w: number, h: number) {
-  const s = DISPLAY_MAX / Math.max(w, h);
-  return { w: Math.round(w * s), h: Math.round(h * s) };
+  // Display size of the full padded buffer (page + padding). This is what
+  // gets applied to the <canvas> CSS so the user can see the PAD area too.
+  const totalW = w + 2 * PAGE_PAD;
+  const totalH = h + 2 * PAGE_PAD;
+  const s = DISPLAY_MAX / Math.max(totalW, totalH);
+  return { w: Math.round(totalW * s), h: Math.round(totalH * s) };
+}
+
+// `data.kind` marker on the page-boundary rect so the auto-lock pass and
+// other heuristics can recognize it.
+const PAGE_BOUNDARY_KIND = "page_boundary";
+
+/** Add or refresh the page-boundary rect on a canvas. Called from the initial
+ *  setup AND after every load — canvas.clear() and loadFromJSON wipe all
+ *  objects, including ours, so we have to put it back. The rect is kept
+ *  inside the canvas at object-space (0,0,w,h); the viewportTransform handles
+ *  shifting it inside the padded pixel buffer. */
+function ensurePageBoundary(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  canvas: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  fabric: any,
+  w: number,
+  h: number,
+  fill: string,
+) {
+  // Reuse an existing boundary if one survived (some clear paths preserve
+  // refs but drop them from the canvas). Otherwise build a fresh one.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let pb = (canvas as any).__pageBoundary;
+  const existing = pb && canvas.getObjects().includes(pb);
+  if (!existing) {
+    pb = new fabric.Rect({
+      left: 0, top: 0,
+      width: w, height: h,
+      fill,
+      stroke: "rgba(0,0,0,0.12)",
+      strokeWidth: 1,
+      selectable: false, evented: false,
+      excludeFromExport: true,
+      hoverCursor: "default",
+      originX: "left", originY: "top",
+    });
+    pb.data = { kind: PAGE_BOUNDARY_KIND };
+    canvas.add(pb);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (canvas as any).__pageBoundary = pb;
+  } else {
+    pb.set({ width: w, height: h, fill });
+    pb.setCoords();
+  }
+  canvas.sendObjectToBack(pb);
+  return pb;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -347,13 +404,21 @@ export function CanvasEditor({
         Base.prototype.__haloPatched = true;
       }
 
-      // Internal canvas runs at full design-space resolution. CSS shrinks it
-      // (max side = DISPLAY_MAX) so object coords map 1:1 with stored data.
+      // Internal canvas runs at full design-space resolution PLUS a padding
+      // band on every side. Object coordinates stay page-relative (0..pageW,
+      // 0..pageH); a viewportTransform of (PAGE_PAD, PAGE_PAD) shifts the
+      // whole render so the page sits inside the padded buffer. Selection
+      // chrome on objects that spill past the page edge is therefore no
+      // longer clipped — it can extend into the PAD band.
       const { w: initW, h: initH } = canvasSizeRef.current;
       const canvas = new fabric.Canvas(canvasRef.current, {
-        width: initW,
-        height: initH,
-        backgroundColor: "#FFFFFF",
+        width: initW + 2 * PAGE_PAD,
+        height: initH + 2 * PAGE_PAD,
+        // Padding band is the workspace gutter — leave it as a quiet dark so
+        // the page itself reads as the canvas. Page fill comes from a
+        // dedicated rect below (so backgroundColor changes don't bleed past
+        // the page edge).
+        backgroundColor: "#1A1A1A",
         selection: true,
         enableRetinaScaling: false,
         // Marquee-selection box (drag on empty area) — match the object-border
@@ -362,6 +427,10 @@ export function CanvasEditor({
         selectionBorderColor: "#3CC8FF",
         selectionLineWidth: 2,
       });
+      // Shift the camera so (0,0) in object space lands at (PAD, PAD) in
+      // pixel space — i.e. the top-left of the page.
+      canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
+      ensurePageBoundary(canvas, fabric, initW, initH, "#FFFFFF");
       const d = displayDims(initW, initH);
       const lower = canvas.lowerCanvasEl;
       const upper = canvas.upperCanvasEl;
@@ -656,6 +725,13 @@ export function CanvasEditor({
 
     const json = canvas.toJSON();
     const { w, h } = canvasSizeRef.current;
+    // The user-visible slide background lives on the page-boundary rect now
+    // (canvas.backgroundColor paints the gutter). Pull its fill back into the
+    // top-level `background` field so save/load round-trips stay the same
+    // shape as before this refactor — old slides still load and look right.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pb = (canvas as any).__pageBoundary;
+    const pageFill = typeof pb?.fill === "string" ? pb.fill : (json as { background?: string }).background;
     // Read the destination index from the ref so a keyboard handler that
     // was registered at mount (stale closure) still writes the canvas back
     // to the CURRENTLY selected slide — otherwise Ctrl+D overwrites slide 0
@@ -665,6 +741,7 @@ export function CanvasEditor({
       const updated = [...prev];
       updated[idx] = {
         ...json,
+        background: pageFill,
         version: "6.0.0",
         width: w,
         height: h,
@@ -693,13 +770,24 @@ export function CanvasEditor({
 
     canvas.clear();
     const slideBg = slideData.background || "#FFFFFF";
-    setBgColor(typeof slideBg === "string" ? slideBg : "#FFFFFF");
+    const bgFill = typeof slideBg === "string" ? slideBg : "#FFFFFF";
+    setBgColor(bgFill);
 
     if (looksFabric) {
       // Fabric round-trip path
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (canvas as any).loadFromJSON(slideData).then(() => {
-        canvas.backgroundColor = slideBg;
+      (canvas as any).loadFromJSON(slideData).then(async () => {
+        // loadFromJSON sets canvas.backgroundColor from slideData.background.
+        // That would paint the gutter (PAD band) with the slide's bg color,
+        // which makes the page edge invisible. Reset the gutter to dark and
+        // route the slide bg to the page-boundary rect instead.
+        canvas.backgroundColor = "#1A1A1A";
+        // loadFromJSON also resets the viewport transform that was in the
+        // saved JSON. Re-apply our padding so selection chrome stays visible
+        // on out-of-page objects.
+        canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
+        const fabric = await getFabric();
+        ensurePageBoundary(canvas, fabric, canvasSizeRef.current.w, canvasSizeRef.current.h, bgFill);
         markBackdropObjects(canvas);
         canvas.renderAll();
         lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
@@ -707,7 +795,10 @@ export function CanvasEditor({
       return;
     }
 
-    canvas.backgroundColor = slideBg;
+    // Manual reconstruction path — clear() removed the page boundary too;
+    // put it back at the start so subsequent adds layer above the page.
+    canvas.backgroundColor = "#1A1A1A";  // gutter stays dark — page is drawn by the boundary rect
+    canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
 
     // Canvas runs at design-space resolution internally; CSS shrinks for display.
     // Saved coords are already in design space — no scaling for textbox/rect/circle.
@@ -720,6 +811,9 @@ export function CanvasEditor({
     // Add objects (sequentially so z-order matches the source array)
     (async () => {
       const fabric = await getFabric();
+      // Put the page boundary in first so every reconstructed object lands
+      // above it. (canvas.clear() above wiped the prior boundary.)
+      ensurePageBoundary(canvas, fabric, canvasSizeRef.current.w, canvasSizeRef.current.h, bgFill);
       for (const obj of slideData.objects || []) {
         if (obj.type === "textbox") {
           const textbox = new fabric.Textbox(obj.text || "", {
@@ -1135,6 +1229,8 @@ export function CanvasEditor({
       // them just like any other object.
       const k = o?.data?.kind;
       if (k === "user_image" || k === "user_item_image") continue;
+      // Page boundary is already evented:false; skip to keep the marker clean.
+      if (k === PAGE_BOUNDARY_KIND) continue;
       o.set({ selectable: false, evented: false, hoverCursor: "default" });
     }
   }
@@ -1170,7 +1266,17 @@ export function CanvasEditor({
     canvasSizeRef.current = { w, h };
     setCanvasW(w);
     setCanvasH(h);
-    canvas.setDimensions({ width: w, height: h });
+    // Resize the pixel buffer to include the same PAD band on every side, then
+    // re-apply the viewport translate (setDimensions resets the transform).
+    canvas.setDimensions({ width: w + 2 * PAGE_PAD, height: h + 2 * PAGE_PAD });
+    canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
+    // Resize the page-boundary rect to track the new page size.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pb = (canvas as any).__pageBoundary;
+    if (pb) {
+      pb.set({ width: w, height: h });
+      pb.setCoords();
+    }
     const d = displayDims(w, h);
     const lower = canvas.lowerCanvasEl;
     const upper = canvas.upperCanvasEl;
@@ -1797,7 +1903,12 @@ export function CanvasEditor({
     const canvas = fabricRef.current;
     if (!canvas) return;
     pushUndo();
-    canvas.backgroundColor = color;
+    // The page boundary rect is what the user reads as the slide background.
+    // canvas.backgroundColor still paints the PAD band — leaving that alone
+    // keeps the gutter visually distinct from the page.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pb = (canvas as any).__pageBoundary;
+    if (pb) { pb.set("fill", color); }
     canvas.renderAll();
     setBgColor(color);
     saveCurrentSlide();
@@ -1809,7 +1920,9 @@ export function CanvasEditor({
     if (!confirm(`모든 슬라이드 배경색을 ${color}로 변경하시겠습니까?`)) return;
     const canvas = fabricRef.current;
     if (canvas) {
-      canvas.backgroundColor = color;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pb = (canvas as any).__pageBoundary;
+      if (pb) { pb.set("fill", color); }
       canvas.renderAll();
       lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
     }

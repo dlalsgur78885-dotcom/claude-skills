@@ -1,0 +1,116 @@
+/** Shape mirrors backend's template_spec.py — kept loose for editor flexibility. */
+
+export interface Position {
+  x: number;
+  y: number;
+  anchor?: "top-left" | "center" | "top-center" | "bottom-center";
+}
+
+export interface Size {
+  width: number;
+  height: number;
+}
+
+/** Drop-shadow params — stored in template space, scaled at render time. */
+export interface ShadowSpec {
+  color: string;     // #rrggbb
+  opacity: number;   // 0-100
+  angle: number;     // 0-360
+  distance: number;  // 0-100 (template-pixel offset)
+  blur: number;      // 0-100 (template-pixel blur radius)
+}
+
+export interface TextStyle {
+  font_size?: number;
+  font_family?: string;
+  font_weight?: string;
+  fill?: string;
+  text_align?: "left" | "center" | "right";
+  line_height?: number;
+  shadow?: ShadowSpec | null;
+  stroke?: string | null;
+  stroke_width?: number;
+}
+
+export interface Background {
+  type: "color" | "image_keyword" | "image_path" | "gradient";
+  value?: string;
+  overlay_color?: string | null;
+  overlay_opacity?: number;
+}
+
+/** Linear-gradient fill (shape decorations only — image/text ignore). */
+export interface GradientFill {
+  type: "linear";
+  direction: "vertical" | "horizontal" | "diagonal";
+  stops: { offset: number; color: string }[];
+}
+
+export interface Decoration {
+  kind: "logo" | "shape" | "image";
+  position: Position;
+  size: Size;
+  src?: string | null;
+  fill?: string | GradientFill | null;
+  shadow?: ShadowSpec | null;
+  stroke?: string | null;
+  stroke_width?: number;
+}
+
+export interface TextSlot {
+  role: string;
+  position: Position;
+  size: Size;
+  style: TextStyle;
+}
+
+export interface ItemBox {
+  image_area: { x: number; y: number; width: number; height: number; border_radius?: number };
+  title_style: TextStyle;
+  title_offset_y: number;
+  subtitle_style?: TextStyle | null;
+  subtitle_offset_y?: number | null;
+  description_style?: TextStyle | null;
+  description_offset_y?: number | null;
+}
+
+export interface GridSpec {
+  rows: number;
+  cols: number;
+  cell_size: Size;
+  gap_x: number;
+  gap_y: number;
+  origin: Position;
+  item_box: ItemBox;
+}
+
+export interface LayoutSpec {
+  background: Background;
+  decorations: Decoration[];
+  text_slots: TextSlot[];
+  grid: GridSpec | null;
+}
+
+export interface BrandStyle {
+  primary_color?: string;
+  background_color?: string;
+  font_family?: string;
+  logo_path?: string | null;
+}
+
+export interface TemplateData {
+  id?: number;
+  slug?: string;
+  name: string;
+  canvas: { width: number; height: number };
+  brand: BrandStyle;
+  layouts: Record<string, LayoutSpec>;
+  source_post_url?: string | null;
+  created_by?: string;
+}
+
+/** What a Fabric object's `data` field carries so we can sync back. */
+export interface FabricMeta {
+  path: string;            // e.g. "layouts.grid_2x2.text_slots[0]"
+  kind: "decoration" | "text_slot" | "grid_origin" | "grid_image" | "background_overlay";
+}

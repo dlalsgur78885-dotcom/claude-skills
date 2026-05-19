@@ -260,7 +260,33 @@ export default function CreatePage() {
   }
 
   function selectImage(key: ImageKey, img: ImageResult | null) {
-    setSelectedImages((prev) => ({ ...prev, [key]: img }));
+    setSelectedImages((prev) => {
+      const next = { ...prev, [key]: img };
+      // Auto-advance to the next still-unfilled cell after a real pick. Only
+      // fires on selections (img != null) — clearing a pick stays put so the
+      // user can re-pick without losing their place. Wrapped in rAF so the
+      // scroll happens after React has had a chance to commit the new ✓
+      // state on the just-clicked cell.
+      if (img) {
+        requestAnimationFrame(() => {
+          const here = imageKeywords.findIndex(
+            (kw) => imageKey(kw.slide_index, kw.item_index) === key,
+          );
+          if (here < 0) return;
+          for (let i = here + 1; i < imageKeywords.length; i++) {
+            const kw = imageKeywords[i];
+            const k = imageKey(kw.slide_index, kw.item_index);
+            if (next[k]?.url) continue;             // already picked
+            const candidates = slideImages[k];
+            if (!candidates || candidates.length === 0) continue;  // no options
+            const el = document.querySelector(`[data-image-key="${k}"]`);
+            if (el) (el as HTMLElement).scrollIntoView({ behavior: "smooth", block: "center" });
+            break;
+          }
+        });
+      }
+      return next;
+    });
   }
 
   // Step 2 re-search: when the auto-search results miss the mark, the user

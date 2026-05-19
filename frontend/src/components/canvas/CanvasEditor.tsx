@@ -81,8 +81,13 @@ function ensurePageBoundary(
       left: 0, top: 0,
       width: w, height: h,
       fill,
-      stroke: "rgba(0,0,0,0.12)",
-      strokeWidth: 1,
+      // Strong outline so the page edge is obvious regardless of how the
+      // slide content fills it — otherwise slides whose content sits inside
+      // a sub-region of the page (e.g. cover slides) read as "smaller" than
+      // slides whose grid fills the page edge to edge.
+      stroke: "#3CC8FF",
+      strokeWidth: 4,
+      strokeUniform: true,
       selectable: false, evented: false,
       excludeFromExport: true,
       hoverCursor: "default",

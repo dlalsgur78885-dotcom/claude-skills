@@ -457,6 +457,73 @@ export function CanvasEditor({
       fitToViewport(canvas, initW, initH, canvasViewportRef.current);
       ensurePageBoundary(canvas, fabric, initW, initH, "#FFFFFF");
 
+      // Outline-only PAD: after fabric finishes drawing every object, paint
+      // the area outside the page rect with the app background and re-stroke
+      // each object's bounding box in the selection accent. Net effect — the
+      // page area shows objects normally, everything outside shows only
+      // wireframe outlines that mark where they are.
+      canvas.on("after:render", () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const ctx: CanvasRenderingContext2D | null = canvas.getContext?.();
+        if (!ctx) return;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pb = (canvas as any).__pageBoundary;
+        if (!pb) return;
+        // Page rect in pixel-buffer (post-viewport-transform) coords.
+        const vt = canvas.viewportTransform || [1, 0, 0, 1, 0, 0];
+        const scale = vt[0];
+        const pageX = vt[4];
+        const pageY = vt[5];
+        const pagePxW = (pb.width || 0) * scale;
+        const pagePxH = (pb.height || 0) * scale;
+        const cW = canvas.getWidth();
+        const cH = canvas.getHeight();
+
+        ctx.save();
+        // Reset any transform fabric left applied so our coords are raw pixels.
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        // Cover PAD bands with the gutter color so anything fabric just drew
+        // outside the page rect gets erased visually.
+        ctx.fillStyle = "#0F0F0F";
+        // Top
+        if (pageY > 0) ctx.fillRect(0, 0, cW, pageY);
+        // Bottom
+        if (pageY + pagePxH < cH) ctx.fillRect(0, pageY + pagePxH, cW, cH - (pageY + pagePxH));
+        // Left
+        if (pageX > 0) ctx.fillRect(0, pageY, pageX, pagePxH);
+        // Right
+        if (pageX + pagePxW < cW) ctx.fillRect(pageX + pagePxW, pageY, cW - (pageX + pagePxW), pagePxH);
+
+        // Clip subsequent draws to the PAD area only — outer canvas rect with
+        // the page rect punched out via the even-odd fill rule. This keeps
+        // the bounding-box stroke from showing up over objects inside the
+        // page (where we want fabric's normal rendering to win).
+        ctx.beginPath();
+        ctx.rect(0, 0, cW, cH);
+        ctx.rect(pageX, pageY, pagePxW, pagePxH);
+        ctx.clip("evenodd");
+
+        // Stroke the bounding box of every object that pokes outside the page.
+        ctx.strokeStyle = "#3CC8FF";
+        ctx.lineWidth = 1;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const obj of canvas.getObjects() as any[]) {
+          if (!obj || obj.visible === false) continue;
+          if (obj.data?.kind === "page_boundary") continue;
+          const r = obj.getBoundingRect();
+          // Skip if completely inside the page — nothing for the PAD clip to show.
+          const fullyInside =
+            r.left >= pageX &&
+            r.top >= pageY &&
+            r.left + r.width <= pageX + pagePxW &&
+            r.top + r.height <= pageY + pagePxH;
+          if (fullyInside) continue;
+          // Half-pixel offset gives a crisp 1px line.
+          ctx.strokeRect(r.left + 0.5, r.top + 0.5, r.width, r.height);
+        }
+        ctx.restore();
+      });
+
       fabricRef.current = canvas;
       // Expose the fabric canvas globally for E2E tests / debugging. Cheap,
       // harmless, and there's only ever one editor canvas on screen at a time.

@@ -98,7 +98,12 @@ function ensurePageBoundary(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (canvas as any).__pageBoundary = pb;
   } else {
-    pb.set({ width: w, height: h, fill });
+    pb.set({
+      width: w, height: h, fill,
+      stroke: "#3CC8FF",
+      strokeWidth: 4,
+      strokeUniform: true,
+    });
     pb.setCoords();
   }
   canvas.sendObjectToBack(pb);

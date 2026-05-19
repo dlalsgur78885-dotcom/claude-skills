@@ -185,7 +185,20 @@ def _make_image(
 ) -> dict:
     # `data` round-trips through Fabric as `obj.data` so the editor can recognize
     # user-picked photos and exempt them from the "lock backdrop objects" rule.
-    obj = {
+    #
+    # `_slotL/T/W/H` is the canonical design-space slot box. fabric's image load
+    # rewrites left/top/width based on the photo's natural pixel dims + cover-fit
+    # math; if the editor's auto-save round-trips those fitted values back into
+    # the DB they accumulate drift and cells end up off-canvas after a single
+    # mount. The editor uses these to detect "no user move/scale yet" and
+    # restore the slot box on save. Set here (not only on grid cells) so the
+    # invariant holds for every image the renderer emits.
+    merged_data = dict(data or {})
+    merged_data.setdefault("_slotL", int(left))
+    merged_data.setdefault("_slotT", int(top))
+    merged_data.setdefault("_slotW", int(width))
+    merged_data.setdefault("_slotH", int(height))
+    return {
         "type": "image",
         "src": src,
         "left": int(left),
@@ -193,10 +206,8 @@ def _make_image(
         "width": int(width),
         "height": int(height),
         "opacity": float(opacity),
+        "data": merged_data,
     }
-    if data:
-        obj["data"] = data
-    return obj
 
 
 async def render_slide_to_canvas(

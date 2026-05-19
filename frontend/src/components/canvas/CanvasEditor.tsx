@@ -997,20 +997,31 @@ export function CanvasEditor({
             // so the auto-lock pass below and downstream UI can recognize photos
             // the user picked in step 2 and let them be edited.
             //
-            // Stash the slot's design coords (targetL/T/W/H) + the auto-fit
-            // result. handleSave compares them to detect user drag/scale and,
-            // when unchanged, persists the canonical slot coords instead of the
+            // Stash the slot's design coords + the auto-fit result.
+            // handleSave compares them to detect user drag/scale and, when
+            // unchanged, persists the canonical slot coords instead of the
             // cover-fit offset — without this, fabric's natural-size scaling
             // gets baked into the DB and grid cells drift off-canvas after a
             // mount cycle (cover-fit applied a second time on top of the
             // already-fitted left/width). See editor/[id]/page.tsx handleSave.
+            //
+            // Prefer the backend-supplied _slotL/T/W/H when present — those are
+            // the canonical design-space coords from the renderer. obj.left/top
+            // can already be the fitted (drifted) values if this carousel was
+            // saved by a pre-fix editor session, so we'd stash the drift.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const backendData: any = obj.data || {};
+            const slotL = typeof backendData._slotL === "number" ? backendData._slotL : targetL;
+            const slotT = typeof backendData._slotT === "number" ? backendData._slotT : targetT;
+            const slotW = typeof backendData._slotW === "number" ? backendData._slotW : targetW;
+            const slotH = typeof backendData._slotH === "number" ? backendData._slotH : targetH;
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (img as any).data = {
-              ...(obj.data || {}),
-              _slotL: targetL,
-              _slotT: targetT,
-              _slotW: targetW,
-              _slotH: targetH,
+              ...backendData,
+              _slotL: slotL,
+              _slotT: slotT,
+              _slotW: slotW,
+              _slotH: slotH,
               _autoLeft: offsetL,
               _autoTop: offsetT,
               _autoScale: coverScale,

@@ -450,12 +450,12 @@ export function CanvasEditor({
       const canvas = new fabric.Canvas(canvasRef.current, {
         width: initW + 2 * PAGE_PAD,
         height: initH + 2 * PAGE_PAD,
-        // Padding band is the workspace gutter — paint it with the app's
-        // base bg color (--bg-app: #0F0F0F) so it blends into the
-        // surrounding chrome and the user can't tell where the canvas ends.
-        // Page fill comes from a dedicated rect below (so backgroundColor
-        // changes don't bleed past the page edge).
-        backgroundColor: "#0F0F0F",
+        // The editor surface is three concentric zones:
+        //   1. page (1080×1350) — drawn by the pageBoundary rect, white by default
+        //   2. PAD workspace — this backgroundColor, distinct mid-dark so the user
+        //      sees where they can extend objects past the page edge
+        //   3. app viewport (around the canvas) — --bg-app on the parent div
+        backgroundColor: "#1E1E1E",
         selection: true,
         enableRetinaScaling: false,
         // Marquee-selection box (drag on empty area) — match the object-border
@@ -848,7 +848,7 @@ export function CanvasEditor({
         const { w: pageW, h: pageH } = canvasSizeRef.current;
         canvas.setDimensions({ width: pageW + 2 * PAGE_PAD, height: pageH + 2 * PAGE_PAD });
         applyDisplayCss(canvas, pageW, pageH);
-        canvas.backgroundColor = "#0F0F0F";  // gutter blends with app bg
+        canvas.backgroundColor = "#1E1E1E";  // workspace gutter — distinct from app bg
         canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
         // Defensive: even if a future fabric version re-applies clipPath after
         // resolve, null it again so the editor view stays unclipped.
@@ -874,7 +874,7 @@ export function CanvasEditor({
       canvas.setDimensions({ width: pageW + 2 * PAGE_PAD, height: pageH + 2 * PAGE_PAD });
       applyDisplayCss(canvas, pageW, pageH);
     }
-    canvas.backgroundColor = "#0F0F0F";  // gutter blends with app bg — page is drawn by the boundary rect
+    canvas.backgroundColor = "#1E1E1E";  // workspace gutter — distinct from app bg — page is drawn by the boundary rect
     canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
 
     // Canvas runs at design-space resolution internally; CSS shrinks for display.

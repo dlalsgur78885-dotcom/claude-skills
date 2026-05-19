@@ -13,9 +13,16 @@ Output:
 """
 
 import logging
+import re
 from typing import Any
 
 from app.services.image_search import search_all
+
+# text_slots in user-built templates encode per-cell role + position via the
+# pattern `cell_{title|subtitle|description}_r{row}c{col}`. The visual editor
+# emits these instead of a `grid` block whenever the layout is hand-drawn
+# (e.g. zig-zag) and a regular rows×cols grid can't describe it.
+_CELL_ROLE_RE = re.compile(r"^cell_(title|subtitle|description)_r(\d+)c(\d+)$")
 
 logger = logging.getLogger(__name__)
 
@@ -360,6 +367,11 @@ async def render_slide_to_canvas(
     default_font = brand.get("font_family") or "Pretendard"
     for slot in (layout.get("text_slots") or []):
         role = slot.get("role", "headline")
+        # Per-cell roles (cell_title_r0c1 etc.) are rendered by the freeform
+        # cell pass below — skip here so we don't try to read a slide-level
+        # field for them.
+        if _CELL_ROLE_RE.match(role):
+            continue
         text = _text_for_slot(role, slide)
         if not text:
             continue
@@ -483,6 +495,71 @@ async def render_slide_to_canvas(
                     default_font=default_font,
                     over_image=has_photo_bg,
                 ))
+
+    # 5b. Freeform cells (hand-drawn layouts without a regular grid block).
+    # Used by templates the visual editor builds when the desired cell layout
+    # isn't a uniform rows×cols grid (e.g. zig-zag: cell 0 image top-left +
+    # text top-right, cell 1 image bottom-right + text bottom-left). Pairs
+    # items[i] with the i-th (row, col) entry in text_slots cell roles, and
+    # uses the i-th `kind: image` decoration as that cell's image area.
+    if not grid and items:
+        cell_slots: dict[tuple[int, int], dict] = {}
+        for slot in (layout.get("text_slots") or []):
+            m = _CELL_ROLE_RE.match(slot.get("role") or "")
+            if not m:
+                continue
+            kind = m.group(1)
+            r = int(m.group(2))
+            c = int(m.group(3))
+            cell_slots.setdefault((r, c), {})[kind] = slot
+        if cell_slots:
+            sorted_cells = [cell_slots[k] for k in sorted(cell_slots.keys())]
+            # `kind: image` decorations in array order — one per cell, in the
+            # same order the editor placed them. src is usually empty (the
+            # decoration just reserves the box); the user-picked photo from
+            # step 2 replaces it via item.image_url, just like a grid cell.
+            image_decos = [d for d in (layout.get("decorations") or []) if d.get("kind") == "image"]
+            for idx, item in enumerate(items[: len(sorted_cells)]):
+                cell = sorted_cells[idx]
+                img_src = item.get("image_path") or item.get("image_url")
+                if idx < len(image_decos):
+                    dpos = image_decos[idx].get("position") or {}
+                    dsize = image_decos[idx].get("size") or {}
+                    ia_x = int(dpos.get("x", 0))
+                    ia_y = int(dpos.get("y", 0))
+                    ia_w = int(dsize.get("width", 300))
+                    ia_h = int(dsize.get("height", 300))
+                    if img_src:
+                        objects.append(_make_image(
+                            img_src, left=ia_x, top=ia_y, width=ia_w, height=ia_h,
+                            data={"kind": "user_item_image", "slide_index": slide.get("index", -1), "item_index": idx},
+                        ))
+                    else:
+                        objects.append(_make_rect(ia_x, ia_y, ia_w, ia_h, "rgba(120,120,120,0.45)"))
+                # Title / subtitle / description — each cell's slot position is
+                # already absolute (no offset math needed).
+                for cell_kind, item_field, fallback in (
+                    ("title", "title", None),
+                    ("subtitle", "subtitle", "description"),
+                    ("description", "description", "subtitle"),
+                ):
+                    slot = cell.get(cell_kind)
+                    if not slot:
+                        continue
+                    txt = (item.get(item_field) or "").strip()
+                    if not txt and fallback:
+                        txt = (item.get(fallback) or "").strip()
+                    if not txt:
+                        continue
+                    objects.append(_make_textbox(
+                        txt,
+                        pos=slot.get("position") or {},
+                        size=slot.get("size") or {},
+                        style=slot.get("style") or {},
+                        canvas_w=canvas_w,
+                        default_font=default_font,
+                        over_image=has_photo_bg,
+                    ))
 
     return {
         "version": "6.0.0",

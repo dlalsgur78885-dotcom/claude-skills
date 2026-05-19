@@ -21,10 +21,13 @@ export function resolveImageUrl(url: string): string {
 export function proxiedImageUrl(url: string): string {
   if (!url) return "";
   if (!url.startsWith("http")) return url;
-  // already pointing at our own backend? leave alone.
-  // (API_ORIGIN is empty when NEXT_PUBLIC_API_URL is a relative "/api" — in
-  // that case EVERY string startsWith("") is true, so we must skip the check.)
+  // Already pointing at our own backend? Leave alone. Two checks because in
+  // production NEXT_PUBLIC_API_URL is relative "/api", making API_ORIGIN
+  // empty — the startsWith guard never fires. Match the proxy path instead,
+  // so a previously-wrapped URL (which fabric.toJSON emits as an absolute
+  // URL on subsequent mounts) doesn't get double-wrapped and 404 the image.
   if (API_ORIGIN && url.startsWith(API_ORIGIN)) return url;
+  if (url.includes("/api/images/proxy?")) return url;
   return `${API_BASE}/images/proxy?url=${encodeURIComponent(url)}`;
 }
 
@@ -182,7 +185,7 @@ class ApiClient {
     channelId?: number,
     limit = 20,
     offset = 0,
-    filters?: { minLikes?: number; maxLikes?: number; minComments?: number; maxComments?: number; dateFrom?: string; dateTo?: string; q?: string },
+    filters?: { minLikes?: number; maxLikes?: number; minComments?: number; maxComments?: number; minSlides?: number; maxSlides?: number; dateFrom?: string; dateTo?: string; q?: string },
   ) {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (channelId) params.set("channel_id", String(channelId));
@@ -190,6 +193,8 @@ class ApiClient {
     if (filters?.maxLikes != null) params.set("max_likes", String(filters.maxLikes));
     if (filters?.minComments != null) params.set("min_comments", String(filters.minComments));
     if (filters?.maxComments != null) params.set("max_comments", String(filters.maxComments));
+    if (filters?.minSlides != null) params.set("min_slides", String(filters.minSlides));
+    if (filters?.maxSlides != null) params.set("max_slides", String(filters.maxSlides));
     if (filters?.dateFrom) params.set("date_from", filters.dateFrom);
     if (filters?.dateTo) params.set("date_to", filters.dateTo);
     if (filters?.q) params.set("q", filters.q);
@@ -546,6 +551,20 @@ class ApiClient {
     return this.fetch<import("./types").TemplateSummary>(`/templates/${id}/clone`, {
       method: "POST",
     });
+  }
+
+  async copyLayoutToTemplate(
+    dstTemplateId: number,
+    srcTemplateId: number,
+    srcLayoutName: string,
+  ) {
+    return this.fetch<{ layout_name: string; template: unknown }>(
+      `/templates/${dstTemplateId}/layouts/copy-from`,
+      {
+        method: "POST",
+        body: JSON.stringify({ src_template_id: srcTemplateId, src_layout_name: srcLayoutName }),
+      },
+    );
   }
 
   async deleteTemplate(id: number) {

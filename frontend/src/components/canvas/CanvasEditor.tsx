@@ -1059,9 +1059,12 @@ export function CanvasEditor({
               canvas.sendObjectToBack(img);
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               (img as any).set({ selectable: false, evented: false, hoverCursor: "default" });
-            } else if (isUserPhoto) {
-              // Push the photo to the back so text/decorations layer over it,
-              // but keep it interactive so the user can grab it.
+            } else if (imgData?.kind === "user_image") {
+              // Single-photo slides: push the full-bleed user photo to the back
+              // so text/decorations layer over it, but keep it interactive.
+              // Grid cells (kind === "user_item_image") must NOT go to the back —
+              // the layout's full-canvas background image would sit on top of
+              // them and the user's cell pick disappears off-screen visually.
               canvas.sendObjectToBack(img);
             }
             canvas.requestRenderAll();

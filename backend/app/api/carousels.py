@@ -361,6 +361,20 @@ async def generate_content(
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"URL 수집 실패 ({url}): {e}")
 
+    # When the user kicks off generation from /posts ("이 게시물 쓸게요" →
+    # /create?refs=...) the frontend only sends ref_ids — no post_urls. The
+    # vision branch below keys off ingested_for_extraction, so without this
+    # fallback that flow falls through to content_gen.generate_slides() with
+    # an empty topic and the LLM hallucinates a generic carousel
+    # ("성공적인 카드뉴스" etc.) instead of using the benchmark's actual
+    # slides. Load the referenced posts directly so vision extraction runs.
+    if not ingested_for_extraction and ref_ids:
+        existing_rows = await db.execute(
+            select(CollectedPost).where(CollectedPost.id.in_(ref_ids))
+        )
+        for post in existing_rows.scalars().all():
+            ingested_for_extraction.append(post)
+
     # URL을 통해 들어온 새 포스트가 있고 사용자가 명시적 주제를 안 줬으면
     # → Vision으로 슬라이드 본문을 직접 추출 (LLM 재생성이 아닌 원본 그대로)
     if ingested_for_extraction and not topic.strip():

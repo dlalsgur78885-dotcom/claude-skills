@@ -438,11 +438,12 @@ export function CanvasEditor({
       const canvas = new fabric.Canvas(canvasRef.current, {
         width: initW + 2 * PAGE_PAD,
         height: initH + 2 * PAGE_PAD,
-        // Padding band is the workspace gutter — leave it as a quiet dark so
-        // the page itself reads as the canvas. Page fill comes from a
-        // dedicated rect below (so backgroundColor changes don't bleed past
-        // the page edge).
-        backgroundColor: "#1A1A1A",
+        // Padding band is the workspace gutter — paint it with the app's
+        // base bg color (--bg-app: #0F0F0F) so it blends into the
+        // surrounding chrome and the user can't tell where the canvas ends.
+        // Page fill comes from a dedicated rect below (so backgroundColor
+        // changes don't bleed past the page edge).
+        backgroundColor: "#0F0F0F",
         selection: true,
         enableRetinaScaling: false,
         // Marquee-selection box (drag on empty area) — match the object-border
@@ -808,7 +809,7 @@ export function CanvasEditor({
         const { w: pageW, h: pageH } = canvasSizeRef.current;
         canvas.setDimensions({ width: pageW + 2 * PAGE_PAD, height: pageH + 2 * PAGE_PAD });
         applyDisplayCss(canvas, pageW, pageH);
-        canvas.backgroundColor = "#1A1A1A";  // gutter stays dark
+        canvas.backgroundColor = "#0F0F0F";  // gutter blends with app bg
         canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
         const fabric = await getFabric();
         ensurePageBoundary(canvas, fabric, pageW, pageH, bgFill);
@@ -830,7 +831,7 @@ export function CanvasEditor({
       canvas.setDimensions({ width: pageW + 2 * PAGE_PAD, height: pageH + 2 * PAGE_PAD });
       applyDisplayCss(canvas, pageW, pageH);
     }
-    canvas.backgroundColor = "#1A1A1A";  // gutter stays dark — page is drawn by the boundary rect
+    canvas.backgroundColor = "#0F0F0F";  // gutter blends with app bg — page is drawn by the boundary rect
     canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
 
     // Canvas runs at design-space resolution internally; CSS shrinks for display.

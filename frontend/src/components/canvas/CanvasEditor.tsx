@@ -463,8 +463,12 @@ export function CanvasEditor({
       // page area shows objects normally, everything outside shows only
       // wireframe outlines that mark where they are.
       canvas.on("after:render", () => {
+        // fabric.Canvas itself has no .getContext — reach into the underlying
+        // <canvas> element for the 2D context fabric just finished drawing
+        // into. (canvas.getContext?.() returning undefined was why an earlier
+        // attempt at this hook silently did nothing.)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const ctx: CanvasRenderingContext2D | null = canvas.getContext?.();
+        const ctx: CanvasRenderingContext2D | null = canvas.lowerCanvasEl?.getContext?.("2d") || null;
         if (!ctx) return;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const pb = (canvas as any).__pageBoundary;

@@ -16,7 +16,10 @@ const DISPLAY_MAX = 540;
 // so object coordinates stay page-relative — only the pixel buffer changes.
 // Result: selection chrome (border + handles) on objects that extend past the
 // page is no longer clipped by the canvas edge. Set to 0 to disable.
-const PAGE_PAD = 120;
+// 240 covers objects roughly 1.4× the page on each axis — common case for
+// "this image bleeds past the edge a bit" without making the page itself
+// shrink too much in the display viewport.
+const PAGE_PAD = 240;
 
 function displayDims(w: number, h: number) {
   // Display size of the full padded buffer (page + padding). This is what

@@ -14,10 +14,11 @@ import type { SlideData, TemplateSummary } from "@/lib/types";
 // other heuristics can recognize it.
 const PAGE_BOUNDARY_KIND = "page_boundary";
 
-// How much of the viewport the page should fill at fit-to-screen. Anything
-// less than 1 leaves room around the page for the user to drag elements
-// off the edge.
-const PAGE_FIT_RATIO = 0.85;
+// How much of the viewport the page should fill at fit-to-screen. Lower
+// values make the surrounding PAD area more prominent — important because
+// the PAD is the same color as the viewport itself, so the user reads it
+// as "more workspace to drop elements into."
+const PAGE_FIT_RATIO = 0.6;
 
 /** Fit the fabric canvas to the actual viewport container size.
  *

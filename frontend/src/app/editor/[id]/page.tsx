@@ -67,9 +67,42 @@ export default function EditorPage() {
 
   async function handleSave(slides: SlideData[]) {
     try {
-      // Preserve the blueprint + user picks so future template changes still work
+      // Restore canonical slot coords for any image whose position matches the
+      // auto-fit result stashed at mount. CanvasEditor applies a cover-fit
+      // (uniform scale + offset to recenter the photo inside its slot); writing
+      // those fitted left/top/width/scale back to the DB causes a drift loop
+      // because fabric re-applies cover-fit on top of them next mount. Detect
+      // "user did not move/scale" via _autoLeft/_autoTop and persist the
+      // original slot box instead. See CanvasEditor.tsx image load.
+      const sanitized = slides.map((s) => ({
+        ...s,
+        objects: (s.objects || []).map((o) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const d: any = (o as any).data || {};
+          if (
+            (o.type === "image" || o.type === "Image") &&
+            typeof d._slotL === "number" &&
+            typeof d._autoLeft === "number"
+          ) {
+            const movedX = Math.abs((o.left ?? 0) - d._autoLeft) > 1;
+            const movedY = Math.abs((o.top ?? 0) - d._autoTop) > 1;
+            if (!movedX && !movedY) {
+              return {
+                ...o,
+                left: d._slotL,
+                top: d._slotT,
+                width: d._slotW,
+                height: d._slotH,
+                scaleX: 1,
+                scaleY: 1,
+              };
+            }
+          }
+          return o;
+        }),
+      }));
       await api.updateCarousel(id, {
-        canvas_data: { canvas_slides: slides, ...carouselMeta },
+        canvas_data: { canvas_slides: sanitized, ...carouselMeta },
       });
     } catch (err) {
       alert(err instanceof Error ? err.message : "저장 실패");

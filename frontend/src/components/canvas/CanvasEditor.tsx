@@ -28,6 +28,10 @@ const PAGE_FIT_RATIO = 0.6;
  *  non-PAD" split. Object coordinates stay page-relative; only the camera
  *  changes when the viewport resizes.
  *
+ *  `zoom` and `pan` are layered on top of the fit-to-screen scale so the
+ *  workspace zoom widget and wheel-pan keep working without a wrapper-side
+ *  CSS transform.
+ *
  *  Returns the camera that was applied so callers can use it for export
  *  cropping etc. */
 function fitToViewport(
@@ -35,8 +39,10 @@ function fitToViewport(
   canvas: any,
   pageW: number,
   pageH: number,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   viewportEl: HTMLElement | null,
+  zoom: number = 1,
+  panX: number = 0,
+  panY: number = 0,
 ) {
   const rect = viewportEl?.getBoundingClientRect();
   // Fall back to fit-to-page if we don't have a viewport yet (initial mount
@@ -45,10 +51,11 @@ function fitToViewport(
   const vpH = Math.max(200, Math.round(rect?.height || pageH));
   canvas.setDimensions({ width: vpW, height: vpH });
   const fitScale = Math.min((vpW * PAGE_FIT_RATIO) / pageW, (vpH * PAGE_FIT_RATIO) / pageH);
-  const offsetX = (vpW - pageW * fitScale) / 2;
-  const offsetY = (vpH - pageH * fitScale) / 2;
-  canvas.setViewportTransform([fitScale, 0, 0, fitScale, offsetX, offsetY]);
-  return { vpW, vpH, fitScale, offsetX, offsetY };
+  const scale = fitScale * zoom;
+  const offsetX = (vpW - pageW * scale) / 2 + panX;
+  const offsetY = (vpH - pageH * scale) / 2 + panY;
+  canvas.setViewportTransform([scale, 0, 0, scale, offsetX, offsetY]);
+  return { vpW, vpH, fitScale: scale, offsetX, offsetY };
 }
 
 /** Add or refresh the page-boundary rect on a canvas. Called from the initial
@@ -731,12 +738,29 @@ export function CanvasEditor({
       const canvas = fabricRef.current;
       if (!canvas) return;
       const { w, h } = canvasSizeRef.current;
-      fitToViewport(canvas, w, h, el);
+      fitToViewport(canvas, w, h, el, zoomRef.current, panRef.current.x, panRef.current.y);
       canvas.requestRenderAll?.();
     });
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
+
+  // Refs mirror zoom/pan state so the resize observer (mounted once with an
+  // empty deps array) can read the latest values without re-subscribing.
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
+  zoomRef.current = zoom;
+  panRef.current = pan;
+
+  // Re-apply the camera whenever zoom or pan changes. The fabric pixel
+  // buffer doesn't need to resize here — only the viewportTransform shifts.
+  useEffect(() => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const { w, h } = canvasSizeRef.current;
+    fitToViewport(canvas, w, h, canvasViewportRef.current, zoom, pan.x, pan.y);
+    canvas.requestRenderAll?.();
+  }, [zoom, pan.x, pan.y]);
 
   const saveCurrentSlide = useCallback(() => {
     const canvas = fabricRef.current;

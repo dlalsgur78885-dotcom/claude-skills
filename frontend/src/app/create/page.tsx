@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
-import { api } from "@/lib/api";
+import { api, resolveImageUrl } from "@/lib/api";
 import type { TemplateSummary } from "@/lib/types";
 import { TemplateThumbnail } from "@/components/template-editor/TemplateThumbnail";
 
@@ -1292,10 +1292,29 @@ export default function CreatePage() {
               // picking images. Two lines max so a long body doesn't push the
               // image grid off-screen — full text stays in step 1.
               const bodyPreview = (slide.body || slide.subtext || "").trim();
+              // Reference slide thumbnail from the benchmark Instagram post —
+              // gives the user a visual anchor for which cell they're picking
+              // an image for. Without it cell labels like "1. 마루세이 버터샌드"
+              // are abstract; with it the user sees the original slide layout
+              // (e.g. "ah, that's the top-left product in slide 2").
+              const refImg = refImages.find((r) => r.slide_index === slide.index);
               return (
                 <div key={slide.index} style={{ paddingBottom: 16, borderBottom: "1px solid var(--border)" }}>
                   {/* Slide header */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: bodyPreview ? 6 : 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: bodyPreview ? 6 : 12 }}>
+                    {refImg?.url && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={resolveImageUrl(refImg.url)}
+                        alt={`벤치 슬라이드 ${slide.index + 1}`}
+                        title="벤치마크 원본 슬라이드 — 어떤 위치의 셀인지 참고용"
+                        style={{
+                          width: 56, height: 56, objectFit: "cover",
+                          borderRadius: 6, flexShrink: 0,
+                          border: "1px solid var(--border)",
+                        }}
+                      />
+                    )}
                     <span style={{
                       fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4,
                       background: slide.type === "cover" ? "var(--accent-muted)" : "var(--bg-overlay)",

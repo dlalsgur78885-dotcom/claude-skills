@@ -1392,7 +1392,32 @@ export default function CreatePage() {
                           return (
                           <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 6 }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            {/* Mini ref-slide thumb next to each cell label so
+                                the user can map "1. 사보리노 모닝 마스크팩" back
+                                to the physical slide it came from on the
+                                benchmark feed at a glance. Without this the
+                                cell label is just text and the user has to
+                                scroll back up to the slide header thumbnail
+                                to figure out the location. */}
+                            {refImg?.url && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={resolveImageUrl(refImg.url)}
+                                alt=""
+                                title={`벤치 슬라이드 ${slide.index + 1}`}
+                                style={{
+                                  width: 28, height: 28, objectFit: "cover",
+                                  borderRadius: 4, flexShrink: 0,
+                                  border: "1px solid var(--border)",
+                                }}
+                              />
+                            )}
                             <span style={{ fontSize: 12, fontWeight: 500, color: "var(--text-primary)" }}>{label}</span>
+                            {refImg?.url && (
+                              <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+                                벤치 슬라이드 {slide.index + 1}{itemIndex != null ? ` · 항목 ${itemIndex + 1}` : ""}
+                              </span>
+                            )}
                             {missing && (
                               <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3, background: "rgba(232,91,91,0.18)", color: "#ff8a8a" }}>
                                 선택 필요

@@ -10,18 +10,18 @@ import { getFabric } from "@/lib/fabric";
 import { CanvasSizeSelector } from "@/components/CanvasSizeSelector";
 import type { SlideData, TemplateSummary } from "@/lib/types";
 
-const DISPLAY_MAX = 760;
+const DISPLAY_MAX = 600;
 // Padding (canvas-space px) around the page on every side. Fabric draws into a
 // buffer of (page + 2·PAD), and a viewportTransform shifts every object by PAD
 // so object coordinates stay page-relative — only the pixel buffer changes.
 // Result: selection chrome (border + handles) on objects that extend past the
-// page is no longer clipped by the canvas edge. Set to 0 to disable.
+// page is no longer clipped by the canvas edge.
 //
-// Sized generously so the PAD band effectively reaches the side panels —
-// the user reads the whole viewport as one continuous workspace, not just
-// the page rectangle. Also gives plenty of room to drag elements off the
-// page when arranging the design.
-const PAGE_PAD = 700;
+// 400 gives enough room to drag elements ~37% past the page edge while
+// keeping the page itself big enough to read on smaller viewports. Bigger
+// values shrink the page in display space; smaller values clip selection
+// handles on oversized images.
+const PAGE_PAD = 400;
 
 function displayDims(w: number, h: number) {
   // Display size of the full padded buffer (page + padding). This is what

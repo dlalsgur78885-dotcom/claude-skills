@@ -10,51 +10,44 @@ import { getFabric } from "@/lib/fabric";
 import { CanvasSizeSelector } from "@/components/CanvasSizeSelector";
 import type { SlideData, TemplateSummary } from "@/lib/types";
 
-const DISPLAY_MAX = 600;
-// Padding (canvas-space px) around the page on every side. Fabric draws into a
-// buffer of (page + 2·PAD), and a viewportTransform shifts every object by PAD
-// so object coordinates stay page-relative — only the pixel buffer changes.
-// Result: selection chrome (border + handles) on objects that extend past the
-// page is no longer clipped by the canvas edge.
-//
-// 400 gives enough room to drag elements ~37% past the page edge while
-// keeping the page itself big enough to read on smaller viewports. Bigger
-// values shrink the page in display space; smaller values clip selection
-// handles on oversized images.
-const PAGE_PAD = 400;
-
-function displayDims(w: number, h: number) {
-  // Display size of the full padded buffer (page + padding). This is what
-  // gets applied to the <canvas> CSS so the user can see the PAD area too.
-  const totalW = w + 2 * PAGE_PAD;
-  const totalH = h + 2 * PAGE_PAD;
-  const s = DISPLAY_MAX / Math.max(totalW, totalH);
-  return { w: Math.round(totalW * s), h: Math.round(totalH * s) };
-}
-
 // `data.kind` marker on the page-boundary rect so the auto-lock pass and
 // other heuristics can recognize it.
 const PAGE_BOUNDARY_KIND = "page_boundary";
 
-/** Stamp the CSS size of the fabric canvas DOM nodes from a (pageW, pageH).
- *  setDimensions() updates the bitmap buffer AND the CSS by default, which
- *  blows up the on-screen size to the padded buffer dimensions. We want CSS
- *  to follow displayDims (DISPLAY_MAX-fit) instead.
+// How much of the viewport the page should fill at fit-to-screen. Anything
+// less than 1 leaves room around the page for the user to drag elements
+// off the edge.
+const PAGE_FIT_RATIO = 0.85;
+
+/** Fit the fabric canvas to the actual viewport container size.
  *
- *  Mirrors the manual size-stamp that the init block already does so every
- *  size change goes through one place. */
-function applyDisplayCss(
+ *  The canvas pixel buffer is sized 1:1 with the viewport's CSS rect, and a
+ *  viewportTransform scales/centers the page rect inside. Result: the full
+ *  viewport area is one continuous editing surface — there's no "PAD vs.
+ *  non-PAD" split. Object coordinates stay page-relative; only the camera
+ *  changes when the viewport resizes.
+ *
+ *  Returns the camera that was applied so callers can use it for export
+ *  cropping etc. */
+function fitToViewport(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   canvas: any,
   pageW: number,
   pageH: number,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  viewportEl: HTMLElement | null,
 ) {
-  const d = displayDims(pageW, pageH);
-  const lower = canvas.lowerCanvasEl;
-  const upper = canvas.upperCanvasEl;
-  if (lower) { lower.style.width = `${d.w}px`; lower.style.height = `${d.h}px`; }
-  if (upper) { upper.style.width = `${d.w}px`; upper.style.height = `${d.h}px`; }
-  if (canvas.wrapperEl) { canvas.wrapperEl.style.width = `${d.w}px`; canvas.wrapperEl.style.height = `${d.h}px`; }
+  const rect = viewportEl?.getBoundingClientRect();
+  // Fall back to fit-to-page if we don't have a viewport yet (initial mount
+  // before the layout settles); the resize observer will correct it.
+  const vpW = Math.max(200, Math.round(rect?.width || pageW));
+  const vpH = Math.max(200, Math.round(rect?.height || pageH));
+  canvas.setDimensions({ width: vpW, height: vpH });
+  const fitScale = Math.min((vpW * PAGE_FIT_RATIO) / pageW, (vpH * PAGE_FIT_RATIO) / pageH);
+  const offsetX = (vpW - pageW * fitScale) / 2;
+  const offsetY = (vpH - pageH * fitScale) / 2;
+  canvas.setViewportTransform([fitScale, 0, 0, fitScale, offsetX, offsetY]);
+  return { vpW, vpH, fitScale, offsetX, offsetY };
 }
 
 /** Add or refresh the page-boundary rect on a canvas. Called from the initial
@@ -430,21 +423,19 @@ export function CanvasEditor({
         Base.prototype.__haloPatched = true;
       }
 
-      // Internal canvas runs at full design-space resolution PLUS a padding
-      // band on every side. Object coordinates stay page-relative (0..pageW,
-      // 0..pageH); a viewportTransform of (PAGE_PAD, PAGE_PAD) shifts the
-      // whole render so the page sits inside the padded buffer. Selection
-      // chrome on objects that spill past the page edge is therefore no
-      // longer clipped — it can extend into the PAD band.
+      // The fabric canvas pixel buffer is sized 1:1 with the viewport
+      // container's CSS rect. Object coordinates stay page-relative
+      // (0..pageW, 0..pageH); a viewportTransform scales + centers the
+      // page inside the buffer. Result: the entire viewport is one
+      // continuous workspace — there is no "PAD vs. non-PAD" split.
       const { w: initW, h: initH } = canvasSizeRef.current;
       const canvas = new fabric.Canvas(canvasRef.current, {
-        width: initW + 2 * PAGE_PAD,
-        height: initH + 2 * PAGE_PAD,
-        // Padding band is the workspace gutter — paint it with the app's
-        // base bg color (--bg-app: #0F0F0F) so it blends into the
-        // surrounding chrome and the user can't tell where the canvas ends.
-        // Page fill comes from a dedicated rect below (so backgroundColor
-        // changes don't bleed past the page edge).
+        // Temporary dimensions — fitToViewport below replaces these with
+        // the actual viewport rect once the layout has settled.
+        width: initW,
+        height: initH,
+        // Same color as --bg-app so the canvas edge dissolves into the
+        // surrounding panel chrome.
         backgroundColor: "#0F0F0F",
         selection: true,
         enableRetinaScaling: false,
@@ -454,26 +445,9 @@ export function CanvasEditor({
         selectionBorderColor: "#3CC8FF",
         selectionLineWidth: 2,
       });
-      // Shift the camera so (0,0) in object space lands at (PAD, PAD) in
-      // pixel space — i.e. the top-left of the page.
-      canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
+      // Fit page into the viewport rect (camera scales + centers).
+      fitToViewport(canvas, initW, initH, canvasViewportRef.current);
       ensurePageBoundary(canvas, fabric, initW, initH, "#FFFFFF");
-      const d = displayDims(initW, initH);
-      const lower = canvas.lowerCanvasEl;
-      const upper = canvas.upperCanvasEl;
-      if (lower) {
-        lower.style.width = `${d.w}px`;
-        lower.style.height = `${d.h}px`;
-      }
-      if (upper) {
-        upper.style.width = `${d.w}px`;
-        upper.style.height = `${d.h}px`;
-      }
-      const wrapper = canvas.wrapperEl;
-      if (wrapper) {
-        wrapper.style.width = `${d.w}px`;
-        wrapper.style.height = `${d.h}px`;
-      }
 
       fabricRef.current = canvas;
       // Expose the fabric canvas globally for E2E tests / debugging. Cheap,
@@ -746,6 +720,23 @@ export function CanvasEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Re-fit the canvas whenever the viewport container resizes. Keeps the
+  // editing surface flush with the side panels regardless of window width,
+  // sidebar collapse state, devtools open, etc.
+  useEffect(() => {
+    const el = canvasViewportRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+      const { w, h } = canvasSizeRef.current;
+      fitToViewport(canvas, w, h, el);
+      canvas.requestRenderAll?.();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   const saveCurrentSlide = useCallback(() => {
     const canvas = fabricRef.current;
     if (!canvas) return;
@@ -804,15 +795,12 @@ export function CanvasEditor({
       // Fabric round-trip path
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (canvas as any).loadFromJSON(slideData).then(async () => {
-        // loadFromJSON reapplies the dimensions / backgroundColor / viewport
-        // transform that were baked into the saved JSON — i.e. page-sized
-        // buffer, page-color gutter, identity transform. Re-establish our
-        // padded workspace from scratch every time:
+        // loadFromJSON re-establishes whatever was baked into the saved JSON.
+        // Re-fit the canvas to the viewport rect and re-add the page boundary
+        // so the workspace looks the same as before the load.
         const { w: pageW, h: pageH } = canvasSizeRef.current;
-        canvas.setDimensions({ width: pageW + 2 * PAGE_PAD, height: pageH + 2 * PAGE_PAD });
-        applyDisplayCss(canvas, pageW, pageH);
-        canvas.backgroundColor = "#0F0F0F";  // gutter blends with app bg
-        canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
+        canvas.backgroundColor = "#0F0F0F";
+        fitToViewport(canvas, pageW, pageH, canvasViewportRef.current);
         const fabric = await getFabric();
         ensurePageBoundary(canvas, fabric, pageW, pageH, bgFill);
         markBackdropObjects(canvas);
@@ -824,17 +812,11 @@ export function CanvasEditor({
 
     // Manual reconstruction path — clear() removed the page boundary too;
     // put it back at the start so subsequent adds layer above the page.
+    canvas.backgroundColor = "#0F0F0F";
     {
       const { w: pageW, h: pageH } = canvasSizeRef.current;
-      // Defensive: make sure the buffer still has the padding around the
-      // page. setCanvasSize already does this on size changes, but loads
-      // that come through without a setCanvasSize call (initial mount on
-      // a different-sized template) need it too.
-      canvas.setDimensions({ width: pageW + 2 * PAGE_PAD, height: pageH + 2 * PAGE_PAD });
-      applyDisplayCss(canvas, pageW, pageH);
+      fitToViewport(canvas, pageW, pageH, canvasViewportRef.current);
     }
-    canvas.backgroundColor = "#0F0F0F";  // gutter blends with app bg — page is drawn by the boundary rect
-    canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
 
     // Canvas runs at design-space resolution internally; CSS shrinks for display.
     // Saved coords are already in design space — no scaling for textbox/rect/circle.
@@ -1302,10 +1284,8 @@ export function CanvasEditor({
     canvasSizeRef.current = { w, h };
     setCanvasW(w);
     setCanvasH(h);
-    // Resize the pixel buffer to include the same PAD band on every side, then
-    // re-apply the viewport translate (setDimensions resets the transform).
-    canvas.setDimensions({ width: w + 2 * PAGE_PAD, height: h + 2 * PAGE_PAD });
-    canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
+    // Re-fit the canvas to the viewport with the new page size.
+    fitToViewport(canvas, w, h, canvasViewportRef.current);
     // Resize the page-boundary rect to track the new page size.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const pb = (canvas as any).__pageBoundary;
@@ -1313,12 +1293,6 @@ export function CanvasEditor({
       pb.set({ width: w, height: h });
       pb.setCoords();
     }
-    const d = displayDims(w, h);
-    const lower = canvas.lowerCanvasEl;
-    const upper = canvas.upperCanvasEl;
-    if (lower) { lower.style.width = `${d.w}px`; lower.style.height = `${d.h}px`; }
-    if (upper) { upper.style.width = `${d.w}px`; upper.style.height = `${d.h}px`; }
-    if (canvas.wrapperEl) { canvas.wrapperEl.style.width = `${d.w}px`; canvas.wrapperEl.style.height = `${d.h}px`; }
     canvas.renderAll();
     // After resize the same slide is now "saved at the new size" for future saves.
     // Re-save with new dims so width/height reflect current canvas.
@@ -2392,12 +2366,12 @@ export function CanvasEditor({
     async function renderSlideBlob(i: number): Promise<Blob> {
       switchSlide(i);
       await new Promise((r) => setTimeout(r, 120));
-      // Crop to the page area only. The canvas pixel buffer is page + PAD on
-      // every side (so selection chrome on out-of-page objects stays visible
-      // while editing), but the downloaded PNG should be exactly the 1080×1350
-      // — or whatever — design surface. Hide the page boundary stroke for the
-      // duration of the export so its 1px outline doesn't bleed into the crop
-      // edge, then restore it.
+      // Crop to the page area only. The fabric canvas pixel buffer is
+      // viewport-sized and a viewportTransform scales+centers the page
+      // inside it; we read those camera values back to figure out which
+      // pixel rect the page actually occupies. Hide the page boundary
+      // stroke for the duration of the export so its 1px outline doesn't
+      // bleed into the crop edge, then restore it.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const pb = (canvas as any).__pageBoundary;
       const savedStroke = pb?.stroke;
@@ -2407,13 +2381,21 @@ export function CanvasEditor({
         canvas!.renderAll();
       }
       const { w: pageW, h: pageH } = canvasSizeRef.current;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const vt = (canvas as any).viewportTransform || [1, 0, 0, 1, 0, 0];
+      const fitScale = vt[0];
+      const pixelW = pageW * fitScale;
+      const pixelH = pageH * fitScale;
+      // Always export at exactly 2× the design surface, regardless of the
+      // current zoom-to-fit camera.
+      const multiplier = (pageW * 2) / pixelW;
       const dataUrl = canvas!.toDataURL({
         format: "png",
-        multiplier: 2,
-        left: PAGE_PAD,
-        top: PAGE_PAD,
-        width: pageW,
-        height: pageH,
+        multiplier,
+        left: vt[4],
+        top: vt[5],
+        width: pixelW,
+        height: pixelH,
       });
       if (pb) {
         pb.set({ stroke: savedStroke, strokeWidth: savedStrokeWidth });
@@ -3382,20 +3364,7 @@ export function CanvasEditor({
             overflow: "hidden", // ← clip zoomed/panned canvas so it doesn't spill into side panels
           }}
         >
-          <div
-            style={{
-              // No border-radius / no box-shadow — the canvas gutter is now
-              // the same color as the surrounding viewport, so any cardlike
-              // chrome here just reads as a halo between the two and breaks
-              // the "one continuous workspace" feeling the user wanted.
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-              transformOrigin: "center",
-              transition: "transform 0.06s ease-out",
-              willChange: "transform",
-            }}
-          >
-            <canvas ref={canvasRef} />
-          </div>
+          <canvas ref={canvasRef} />
 
           {/* Zoom control (bottom-right): −, editable %, +, reset. */}
           <div

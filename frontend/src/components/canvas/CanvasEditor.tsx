@@ -10,7 +10,7 @@ import { getFabric } from "@/lib/fabric";
 import { CanvasSizeSelector } from "@/components/CanvasSizeSelector";
 import type { SlideData, TemplateSummary } from "@/lib/types";
 
-const DISPLAY_MAX = 600;
+const DISPLAY_MAX = 700;
 // Padding (canvas-space px) around the page on every side. Fabric draws into a
 // buffer of (page + 2·PAD), and a viewportTransform shifts every object by PAD
 // so object coordinates stay page-relative — only the pixel buffer changes.

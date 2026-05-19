@@ -525,15 +525,59 @@ export function CanvasEditor({
         const pb = c.__pageBoundary;
         const ctx = canvas.lowerCanvasEl?.getContext("2d");
         if (!pb || !ctx) return;
-        // Page is drawn at buffer-space (PAD, PAD) to (PAD + zoom·pageW,
-        // PAD + zoom·pageH) — viewportTransform handles the scale.
         const z = zoomRef.current;
-        const w = pb.width * z;
-        const h = pb.height * z;
+        const bufW = canvas.getWidth();
+        const bufH = canvas.getHeight();
+        // Page rect in buffer coords (where the page actually rendered).
+        const pageX0 = PAGE_PAD, pageY0 = PAGE_PAD;
+        const pageW = pb.width * z, pageH = pb.height * z;
+        const pageX1 = pageX0 + pageW, pageY1 = pageY0 + pageH;
+
+        // 1. Mask the out-of-page area with the workspace bg so any content
+        //    extending past the page edge gets erased — this is what makes
+        //    out-of-page objects fade to "outline only". Clip via evenodd so
+        //    we only paint outside the page rect; inside (the export area)
+        //    stays untouched.
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, bufW, bufH);
+        ctx.rect(pageX0, pageY0, pageW, pageH);
+        ctx.clip("evenodd");
+        ctx.fillStyle = "#1E1E1E";
+        ctx.fillRect(0, 0, bufW, bufH);
+
+        // 2. Within the same outside-page clip, draw a dashed bbox outline
+        //    for each object that pokes past the page edge — so the user
+        //    still sees where these objects sit.
+        //    fabric's getBoundingRect returns object-space coords (no
+        //    viewportTransform applied), so we project to buffer coords by
+        //    hand using zoom + PAD.
+        ctx.strokeStyle = "rgba(255,255,255,0.65)";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 5]);
+        for (const obj of canvas.getObjects()) {
+          if (obj === pb) continue;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const o = obj as any;
+          if (o.excludeFromExport) continue;
+          const r = o.getBoundingRect();
+          const bx = r.left * z + PAGE_PAD;
+          const by = r.top * z + PAGE_PAD;
+          const bw = r.width * z;
+          const bh = r.height * z;
+          const fullyInside =
+            bx >= pageX0 && by >= pageY0 &&
+            bx + bw <= pageX1 && by + bh <= pageY1;
+          if (!fullyInside) ctx.strokeRect(bx, by, bw, bh);
+        }
+        ctx.restore();
+
+        // 3. Page-edge stroke. Sits just outside the page at PAD-4..PAD so
+        //    the export crop (PAD..PAD+pageW) skips it.
         ctx.save();
         ctx.strokeStyle = "#3CC8FF";
         ctx.lineWidth = 4;
-        ctx.strokeRect(PAGE_PAD - 2, PAGE_PAD - 2, w + 4, h + 4);
+        ctx.strokeRect(PAGE_PAD - 2, PAGE_PAD - 2, pageW + 4, pageH + 4);
         ctx.restore();
       });
 

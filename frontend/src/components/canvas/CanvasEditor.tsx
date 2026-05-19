@@ -166,12 +166,13 @@ export function CanvasEditor({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fabricRef = useRef<any>(null);
 
-  // Workspace zoom + pan (Miricanvas-style). Implemented as a CSS transform
-  // on the canvas wrapper — fabric's internal pixel coords stay 1:1 with the
-  // design space, so click/drag math is untouched. CSS getBoundingClientRect
-  // reflects the scaled rect so fabric maps mouse coords correctly.
+  // Workspace zoom + pan (Miricanvas-style). Zoom is applied inside fabric via
+  // viewportTransform scale — the canvas DOM keeps its full CSS size so the
+  // PAD band always overflows the viewport (no exposed "outer viewport" at
+  // low zoom). Pan stays as a CSS translate on the wrapper.
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const zoomRef = useRef(1);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
 
   // Inline project-title rename in the top toolbar. Click the title to switch
@@ -201,6 +202,18 @@ export function CanvasEditor({
   const ZOOM_STEP = 0.1;
   const clampZoom = (z: number) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
   function resetZoomPan() { setZoom(1); setPan({ x: 0, y: 0 }); }
+
+  // Push the zoom state into fabric's viewportTransform whenever it changes.
+  // The canvas DOM stays at constant CSS size — zoom only affects how the
+  // content is rendered within the buffer — so the PAD always overflows the
+  // viewport regardless of zoom level.
+  useEffect(() => {
+    zoomRef.current = zoom;
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    canvas.setViewportTransform([zoom, 0, 0, zoom, PAGE_PAD, PAGE_PAD]);
+    canvas.requestRenderAll();
+  }, [zoom]);
 
   // Image crop mode. Triggered by double-clicking an image — we add an
   // auxiliary fabric.Rect with 8 corner handles for the user to resize. On
@@ -471,7 +484,7 @@ export function CanvasEditor({
       });
       // Shift the camera so (0,0) in object space lands at (PAD, PAD) in
       // pixel space — i.e. the top-left of the page.
-      canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
+      canvas.setViewportTransform([zoomRef.current, 0, 0, zoomRef.current, PAGE_PAD, PAGE_PAD]);
       ensurePageBoundary(canvas, fabric, initW, initH, "#FFFFFF");
       const d = displayDims(initW, initH);
       const lower = canvas.lowerCanvasEl;
@@ -512,10 +525,15 @@ export function CanvasEditor({
         const pb = c.__pageBoundary;
         const ctx = canvas.lowerCanvasEl?.getContext("2d");
         if (!pb || !ctx) return;
+        // Page is drawn at buffer-space (PAD, PAD) to (PAD + zoom·pageW,
+        // PAD + zoom·pageH) — viewportTransform handles the scale.
+        const z = zoomRef.current;
+        const w = pb.width * z;
+        const h = pb.height * z;
         ctx.save();
         ctx.strokeStyle = "#3CC8FF";
         ctx.lineWidth = 4;
-        ctx.strokeRect(PAGE_PAD - 2, PAGE_PAD - 2, pb.width + 4, pb.height + 4);
+        ctx.strokeRect(PAGE_PAD - 2, PAGE_PAD - 2, w + 4, h + 4);
         ctx.restore();
       });
 
@@ -854,7 +872,7 @@ export function CanvasEditor({
         canvas.setDimensions({ width: pageW + 2 * PAGE_PAD, height: pageH + 2 * PAGE_PAD });
         applyDisplayCss(canvas, pageW, pageH);
         canvas.backgroundColor = "#1E1E1E";  // workspace gutter — distinct from app bg
-        canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
+        canvas.setViewportTransform([zoomRef.current, 0, 0, zoomRef.current, PAGE_PAD, PAGE_PAD]);
         // Defensive: even if a future fabric version re-applies clipPath after
         // resolve, null it again so the editor view stays unclipped.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2487,6 +2505,11 @@ export function CanvasEditor({
       const pb = (canvas as any).__pageBoundary;
       const savedStroke = pb?.stroke;
       const savedStrokeWidth = pb?.strokeWidth;
+      // Zoom is applied via fabric's viewportTransform; reset to identity-PAD
+      // so the export renders the page at full resolution regardless of the
+      // current editor zoom level.
+      const savedVT = canvas!.viewportTransform?.slice() as number[];
+      canvas!.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (canvas as any).__suppressPageOutline = true;
       if (pb) {
@@ -2507,6 +2530,7 @@ export function CanvasEditor({
       }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (canvas as any).__suppressPageOutline = false;
+      if (savedVT) canvas!.setViewportTransform(savedVT);
       canvas!.renderAll();
       return (await fetch(dataUrl)).blob();
     }
@@ -3481,7 +3505,7 @@ export function CanvasEditor({
               position: "absolute",
               left: "50%",
               top: "50%",
-              transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px)`,
               transformOrigin: "center",
               transition: "transform 0.06s ease-out",
               willChange: "transform",

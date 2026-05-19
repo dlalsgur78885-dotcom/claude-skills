@@ -493,6 +493,27 @@ export function CanvasEditor({
         (window as any).__editorCanvas = canvas;
       }
 
+      // Page-edge overlay. The pageBoundary rect lives at the back of the
+      // object stack so any opaque slide background (grid templates often have
+      // a black rect covering the entire page) hides its stroke. Drawing the
+      // outline directly on the 2D context after fabric finishes rendering
+      // guarantees the page edge is always visible — and sits just outside the
+      // page area so it never bleeds into the downloaded crop (toDataURL is
+      // called with rect (PAD, PAD, w, h) and our stroke is at PAD-4..PAD).
+      canvas.on("after:render", () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const c = canvas as any;
+        if (c.__suppressPageOutline) return;
+        const pb = c.__pageBoundary;
+        const ctx = canvas.lowerCanvasEl?.getContext("2d");
+        if (!pb || !ctx) return;
+        ctx.save();
+        ctx.strokeStyle = "#3CC8FF";
+        ctx.lineWidth = 4;
+        ctx.strokeRect(PAGE_PAD - 2, PAGE_PAD - 2, pb.width + 4, pb.height + 4);
+        ctx.restore();
+      });
+
       // Force the vivid red selection style onto every object that lands on
       // the canvas — fabric copies these props from class defaults onto each
       // instance at construction, so just patching prototype/ownDefaults isn't
@@ -2412,6 +2433,8 @@ export function CanvasEditor({
       const pb = (canvas as any).__pageBoundary;
       const savedStroke = pb?.stroke;
       const savedStrokeWidth = pb?.strokeWidth;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (canvas as any).__suppressPageOutline = true;
       if (pb) {
         pb.set({ stroke: null, strokeWidth: 0 });
         canvas!.renderAll();
@@ -2427,8 +2450,10 @@ export function CanvasEditor({
       });
       if (pb) {
         pb.set({ stroke: savedStroke, strokeWidth: savedStrokeWidth });
-        canvas!.renderAll();
       }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (canvas as any).__suppressPageOutline = false;
+      canvas!.renderAll();
       return (await fetch(dataUrl)).blob();
     }
 

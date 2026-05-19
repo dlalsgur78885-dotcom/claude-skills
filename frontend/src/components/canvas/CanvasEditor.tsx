@@ -21,14 +21,19 @@ const DISPLAY_MAX = 700;
 // (~55% of the page width on each side) — small enough that the page itself
 // still takes the central ~45% of the canvas display. Adjust together with
 // DISPLAY_MAX above.
-const PAGE_PAD = 600;
+// Pad is sized so the canvas buffer always overflows the viewport on every
+// side at the typical editor layout — that way the PAD and the workspace
+// around the canvas are the same surface (same color, same role: out-of-page
+// objects render and stay selectable anywhere the user can see).
+// overflow:hidden on the viewport container clips the excess.
+const PAGE_PAD = 2000;
 
 function displayDims(w: number, h: number) {
-  // Display size of the full padded buffer (page + padding). This is what
-  // gets applied to the <canvas> CSS so the user can see the PAD area too.
+  // Scale based on the page (not the buffer) so the page itself renders at the
+  // configured display size regardless of how big PAGE_PAD grows.
+  const s = DISPLAY_MAX / Math.max(w, h);
   const totalW = w + 2 * PAGE_PAD;
   const totalH = h + 2 * PAGE_PAD;
-  const s = DISPLAY_MAX / Math.max(totalW, totalH);
   return { w: Math.round(totalW * s), h: Math.round(totalH * s) };
 }
 
@@ -3446,11 +3451,11 @@ export function CanvasEditor({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            // Match the fabric canvas gutter (#0F0F0F) so the workspace reads
-            // as one continuous surface from the page edge all the way out
-            // to the side panels — no visible boundary between the PAD band
-            // and the surrounding viewport.
-            background: "var(--bg-app)",
+            // Match the fabric canvas gutter (#1E1E1E) so the PAD band inside
+            // the canvas buffer and the workspace around it read as one
+            // continuous surface — page (white) sits on a single dark
+            // workspace with no inner boundary.
+            background: "#1E1E1E",
             padding: 0,
             position: "relative",
             overflow: "hidden", // ← clip zoomed/panned canvas so it doesn't spill into side panels
@@ -3458,11 +3463,15 @@ export function CanvasEditor({
         >
           <div
             style={{
-              // No border-radius / no box-shadow — the canvas gutter is now
-              // the same color as the surrounding viewport, so any cardlike
-              // chrome here just reads as a halo between the two and breaks
-              // the "one continuous workspace" feeling the user wanted.
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              // The canvas buffer is much wider/taller than the viewport (PAD
+              // is sized so the buffer spills past every edge). Flex centering
+              // breaks when the child overflows the container, so position the
+              // wrapper absolutely and center it via transform — that keeps
+              // the page exactly at viewport center regardless of buffer size.
+              position: "absolute",
+              left: "50%",
+              top: "50%",
+              transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
               transformOrigin: "center",
               transition: "transform 0.06s ease-out",
               willChange: "transform",

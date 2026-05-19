@@ -552,9 +552,8 @@ export function CanvasEditor({
         //    fabric's getBoundingRect returns object-space coords (no
         //    viewportTransform applied), so we project to buffer coords by
         //    hand using zoom + PAD.
-        ctx.strokeStyle = "rgba(255,255,255,0.65)";
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([5, 5]);
+        ctx.strokeStyle = "#3CC8FF";
+        ctx.lineWidth = 2;
         for (const obj of canvas.getObjects()) {
           if (obj === pb) continue;
           // eslint-disable-next-line @typescript-eslint/no-explicit-any

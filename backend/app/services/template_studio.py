@@ -199,7 +199,7 @@ do NOT shrink the design to a centered square.
       ],
       "text_slots": [
         {{
-          "role": "headline" | "subheadline" | "tag" | "footer" | "body" | "description" | "label" | "caption" | "cta_button" | "page_number" | "cell_title_r{{R}}c{{C}}" | "cell_subtitle_r{{R}}c{{C}}" | "cell_description_r{{R}}c{{C}}",
+          "role": "headline" | "subheadline" | "tag" | "footer" | "body" | "description" | "label" | "caption" | "cta_button" | "page_number" | "cell_title_r<row>c<col>" | "cell_subtitle_r<row>c<col>" | "cell_description_r<row>c<col>",
           "position": {{"x": 0, "y": 0, "anchor": "top-left"}},
           "size": {{"width": 0, "height": 0}},
           "style": {{
@@ -250,12 +250,12 @@ grid** (e.g. zig-zag: cell 0 image top-left + text top-right, cell 1 image \
 bottom-right + text bottom-left; or any asymmetric per-cell arrangement):
   1. Set `grid` to `null` (NOT a regular grid).
   2. For each cell, emit text slots with role pattern \
-`cell_title_r{R}c{C}`, `cell_subtitle_r{R}c{C}`, `cell_description_r{R}c{C}` \
-where `{R}` and `{C}` are the cell's row and column indices in reading order \
-(top-to-bottom, left-to-right; both start at 0). The `position` and `size` \
-of each slot are the absolute canvas coords of that piece of text — NOT \
-offsets within a cell. Example role: `cell_title_r0c1` (first row, second \
-column).
+`cell_title_r<row>c<col>`, `cell_subtitle_r<row>c<col>`, \
+`cell_description_r<row>c<col>` where `<row>` and `<col>` are the cell's row \
+and column indices in reading order (top-to-bottom, left-to-right; both \
+start at 0; substitute the actual digit, e.g. `cell_title_r0c1` for the \
+top-right cell). The `position` and `size` of each slot are the absolute \
+canvas coords of that piece of text — NOT offsets within a cell.
   3. For each cell's image area, emit a `decoration` with `kind: "image"` and \
 the absolute `position` + `size` of the image rectangle. **List image \
 decorations in the same reading order as the cells** — the renderer pairs \

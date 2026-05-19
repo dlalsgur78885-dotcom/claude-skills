@@ -930,9 +930,14 @@ export function CanvasEditor({
         // so the workspace looks the same as before the load.
         const { w: pageW, h: pageH } = canvasSizeRef.current;
         canvas.backgroundColor = "#0F0F0F";
-        fitToViewport(canvas, pageW, pageH, canvasViewportRef.current);
+        // loadFromJSON also clears canvas.clipPath — reattach before fit so
+        // setCanvasPageClip has something to resize.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (canvas as any).clipPath = null;
         const fabric = await getFabric();
         ensurePageBoundary(canvas, fabric, pageW, pageH, bgFill);
+        attachInitialPageClip(canvas, fabric);
+        fitToViewport(canvas, pageW, pageH, canvasViewportRef.current, zoomRef.current, panRef.current.x, panRef.current.y);
         markBackdropObjects(canvas);
         canvas.renderAll();
         lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
@@ -962,6 +967,12 @@ export function CanvasEditor({
       // Put the page boundary in first so every reconstructed object lands
       // above it. (canvas.clear() above wiped the prior boundary.)
       ensurePageBoundary(canvas, fabric, canvasSizeRef.current.w, canvasSizeRef.current.h, bgFill);
+      // canvas.clear() also dropped canvas.clipPath — reattach it so PAD
+      // fills stay clipped after this manual reconstruction path.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (canvas as any).clipPath = null;
+      attachInitialPageClip(canvas, fabric);
+      fitToViewport(canvas, canvasSizeRef.current.w, canvasSizeRef.current.h, canvasViewportRef.current, zoomRef.current, panRef.current.x, panRef.current.y);
       for (const obj of slideData.objects || []) {
         if (obj.type === "textbox") {
           const textbox = new fabric.Textbox(obj.text || "", {

@@ -1334,9 +1334,10 @@ export default function CreatePage() {
                         src={resolveImageUrl(refImg.url)}
                         alt={`벤치 슬라이드 ${slide.index + 1}`}
                         title="벤치마크 원본 슬라이드 — 어떤 위치의 셀인지 참고용"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                         style={{
-                          width: 56, height: 56, objectFit: "cover",
-                          borderRadius: 6, flexShrink: 0,
+                          width: 96, height: 96, objectFit: "cover",
+                          borderRadius: 8, flexShrink: 0,
                           border: "1px solid var(--border)",
                         }}
                       />
@@ -1431,9 +1432,10 @@ export default function CreatePage() {
                                 src={resolveImageUrl(refImg.url)}
                                 alt=""
                                 title={`벤치 슬라이드 ${slide.index + 1}`}
+                                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                                 style={{
-                                  width: 28, height: 28, objectFit: "cover",
-                                  borderRadius: 4, flexShrink: 0,
+                                  width: 48, height: 48, objectFit: "cover",
+                                  borderRadius: 6, flexShrink: 0,
                                   border: "1px solid var(--border)",
                                 }}
                               />

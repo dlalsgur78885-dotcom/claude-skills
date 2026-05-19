@@ -10,16 +10,18 @@ import { getFabric } from "@/lib/fabric";
 import { CanvasSizeSelector } from "@/components/CanvasSizeSelector";
 import type { SlideData, TemplateSummary } from "@/lib/types";
 
-const DISPLAY_MAX = 540;
+const DISPLAY_MAX = 760;
 // Padding (canvas-space px) around the page on every side. Fabric draws into a
 // buffer of (page + 2·PAD), and a viewportTransform shifts every object by PAD
 // so object coordinates stay page-relative — only the pixel buffer changes.
 // Result: selection chrome (border + handles) on objects that extend past the
 // page is no longer clipped by the canvas edge. Set to 0 to disable.
-// 240 covers objects roughly 1.4× the page on each axis — common case for
-// "this image bleeds past the edge a bit" without making the page itself
-// shrink too much in the display viewport.
-const PAGE_PAD = 240;
+//
+// Sized generously so the PAD band effectively reaches the side panels —
+// the user reads the whole viewport as one continuous workspace, not just
+// the page rectangle. Also gives plenty of room to drag elements off the
+// page when arranging the design.
+const PAGE_PAD = 700;
 
 function displayDims(w: number, h: number) {
   // Display size of the full padded buffer (page + padding). This is what
@@ -3375,7 +3377,7 @@ export function CanvasEditor({
             // to the side panels — no visible boundary between the PAD band
             // and the surrounding viewport.
             background: "var(--bg-app)",
-            padding: 24,
+            padding: 0,
             position: "relative",
             overflow: "hidden", // ← clip zoomed/panned canvas so it doesn't spill into side panels
           }}

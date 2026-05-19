@@ -31,6 +31,27 @@ function displayDims(w: number, h: number) {
 // other heuristics can recognize it.
 const PAGE_BOUNDARY_KIND = "page_boundary";
 
+/** Stamp the CSS size of the fabric canvas DOM nodes from a (pageW, pageH).
+ *  setDimensions() updates the bitmap buffer AND the CSS by default, which
+ *  blows up the on-screen size to the padded buffer dimensions. We want CSS
+ *  to follow displayDims (DISPLAY_MAX-fit) instead.
+ *
+ *  Mirrors the manual size-stamp that the init block already does so every
+ *  size change goes through one place. */
+function applyDisplayCss(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  canvas: any,
+  pageW: number,
+  pageH: number,
+) {
+  const d = displayDims(pageW, pageH);
+  const lower = canvas.lowerCanvasEl;
+  const upper = canvas.upperCanvasEl;
+  if (lower) { lower.style.width = `${d.w}px`; lower.style.height = `${d.h}px`; }
+  if (upper) { upper.style.width = `${d.w}px`; upper.style.height = `${d.h}px`; }
+  if (canvas.wrapperEl) { canvas.wrapperEl.style.width = `${d.w}px`; canvas.wrapperEl.style.height = `${d.h}px`; }
+}
+
 /** Add or refresh the page-boundary rect on a canvas. Called from the initial
  *  setup AND after every load — canvas.clear() and loadFromJSON wipe all
  *  objects, including ours, so we have to put it back. The rect is kept
@@ -777,17 +798,17 @@ export function CanvasEditor({
       // Fabric round-trip path
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (canvas as any).loadFromJSON(slideData).then(async () => {
-        // loadFromJSON sets canvas.backgroundColor from slideData.background.
-        // That would paint the gutter (PAD band) with the slide's bg color,
-        // which makes the page edge invisible. Reset the gutter to dark and
-        // route the slide bg to the page-boundary rect instead.
-        canvas.backgroundColor = "#1A1A1A";
-        // loadFromJSON also resets the viewport transform that was in the
-        // saved JSON. Re-apply our padding so selection chrome stays visible
-        // on out-of-page objects.
+        // loadFromJSON reapplies the dimensions / backgroundColor / viewport
+        // transform that were baked into the saved JSON — i.e. page-sized
+        // buffer, page-color gutter, identity transform. Re-establish our
+        // padded workspace from scratch every time:
+        const { w: pageW, h: pageH } = canvasSizeRef.current;
+        canvas.setDimensions({ width: pageW + 2 * PAGE_PAD, height: pageH + 2 * PAGE_PAD });
+        applyDisplayCss(canvas, pageW, pageH);
+        canvas.backgroundColor = "#1A1A1A";  // gutter stays dark
         canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
         const fabric = await getFabric();
-        ensurePageBoundary(canvas, fabric, canvasSizeRef.current.w, canvasSizeRef.current.h, bgFill);
+        ensurePageBoundary(canvas, fabric, pageW, pageH, bgFill);
         markBackdropObjects(canvas);
         canvas.renderAll();
         lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
@@ -797,6 +818,15 @@ export function CanvasEditor({
 
     // Manual reconstruction path — clear() removed the page boundary too;
     // put it back at the start so subsequent adds layer above the page.
+    {
+      const { w: pageW, h: pageH } = canvasSizeRef.current;
+      // Defensive: make sure the buffer still has the padding around the
+      // page. setCanvasSize already does this on size changes, but loads
+      // that come through without a setCanvasSize call (initial mount on
+      // a different-sized template) need it too.
+      canvas.setDimensions({ width: pageW + 2 * PAGE_PAD, height: pageH + 2 * PAGE_PAD });
+      applyDisplayCss(canvas, pageW, pageH);
+    }
     canvas.backgroundColor = "#1A1A1A";  // gutter stays dark — page is drawn by the boundary rect
     canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
 
@@ -2356,7 +2386,33 @@ export function CanvasEditor({
     async function renderSlideBlob(i: number): Promise<Blob> {
       switchSlide(i);
       await new Promise((r) => setTimeout(r, 120));
-      const dataUrl = canvas!.toDataURL({ format: "png", multiplier: 2 });
+      // Crop to the page area only. The canvas pixel buffer is page + PAD on
+      // every side (so selection chrome on out-of-page objects stays visible
+      // while editing), but the downloaded PNG should be exactly the 1080×1350
+      // — or whatever — design surface. Hide the page boundary stroke for the
+      // duration of the export so its 1px outline doesn't bleed into the crop
+      // edge, then restore it.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pb = (canvas as any).__pageBoundary;
+      const savedStroke = pb?.stroke;
+      const savedStrokeWidth = pb?.strokeWidth;
+      if (pb) {
+        pb.set({ stroke: null, strokeWidth: 0 });
+        canvas!.renderAll();
+      }
+      const { w: pageW, h: pageH } = canvasSizeRef.current;
+      const dataUrl = canvas!.toDataURL({
+        format: "png",
+        multiplier: 2,
+        left: PAGE_PAD,
+        top: PAGE_PAD,
+        width: pageW,
+        height: pageH,
+      });
+      if (pb) {
+        pb.set({ stroke: savedStroke, strokeWidth: savedStrokeWidth });
+        canvas!.renderAll();
+      }
       return (await fetch(dataUrl)).blob();
     }
 

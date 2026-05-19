@@ -353,7 +353,11 @@ async def generate_content(
             ingested = await ingest_post_by_url_via_hiker(url, user.id, db)
             if ingested.id not in ref_ids:
                 ref_ids.append(ingested.id)
-                ingested_for_extraction.append(ingested)
+            # Always try vision extraction for an explicitly-passed URL, even if
+            # the post was previously ingested and is already in ref_ids — the
+            # user is asking for *this URL's* content, not a generic re-mix of
+            # the ref-set.
+            ingested_for_extraction.append(ingested)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"URL 수집 실패 ({url}): {e}")
 

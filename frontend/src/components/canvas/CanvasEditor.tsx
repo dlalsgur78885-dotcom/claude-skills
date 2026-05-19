@@ -3370,7 +3370,11 @@ export function CanvasEditor({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: "var(--bg-subtle)",
+            // Match the fabric canvas gutter (#0F0F0F) so the workspace reads
+            // as one continuous surface from the page edge all the way out
+            // to the side panels — no visible boundary between the PAD band
+            // and the surrounding viewport.
+            background: "var(--bg-app)",
             padding: 24,
             position: "relative",
             overflow: "hidden", // ← clip zoomed/panned canvas so it doesn't spill into side panels

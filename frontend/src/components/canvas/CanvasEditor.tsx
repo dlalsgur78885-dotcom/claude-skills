@@ -3382,9 +3382,10 @@ export function CanvasEditor({
         >
           <div
             style={{
-              borderRadius: 8,
-              boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
-              overflow: "hidden",
+              // No border-radius / no box-shadow — the canvas gutter is now
+              // the same color as the surrounding viewport, so any cardlike
+              // chrome here just reads as a halo between the two and breaks
+              // the "one continuous workspace" feeling the user wanted.
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
               transformOrigin: "center",
               transition: "transform 0.06s ease-out",

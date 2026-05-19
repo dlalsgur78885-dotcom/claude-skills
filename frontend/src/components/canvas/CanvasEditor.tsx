@@ -962,13 +962,23 @@ export function CanvasEditor({
             const proxied = proxiedImageUrl(obj.src);
             const img = await fabric.FabricImage.fromURL(proxied, { crossOrigin: "anonymous" });
 
-            // Map source design-space coords to current canvas dims.
+            // Map source design-space coords to current PAGE dims (not the
+            // padded buffer). Object coords are page-relative (0..pageW), and
+            // viewportTransform already translates them by PAGE_PAD at render
+            // time — multiplying by canvas.getWidth() (= pageW + 2·PAGE_PAD)
+            // expands every coordinate by ~2.1× and pushes grid cells past
+            // the page edge. Use the page size for the ratio so a 1:1 design
+            // hands back the original coords (sourceW == pageW → ratio == 1).
             const cW = canvas.getWidth();
             const cH = canvas.getHeight();
-            const targetL = ((obj.left || 0) / sourceW) * cW;
-            const targetT = ((obj.top || 0) / sourceH) * cH;
-            const targetW = ((obj.width || sourceW) / sourceW) * cW;
-            const targetH = ((obj.height || sourceH) / sourceH) * cH;
+            const pageWLocal = cW - 2 * PAGE_PAD;
+            const pageHLocal = cH - 2 * PAGE_PAD;
+            const ratioX = pageWLocal / sourceW;
+            const ratioY = pageHLocal / sourceH;
+            const targetL = (obj.left || 0) * ratioX;
+            const targetT = (obj.top || 0) * ratioY;
+            const targetW = (obj.width || sourceW) * ratioX;
+            const targetH = (obj.height || sourceH) * ratioY;
 
             const fw = img.width || targetW;
             const fh = img.height || targetH;

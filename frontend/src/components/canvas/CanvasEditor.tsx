@@ -55,7 +55,57 @@ function fitToViewport(
   const offsetX = (vpW - pageW * scale) / 2 + panX;
   const offsetY = (vpH - pageH * scale) / 2 + panY;
   canvas.setViewportTransform([scale, 0, 0, scale, offsetX, offsetY]);
+  // Canvas-level clip: pixel-buffer coordinates of the page rect after the
+  // viewport transform. Any fill outside this rect (i.e. inside the PAD) is
+  // automatically hidden — even for objects with their own clipPath (e.g.
+  // cover-fit images). The PAD ghost-outline hook can then paint just the
+  // bbox stroke on top.
+  setCanvasPageClip(canvas, offsetX, offsetY, pageW * scale, pageH * scale);
   return { vpW, vpH, fitScale: scale, offsetX, offsetY };
+}
+
+/** Set or refresh the canvas-level clipPath so anything drawn outside the
+ *  page rect (the PAD band) is clipped away. Done in pixel-buffer coords
+ *  via `absolutePositioned: true` so the clip survives the viewportTransform. */
+function setCanvasPageClip(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  canvas: any,
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const existing: any = canvas.clipPath;
+  if (existing && typeof existing.set === "function") {
+    existing.set({ left, top, width, height });
+    existing.setCoords?.();
+    return;
+  }
+  // Build lazily — we don't import fabric synchronously at module scope, so
+  // use whatever clipPath was already attached or skip until next render.
+  // The init effect attaches a fresh one via fabric.Rect; subsequent calls
+  // just resize it.
+}
+
+/** Attach the initial canvas.clipPath rect. Called once after fabric is
+ *  available. */
+function attachInitialPageClip(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  canvas: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  fabric: any,
+) {
+  if (canvas.clipPath) return;
+  const vt = canvas.viewportTransform || [1, 0, 0, 1, 0, 0];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pb: any = canvas.__pageBoundary;
+  const w = (pb?.width || 1080) * vt[0];
+  const h = (pb?.height || 1350) * vt[3];
+  canvas.clipPath = new fabric.Rect({
+    left: vt[4], top: vt[5], width: w, height: h,
+    absolutePositioned: true,
+  });
 }
 
 /** Add or refresh the page-boundary rect on a canvas. Called from the initial
@@ -456,24 +506,26 @@ export function CanvasEditor({
       // Fit page into the viewport rect (camera scales + centers).
       fitToViewport(canvas, initW, initH, canvasViewportRef.current);
       ensurePageBoundary(canvas, fabric, initW, initH, "#FFFFFF");
+      attachInitialPageClip(canvas, fabric);
+      // The page-boundary rect lives at (0,0,pageW,pageH) in object space.
+      // canvas.clipPath is in pixel-buffer space, so the boundary is already
+      // inside it — but the canvas.clipPath would otherwise hide it too if
+      // sizes drifted. Mark the boundary as not affected by the canvas clip.
+      // (Fabric currently has no per-object "ignore canvas clip", so we
+      // accept the duplicate clip: page boundary fits exactly inside it.)
 
-      // Outline-only PAD: after fabric finishes drawing every object, paint
-      // the area outside the page rect with the app background and re-stroke
-      // each object's bounding box in the selection accent. Net effect — the
-      // page area shows objects normally, everything outside shows only
-      // wireframe outlines that mark where they are.
+      // Outline-only PAD: object fills are already hidden by the canvas-level
+      // clipPath (set in fitToViewport). All we do here is draw the
+      // bounding-box stroke for every object that pokes outside the page,
+      // clipped to the PAD region so the stroke never shows up on top of
+      // the in-page rendering.
       canvas.on("after:render", () => {
-        // fabric.Canvas itself has no .getContext — reach into the underlying
-        // <canvas> element for the 2D context fabric just finished drawing
-        // into. (canvas.getContext?.() returning undefined was why an earlier
-        // attempt at this hook silently did nothing.)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const ctx: CanvasRenderingContext2D | null = canvas.lowerCanvasEl?.getContext?.("2d") || null;
         if (!ctx) return;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const pb = (canvas as any).__pageBoundary;
         if (!pb) return;
-        // Page rect in pixel-buffer (post-viewport-transform) coords.
         const vt = canvas.viewportTransform || [1, 0, 0, 1, 0, 0];
         const scale = vt[0];
         const pageX = vt[4];
@@ -484,30 +536,14 @@ export function CanvasEditor({
         const cH = canvas.getHeight();
 
         ctx.save();
-        // Reset any transform fabric left applied so our coords are raw pixels.
         ctx.setTransform(1, 0, 0, 1, 0, 0);
-        // Cover PAD bands with the gutter color so anything fabric just drew
-        // outside the page rect gets erased visually.
-        ctx.fillStyle = "#0F0F0F";
-        // Top
-        if (pageY > 0) ctx.fillRect(0, 0, cW, pageY);
-        // Bottom
-        if (pageY + pagePxH < cH) ctx.fillRect(0, pageY + pagePxH, cW, cH - (pageY + pagePxH));
-        // Left
-        if (pageX > 0) ctx.fillRect(0, pageY, pageX, pagePxH);
-        // Right
-        if (pageX + pagePxW < cW) ctx.fillRect(pageX + pagePxW, pageY, cW - (pageX + pagePxW), pagePxH);
-
-        // Clip subsequent draws to the PAD area only — outer canvas rect with
-        // the page rect punched out via the even-odd fill rule. This keeps
-        // the bounding-box stroke from showing up over objects inside the
-        // page (where we want fabric's normal rendering to win).
+        // Punch the page rect out of the canvas rect so strokes only appear
+        // in the PAD band.
         ctx.beginPath();
         ctx.rect(0, 0, cW, cH);
         ctx.rect(pageX, pageY, pagePxW, pagePxH);
         ctx.clip("evenodd");
 
-        // Stroke the bounding box of every object that pokes outside the page.
         ctx.strokeStyle = "#3CC8FF";
         ctx.lineWidth = 1;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -515,14 +551,12 @@ export function CanvasEditor({
           if (!obj || obj.visible === false) continue;
           if (obj.data?.kind === "page_boundary") continue;
           const r = obj.getBoundingRect();
-          // Skip if completely inside the page — nothing for the PAD clip to show.
           const fullyInside =
             r.left >= pageX &&
             r.top >= pageY &&
             r.left + r.width <= pageX + pagePxW &&
             r.top + r.height <= pageY + pagePxH;
           if (fullyInside) continue;
-          // Half-pixel offset gives a crisp 1px line.
           ctx.strokeRect(r.left + 0.5, r.top + 0.5, r.width, r.height);
         }
         ctx.restore();

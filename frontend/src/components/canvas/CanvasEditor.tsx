@@ -832,9 +832,15 @@ export function CanvasEditor({
     setBgColor(bgFill);
 
     if (looksFabric) {
+      // Some legacy slides were saved with a canvas-level clipPath baked into
+      // their JSON (left over from a thumbnail-renderer round-trip). When that
+      // clip is restored via loadFromJSON it crops the whole editor view to a
+      // sub-rectangle of the page, hiding most of the content. Strip it.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cleanData = { ...(slideData as any), clipPath: null };
       // Fabric round-trip path
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (canvas as any).loadFromJSON(slideData).then(async () => {
+      (canvas as any).loadFromJSON(cleanData).then(async () => {
         // loadFromJSON reapplies the dimensions / backgroundColor / viewport
         // transform that were baked into the saved JSON — i.e. page-sized
         // buffer, page-color gutter, identity transform. Re-establish our
@@ -844,6 +850,10 @@ export function CanvasEditor({
         applyDisplayCss(canvas, pageW, pageH);
         canvas.backgroundColor = "#0F0F0F";  // gutter blends with app bg
         canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
+        // Defensive: even if a future fabric version re-applies clipPath after
+        // resolve, null it again so the editor view stays unclipped.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (canvas as any).clipPath = null;
         const fabric = await getFabric();
         ensurePageBoundary(canvas, fabric, pageW, pageH, bgFill);
         markBackdropObjects(canvas);

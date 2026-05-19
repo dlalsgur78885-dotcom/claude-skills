@@ -17,11 +17,11 @@ const DISPLAY_MAX = 600;
 // Result: selection chrome (border + handles) on objects that extend past the
 // page is no longer clipped by the canvas edge.
 //
-// 400 gives enough room to drag elements ~37% past the page edge while
-// keeping the page itself big enough to read on smaller viewports. Bigger
-// values shrink the page in display space; smaller values clip selection
-// handles on oversized images.
-const PAGE_PAD = 400;
+// Padding wide enough that the surrounding band reads as real workspace
+// (~55% of the page width on each side) — small enough that the page itself
+// still takes the central ~45% of the canvas display. Adjust together with
+// DISPLAY_MAX above.
+const PAGE_PAD = 600;
 
 function displayDims(w: number, h: number) {
   // Display size of the full padded buffer (page + padding). This is what

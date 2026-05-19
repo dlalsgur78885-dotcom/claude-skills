@@ -28,7 +28,9 @@ _LAYOUT_PREFERENCE = {
     "cta":   ["phone_mockup", "fullbg_overlay", "photo_with_caption", "single_image", "text_only"],
     # grid/list/solo body slides: try grids first, then photo+caption, else fallbacks
     "content_grid":  ["grid_2x2", "grid_3x1", "grid_1x2", "list_vertical", "photo_with_caption", "single_image"],
-    "content_list":  ["list_vertical", "grid_3x1", "grid_2x2", "photo_with_caption", "single_image"],
+    # 2-item slides: prefer a paired layout (1×2 or 2×1) over a generic list,
+    # otherwise items=2 falls through to fullbg_overlay and no cells render.
+    "content_list":  ["grid_1x2", "grid_2x1", "list_vertical", "grid_3x1", "grid_2x2", "photo_with_caption", "single_image"],
     "content_solo":  ["photo_with_caption", "single_image", "fullbg_overlay", "text_only"],
 }
 

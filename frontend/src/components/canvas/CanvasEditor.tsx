@@ -1757,22 +1757,32 @@ export function CanvasEditor({
       });
       pushUndo();
       const img = await fabric.FabricImage.fromURL(dataUrl, { crossOrigin: "anonymous" });
-      // Fit the image inside the canvas with some breathing room (max 80% of
-      // either dimension); preserve aspect ratio; center it.
-      const cw = canvas.getWidth();
-      const ch = canvas.getHeight();
-      const iw = img.width || cw;
-      const ih = img.height || ch;
-      const maxW = cw * 0.8;
-      const maxH = ch * 0.8;
+      // Fit the image inside the PAGE (export area) with some breathing room
+      // (max 80% of either dimension); preserve aspect ratio; center it.
+      //
+      // ⚠ canvas.getWidth()/getHeight() return the BUFFER size (page + 2·PAD),
+      // not the page. Using them here would drop the image in the middle of
+      // the buffer — i.e. deep inside the pad area, far outside the page —
+      // which is exactly the "added images appear outside the canvas" bug
+      // from user feedback. Resolve to the page rect instead.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pb = (canvas as any).__pageBoundary;
+      const pageW = (pb?.width as number) || canvas.getWidth();
+      const pageH = (pb?.height as number) || canvas.getHeight();
+      const iw = img.width || pageW;
+      const ih = img.height || pageH;
+      const maxW = pageW * 0.8;
+      const maxH = pageH * 0.8;
       const scale = Math.min(1, maxW / iw, maxH / ih);
       const finalW = iw * scale;
       const finalH = ih * scale;
       img.set({
         originX: "left",
         originY: "top",
-        left: Math.round((cw - finalW) / 2),
-        top: Math.round((ch - finalH) / 2),
+        // Page coordinates are (0, 0) → (pageW, pageH); fabric's viewportTransform
+        // shifts everything by PAGE_PAD at render time, so we don't add PAD here.
+        left: Math.round((pageW - finalW) / 2),
+        top: Math.round((pageH - finalH) / 2),
         scaleX: scale,
         scaleY: scale,
       });
@@ -3085,15 +3095,20 @@ export function CanvasEditor({
         const fabric = await getFabric();
         try {
           const img = await fabric.FabricImage.fromURL(dataUrl);
-          // Fit the pasted image into the canvas, centered.
-          const cw = canvas.getWidth();
-          const ch = canvas.getHeight();
-          const iw = img.width || cw;
-          const ih = img.height || ch;
-          const scale = Math.min(1, (cw * 0.6) / iw, (ch * 0.6) / ih);
+          // Fit the pasted image into the PAGE (export area), centered.
+          // canvas.getWidth()/getHeight() return the BUFFER size (page + 2·PAD)
+          // and would drop the image deep in the pad area — same bug as the
+          // "이미지 추가" button path. Use the page boundary's dimensions.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const pb = (canvas as any).__pageBoundary;
+          const pageW = (pb?.width as number) || canvas.getWidth();
+          const pageH = (pb?.height as number) || canvas.getHeight();
+          const iw = img.width || pageW;
+          const ih = img.height || pageH;
+          const scale = Math.min(1, (pageW * 0.6) / iw, (pageH * 0.6) / ih);
           img.set({
-            left: Math.round((cw - iw * scale) / 2),
-            top: Math.round((ch - ih * scale) / 2),
+            left: Math.round((pageW - iw * scale) / 2),
+            top: Math.round((pageH - ih * scale) / 2),
             scaleX: scale,
             scaleY: scale,
             originX: "left",

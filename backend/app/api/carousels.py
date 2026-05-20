@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 from app.database import get_db
 from app.models.user import User
 from app.models.carousel import GeneratedCarousel, CarouselStatus
+from app.models.post import CollectedPost
 from app.schemas.carousel import (
     CarouselCreate,
     CarouselUpdate,
@@ -21,6 +22,25 @@ from app.schemas.carousel import (
 )
 from app.api.auth import get_current_user
 from app.agents.orchestrator import Orchestrator
+
+
+async def _hydrate_source_url(carousel: GeneratedCarousel, db: AsyncSession) -> CarouselResponse:
+    """Build a CarouselResponse with `source_post_url` joined in.
+
+    The model deliberately doesn't carry a SQLAlchemy relationship to
+    CollectedPost (carousels survive after the source row gets soft-deleted),
+    so we look the URL up on demand. Returns None for the field when the
+    source post no longer exists or the carousel was created from scratch.
+    """
+    source_url: str | None = None
+    if carousel.source_post_id is not None:
+        post = await db.execute(
+            select(CollectedPost.post_url).where(CollectedPost.id == carousel.source_post_id)
+        )
+        source_url = post.scalar_one_or_none()
+    base = CarouselResponse.model_validate(carousel)
+    base.source_post_url = source_url
+    return base
 
 router = APIRouter(prefix="/carousels", tags=["carousels"])
 
@@ -81,7 +101,7 @@ async def get_carousel(
     carousel = result.scalar_one_or_none()
     if not carousel:
         raise HTTPException(status_code=404, detail="캐러셀을 찾을 수 없습니다")
-    return carousel
+    return await _hydrate_source_url(carousel, db)
 
 
 @router.patch("/{carousel_id}", response_model=CarouselResponse)

@@ -187,6 +187,10 @@ interface CanvasEditorProps {
   // backend canvas_data and invisible inside the editor.
   caption?: string;
   hashtags?: string[];
+  // Instagram URL of the benchmark post this carousel was generated from.
+  // Surfaced below the caption button as "원본 링크 보기" so users can
+  // jump back to the reference without leaving the editor.
+  sourcePostUrl?: string;
 }
 
 export function CanvasEditor({
@@ -201,6 +205,7 @@ export function CanvasEditor({
   onRenameTitle,
   caption,
   hashtags,
+  sourcePostUrl,
 }: CanvasEditorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -3611,6 +3616,7 @@ export function CanvasEditor({
           onApplyBgToAll={applyBgToAll}
           caption={caption}
           hashtags={hashtags}
+          sourcePostUrl={sourcePostUrl}
         />
 
         {/* Center: Canvas (also the drop target for image files) */}

@@ -16,6 +16,7 @@ export default function EditorPage() {
   const [carouselMeta, setCarouselMeta] = useState<Record<string, any>>({});
   const [status, setStatus] = useState<"draft" | "editing" | "finalized">("draft");
   const [title, setTitle] = useState<string>("");
+  const [sourcePostUrl, setSourcePostUrl] = useState<string>("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -44,6 +45,10 @@ export default function EditorPage() {
         });
         setStatus((carousel.status as "draft" | "editing" | "finalized") || "draft");
         setTitle(carousel.title || "");
+        // Surface the benchmark post's Instagram URL in the toolbar so users can
+        // jump back to the source without leaving the editor. Backend hydrates
+        // this field via _hydrate_source_url (see backend/app/api/carousels.py).
+        setSourcePostUrl(typeof carousel.source_post_url === "string" ? carousel.source_post_url : "");
       } catch (err) {
         setError(err instanceof Error ? err.message : "캐러셀을 불러올 수 없습니다");
       }
@@ -165,6 +170,7 @@ export default function EditorPage() {
         onRenameTitle={handleRenameTitle}
         caption={typeof carouselMeta.caption === "string" ? carouselMeta.caption : ""}
         hashtags={Array.isArray(carouselMeta.hashtags) ? carouselMeta.hashtags : []}
+        sourcePostUrl={sourcePostUrl}
       />
     </div>
   );

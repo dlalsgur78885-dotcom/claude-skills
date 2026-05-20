@@ -41,12 +41,44 @@ function displayDims(w: number, h: number) {
 // other heuristics can recognize it.
 const PAGE_BOUNDARY_KIND = "page_boundary";
 
-// Module-level slot for the in-memory object clipboard so Ctrl+C in /editor/50
-// remains pasteable after Next.js route-changes to /editor/51. Per-component
-// useRefs are wiped at unmount, which broke cross-page paste. Wrapped in a
-// plain object so call sites that expect `.current` semantics keep working.
+// Cross-page clipboard for canvas objects (Ctrl+C / Ctrl+V).
+//
+// Layer 1 — in-memory module slot (objectClipboardSlot.value): holds the live
+// fabric object reference for INSTANT paste. Survives Next.js client-side
+// nav (the JS module stays loaded) but NOT a full page reload.
+//
+// Layer 2 — sessionStorage('canvas.objectClipboard'): JSON snapshot via
+// fabric's toObject(). Survives full page reloads AND URL-bar navigation
+// to a different /editor/N. Reloaded into a live fabric object on demand.
+//
+// Why both: the in-memory layer is free / instant (no enliven/image refetch),
+// and most paste workflows happen within the same tab session without a
+// reload. The session layer is the fallback that fixes user feedback —
+// "/editor/50 → /editor/51 로 복붙이 안된다" — which manifests when the
+// user types the new URL in the address bar (full reload wipes module state).
+const CLIPBOARD_STORAGE_KEY = "canvas.objectClipboard";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const objectClipboardSlot: { value: any } = { value: null };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function persistClipboard(obj: any) {
+  try {
+    if (typeof sessionStorage === "undefined") return;
+    // toObject() serializes core props; image needs `src` included explicitly.
+    const data = obj.toObject?.(["src"]);
+    if (data) sessionStorage.setItem(CLIPBOARD_STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.warn("[clipboard] persist failed", e);
+  }
+}
+function readPersistedClipboard(): unknown | null {
+  try {
+    if (typeof sessionStorage === "undefined") return null;
+    const raw = sessionStorage.getItem(CLIPBOARD_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Stamp the CSS size of the fabric canvas DOM nodes from a (pageW, pageH).
  *  setDimensions() updates the bitmap buffer AND the CSS by default, which
@@ -2982,22 +3014,28 @@ export function CanvasEditor({
         return;
       }
 
-      // Ctrl/Cmd + C → copy active object into in-memory clipboard
+      // Ctrl/Cmd + C → copy active object. Writes BOTH layers:
+      //   (1) live fabric clone in objectClipboardSlot.value (instant paste,
+      //       same tab session, including across Next.js client-side nav)
+      //   (2) sessionStorage JSON snapshot (survives full reload / URL-bar nav
+      //       to a different /editor/N — the actual user-reported failure mode)
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && active && !active.isEditing) {
         e.preventDefault();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         Promise.resolve((active as any).clone()).then((cloned) => {
           objectClipboardSlot.value = cloned;
+          persistClipboard(active);
         }).catch((err) => console.warn("[copy] clone failed", err));
         return;
       }
 
-      // Ctrl/Cmd + X → cut: copy then delete
+      // Ctrl/Cmd + X → cut: copy then delete. Same two-layer write.
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "x" && active && !active.isEditing) {
         e.preventDefault();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         Promise.resolve((active as any).clone()).then((cloned) => {
           objectClipboardSlot.value = cloned;
+          persistClipboard(active);
           deleteSelected();
         }).catch((err) => console.warn("[cut] clone failed", err));
         return;
@@ -3059,16 +3097,49 @@ export function CanvasEditor({
       // screenshot so they obviously want THAT, not their last copied shape).
       const hasImage = items && Array.from(items).some((it) => it.type.startsWith("image/"));
 
-      if (!hasImage && objectClipboardSlot.value) {
-        // Paste the previously copied/cut canvas object
+      // Paste path: prefer the in-memory live clone (fast, no asset refetch),
+      // fall back to the sessionStorage snapshot when the module slot is empty
+      // — that fallback is what makes Ctrl+C in /editor/A still pasteable after
+      // a full reload into /editor/B (URL-bar nav, refresh, restored tab).
+      const persisted = !objectClipboardSlot.value ? readPersistedClipboard() : null;
+      if (!hasImage && (objectClipboardSlot.value || persisted)) {
         e.preventDefault();
         try {
-          const fabric = await getFabric();
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const cloned: any = await Promise.resolve(objectClipboardSlot.value.clone());
+          const fabric: any = await getFabric();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let cloned: any;
+          let baseLeft: number;
+          let baseTop: number;
+
+          if (objectClipboardSlot.value) {
+            // Fast path: clone the live fabric reference.
+            cloned = await Promise.resolve(objectClipboardSlot.value.clone());
+            baseLeft = objectClipboardSlot.value.left || 0;
+            baseTop = objectClipboardSlot.value.top || 0;
+          } else {
+            // Reload path: re-hydrate from the JSON snapshot in sessionStorage.
+            // fabric.util.enlivenObjects fetches any image src async and returns
+            // a fully-constructed fabric object ready to add to a canvas.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const data = persisted as any;
+            const enlivened: unknown = await new Promise((resolve, reject) => {
+              try {
+                const ret = fabric.util?.enlivenObjects?.([data]);
+                if (ret && typeof ret.then === "function") ret.then(resolve, reject);
+                else resolve(ret);
+              } catch (err) { reject(err); }
+            });
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            cloned = Array.isArray(enlivened) ? (enlivened as any[])[0] : enlivened;
+            if (!cloned) throw new Error("enlivenObjects returned nothing");
+            baseLeft = (data?.left as number) || 0;
+            baseTop = (data?.top as number) || 0;
+          }
+
           cloned.set({
-            left: (objectClipboardSlot.value.left || 0) + 24,
-            top: (objectClipboardSlot.value.top || 0) + 24,
+            left: baseLeft + 24,
+            top: baseTop + 24,
             originX: "left",
             originY: "top",
           });
@@ -3077,11 +3148,11 @@ export function CanvasEditor({
           canvas.setActiveObject(cloned);
           canvas.requestRenderAll();
           saveCurrentSlide();
-          // Update the in-memory clipboard so consecutive Ctrl+V keeps offsetting
+          // Refresh both layers so consecutive Ctrl+V keeps cascading.
           objectClipboardSlot.value = cloned;
-          void fabric;
+          persistClipboard(cloned);
         } catch (err) {
-          console.warn("[paste] object clone failed", err);
+          console.warn("[paste] object paste failed", err);
         }
         return;
       }

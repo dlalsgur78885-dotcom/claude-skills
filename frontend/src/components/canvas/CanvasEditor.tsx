@@ -86,12 +86,13 @@ function ensurePageBoundary(
       left: 0, top: 0,
       width: w, height: h,
       fill,
-      // Strong outline so the page edge is obvious regardless of how the
-      // slide content fills it — otherwise slides whose content sits inside
-      // a sub-region of the page (e.g. cover slides) read as "smaller" than
-      // slides whose grid fills the page edge to edge.
-      stroke: "#3CC8FF",
-      strokeWidth: 4,
+      // Page edge is no longer outlined — the workspace mask (rendered in
+      // CanvasEditor's after:render hook) already darkens everything outside
+      // the page, which gives a clean visual boundary without a hard line.
+      // The rect still exists as a non-visible marker so other code can
+      // detect the page (data.kind === "page_boundary").
+      stroke: undefined,
+      strokeWidth: 0,
       strokeUniform: true,
       selectable: false, evented: false,
       excludeFromExport: true,
@@ -105,8 +106,8 @@ function ensurePageBoundary(
   } else {
     pb.set({
       width: w, height: h, fill,
-      stroke: "#3CC8FF",
-      strokeWidth: 4,
+      stroke: undefined,
+      strokeWidth: 0,
       strokeUniform: true,
     });
     pb.setCoords();
@@ -547,37 +548,41 @@ export function CanvasEditor({
         ctx.fillRect(0, 0, bufW, bufH);
 
         // 2. Within the same outside-page clip, draw a dashed bbox outline
-        //    for each object that pokes past the page edge — so the user
-        //    still sees where these objects sit.
+        //    for each SELECTED object that pokes past the page edge — so the
+        //    user still sees where it sits while editing. Unselected
+        //    out-of-page objects stay hidden under the workspace mask
+        //    (intentional: keeps the pad area visually clean, matching the
+        //    fact that they won't appear in the export anyway).
         //    fabric's getBoundingRect returns object-space coords (no
         //    viewportTransform applied), so we project to buffer coords by
         //    hand using zoom + PAD.
-        ctx.strokeStyle = "#3CC8FF";
-        ctx.lineWidth = 2;
-        for (const obj of canvas.getObjects()) {
-          if (obj === pb) continue;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const o = obj as any;
-          if (o.excludeFromExport) continue;
-          const r = o.getBoundingRect();
-          const bx = r.left * z + PAGE_PAD;
-          const by = r.top * z + PAGE_PAD;
-          const bw = r.width * z;
-          const bh = r.height * z;
-          const fullyInside =
-            bx >= pageX0 && by >= pageY0 &&
-            bx + bw <= pageX1 && by + bh <= pageY1;
-          if (!fullyInside) ctx.strokeRect(bx, by, bw, bh);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const activeObjs: any[] = (canvas as any).getActiveObjects?.() || [];
+        if (activeObjs.length > 0) {
+          ctx.strokeStyle = "#3CC8FF";
+          ctx.lineWidth = 2;
+          for (const obj of activeObjs) {
+            if (obj === pb) continue;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const o = obj as any;
+            if (o.excludeFromExport) continue;
+            const r = o.getBoundingRect();
+            const bx = r.left * z + PAGE_PAD;
+            const by = r.top * z + PAGE_PAD;
+            const bw = r.width * z;
+            const bh = r.height * z;
+            const fullyInside =
+              bx >= pageX0 && by >= pageY0 &&
+              bx + bw <= pageX1 && by + bh <= pageY1;
+            if (!fullyInside) ctx.strokeRect(bx, by, bw, bh);
+          }
         }
         ctx.restore();
 
-        // 3. Page-edge stroke. Sits just outside the page at PAD-4..PAD so
-        //    the export crop (PAD..PAD+pageW) skips it.
-        ctx.save();
-        ctx.strokeStyle = "#3CC8FF";
-        ctx.lineWidth = 4;
-        ctx.strokeRect(PAGE_PAD - 2, PAGE_PAD - 2, pageW + 4, pageH + 4);
-        ctx.restore();
+        // 3. Page edge stroke removed by design — the workspace mask from
+        //    step 1 already darkens the surrounding pad area, which gives a
+        //    clean visual boundary without a hard cyan line distracting from
+        //    the slide content.
       });
 
       // Force the vivid red selection style onto every object that lands on

@@ -449,8 +449,15 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, onC
 
         {/* ──────────── AI TAB ──────────── */}
         {activeTab === "ai" && (<>
-          {isImage && onEnhance ? (
-            <div>
+          {isImage && (
+            <FilterPresetSection
+              selectedObject={selectedObject}
+              onUpdate={onUpdate}
+              labelStyle={labelStyle}
+            />
+          )}
+          {isImage && onEnhance && (
+            <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
               <label style={labelStyle}>
                 AI 화질 향상{imageCount > 1 ? ` · ${imageCount}개 선택` : ""}
               </label>
@@ -491,9 +498,10 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, onC
                 ))}
               </div>
             </div>
-          ) : (
+          )}
+          {!isImage && (
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.6 }}>
-              이미지를 선택하면 AI 화질 향상 옵션이 표시됩니다.
+              이미지를 선택하면 AI 기능이 표시됩니다.
             </div>
           )}
         </>)}
@@ -1294,6 +1302,120 @@ function ColorFillSection({ selectedObject, onUpdate, labelStyle, inputStyle }: 
   );
 }
 
+// ─── Image-only one-click filter presets (화사한/선명한/밝은/...) ───
+//
+// User feedback (carousel studio feedback slide 7): images need preset filters
+// like Miricanvas/Canva — pick a thumbnail, get a tuned combination of
+// brightness/contrast/saturation/sepia/etc. Fine-tuning still happens via the
+// sliders in the 효과 tab; this section is just the quick path.
+//
+// CSS filter() strings power the thumbnail previews so the user sees what
+// they'd get before clicking. The fabric-side `__filterPreset` handler in
+// CanvasEditor reuses the same recipe to swap the actual fabric filter slots.
+const FILTER_PRESETS: { key: string; label: string; css: string }[] = [
+  { key: "none",      label: "원본",     css: "" },
+  { key: "vivid",     label: "화사한",   css: "saturate(1.4) brightness(1.1)" },
+  { key: "sharp",     label: "선명한",   css: "contrast(1.3) saturate(1.2)" },
+  { key: "bright",    label: "밝은",     css: "brightness(1.2) contrast(1.05)" },
+  { key: "warm",      label: "따뜻한",   css: "sepia(0.3) saturate(1.2) brightness(1.05)" },
+  { key: "cool",      label: "시원한",   css: "hue-rotate(-10deg) saturate(1.15)" },
+  { key: "vintage",   label: "빈티지",   css: "sepia(0.5) contrast(1.1) saturate(0.8)" },
+  { key: "bw",        label: "흑백",     css: "grayscale(1) contrast(1.1)" },
+  { key: "cinematic", label: "영화같은", css: "contrast(1.15) saturate(0.85) brightness(0.95) sepia(0.15)" },
+  { key: "sunset",    label: "노을",     css: "sepia(0.4) saturate(1.4) hue-rotate(-15deg) brightness(1.05)" },
+  { key: "dreamy",    label: "몽환적",   css: "brightness(1.1) contrast(0.85) saturate(1.1) blur(0.4px)" },
+  { key: "faded",     label: "페이드",   css: "contrast(0.9) saturate(0.75) brightness(1.05) sepia(0.1)" },
+];
+
+function FilterPresetSection({
+  selectedObject,
+  onUpdate,
+  labelStyle,
+}: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  selectedObject: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onUpdate: (prop: string, value: any) => void;
+  labelStyle: React.CSSProperties;
+}) {
+  // Pull the original bitmap URL for thumbnail previews. Snapshot first, then
+  // the real fabric ref — the snapshot omits non-enumerable methods like
+  // getSrc(), so __fabricRef is the reliable path.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ref: any = selectedObject?.__fabricRef || selectedObject;
+  const src: string | undefined =
+    (typeof ref?.getSrc === "function" ? ref.getSrc() : null) ||
+    ref?._originalElement?.src ||
+    ref?.src;
+
+  const active: string | undefined =
+    selectedObject?.__filterPreset || ref?.__filterPreset || undefined;
+
+  return (
+    <div>
+      <label style={labelStyle}>필터 프리셋</label>
+      <p style={{ fontSize: 10, color: "var(--text-tertiary)", lineHeight: 1.5, margin: "0 0 8px" }}>
+        한 번에 적용. 효과 탭 슬라이더로 미세 조정 가능.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+        {FILTER_PRESETS.map((p) => {
+          const isActive = active ? active === p.key : p.key === "none";
+          return (
+            <button
+              key={p.key}
+              type="button"
+              onClick={() => onUpdate("__filterPreset", p.key)}
+              title={p.label}
+              style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                padding: 3, background: "transparent",
+                border: "1.5px solid",
+                borderColor: isActive ? "var(--accent)" : "transparent",
+                borderRadius: 6,
+                cursor: "pointer",
+              }}
+            >
+              <div
+                style={{
+                  width: "100%", aspectRatio: "1 / 1",
+                  borderRadius: 4, overflow: "hidden",
+                  background: "var(--bg-overlay)",
+                  border: "1px solid var(--border)",
+                  position: "relative",
+                }}
+              >
+                {src && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={src}
+                    alt={p.label}
+                    draggable={false}
+                    style={{
+                      width: "100%", height: "100%",
+                      objectFit: "cover", display: "block",
+                      filter: p.css,
+                    }}
+                  />
+                )}
+              </div>
+              <span
+                style={{
+                  fontSize: 10,
+                  color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
+                  fontWeight: isActive ? 600 : 400,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {p.label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Image-only photo adjustments (밝기/대비/채도/컬러톤/온도/선명·흐림) ───
 //
 // User feedback (carousel studio feedback slide 6): images need the same kind
@@ -1433,24 +1555,45 @@ function ImageAdjustmentsSection({
               >
                 {a.label}
               </span>
-              <span
+              <input
+                type="number"
+                inputMode="numeric"
                 aria-label={`${a.label} 값`}
+                min={a.min}
+                max={a.max}
+                step={1}
+                value={a.value}
+                onChange={(e) => {
+                  // type=number doesn't clamp until blur, so do it inline
+                  // so typing past the range snaps the canvas right away.
+                  const raw = e.target.value;
+                  if (raw === "" || raw === "-") {
+                    dispatch(a.prop, 0);
+                    return;
+                  }
+                  let n = Number(raw);
+                  if (Number.isNaN(n)) return;
+                  if (n > a.max) n = a.max;
+                  if (n < a.min) n = a.min;
+                  dispatch(a.prop, n);
+                }}
+                onFocus={(e) => e.currentTarget.select()}
                 style={{
-                  minWidth: 36,
+                  width: 56,
                   textAlign: "right",
-                  padding: "2px 6px",
+                  padding: "3px 6px",
                   fontSize: 12,
                   fontWeight: 600,
                   fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, monospace)",
-                  color: a.value === 0 ? "var(--text-tertiary)" : "var(--accent-text, var(--text-primary))",
+                  fontVariantNumeric: "tabular-nums",
+                  color: a.value === 0 ? "var(--text-tertiary)" : "var(--text-primary)",
                   background: a.value === 0 ? "transparent" : "var(--bg-overlay)",
                   borderRadius: 4,
-                  border: a.value === 0 ? "1px solid transparent" : "1px solid var(--border)",
-                  fontVariantNumeric: "tabular-nums",
+                  border: a.value === 0 ? "1px solid var(--border)" : "1px solid var(--accent)",
+                  outline: "none",
+                  boxSizing: "border-box",
                 }}
-              >
-                {a.value > 0 ? `+${a.value}` : a.value}
-              </span>
+              />
               <button
                 type="button"
                 onClick={() => dispatch(a.prop, 0)}

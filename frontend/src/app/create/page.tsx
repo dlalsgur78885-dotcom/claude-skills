@@ -503,8 +503,17 @@ export default function CreatePage() {
       // (the primary reference). Without this the carousel rendered with
       // source_post_id = null and the button never showed up — exactly the
       // /editor/72 case the user flagged after slide 5 deploy.
+      //
+      // Two upstream sources, in priority order:
+      //  1. refIds — set when entering /create from /posts (?refs=…). These
+      //     are existing collected_posts rows.
+      //  2. refPosts — populated by /carousels/generate-content when the user
+      //     pasted raw Instagram URLs and the backend scraped them inline.
+      //     We pick the first one so URL-paste users still get the button.
       const tplSlug = String(rendered.template_slug || "minimal");
-      const primaryRefId = refIds.length > 0 ? refIds[0] : null;
+      const primaryRefId = refIds.length > 0
+        ? refIds[0]
+        : (refPosts.length > 0 ? refPosts[0].id : null);
       const res = await api.createCarousel({
         title: (slides[0]?.headline || topic).replace(/\n/g, " "),
         template_id: tplSlug,

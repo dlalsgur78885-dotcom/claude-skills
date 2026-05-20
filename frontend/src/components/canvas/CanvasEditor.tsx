@@ -2759,6 +2759,27 @@ export function CanvasEditor({
       __saturation: { ctor: "Saturation", prop: "saturation", range: 1 }, // -1..1
       __hue:        { ctor: "HueRotation", prop: "rotation",  range: Math.PI }, // -π..π
     };
+    // Robust filter identity check: a filter saved in the DB and re-hydrated by
+    // toObject/fromObject can land back as a plain object (constructor.name ===
+    // "Object", but f.type === "Brightness"), as a class instance
+    // (constructor.name === "Brightness"), or — if fabric ever puts a static
+    // `type` on the class — as constructor.type. We have to look at all three
+    // slots, because matching only constructor.name was silently stripping
+    // nothing for any image whose filters round-tripped through canvas_data:
+    // every slider drag pushed a new Brightness alongside the old one and the
+    // DB grew a chain of dozens of duplicate filters that never get removed
+    // when the user dials back to 0. (Carousel 73 had ~80 stacked filters per
+    // image.)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const filterIs = (f: any, ctor: string): boolean => {
+      if (!f || typeof f !== "object") return false;
+      const lc = ctor.toLowerCase();
+      const candidates = [f.type, f.constructor?.type, f.constructor?.name];
+      return candidates.some((c) => {
+        const v = String(c || "").toLowerCase();
+        return v === lc || v.endsWith("." + lc);
+      });
+    };
     if (ADJUST_FILTER_MAP[prop]) {
       const cfg = ADJUST_FILTER_MAP[prop];
       (async () => {
@@ -2780,12 +2801,9 @@ export function CanvasEditor({
         for (const img of imgs) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const filters: any[] = Array.isArray(img.filters) ? img.filters : [];
-          // Strip whatever this slider owns (matched by constructor name OR
-          // serialized type string — both forms appear after toJSON round-trip).
-          const remaining = filters.filter((f) => {
-            const ft = f?.constructor?.name || f?.type || "";
-            return ft !== cfg.ctor && ft.toLowerCase() !== cfg.ctor.toLowerCase();
-          });
+          // Strip whatever this slider owns. filterIs() looks at f.type AND
+          // constructor.name — both forms appear after toJSON round-trip.
+          const remaining = filters.filter((f) => !filterIs(f, cfg.ctor));
           if (Math.abs(slider) > 0.5) {
             const Ctor = fabric.filters?.[cfg.ctor];
             if (Ctor) remaining.push(new Ctor({ [cfg.prop]: fabricVal }));
@@ -2838,8 +2856,7 @@ export function CanvasEditor({
           // ColorMatrix uses (e.g. future presets) should set their own marker
           // so this slider doesn't tear them out.
           const remaining = filters.filter((f) => {
-            const ft = f?.constructor?.name || f?.type || "";
-            if (ft !== "ColorMatrix" && ft.toLowerCase() !== "colormatrix") return true;
+            if (!filterIs(f, "ColorMatrix")) return true;
             return f.__adj !== "temperature";
           });
           if (Math.abs(slider) > 0.5 && fabric.filters?.ColorMatrix) {
@@ -2891,10 +2908,9 @@ export function CanvasEditor({
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const filters: any[] = Array.isArray(img.filters) ? img.filters : [];
           const remaining = filters.filter((f) => {
-            const ft = f?.constructor?.name || f?.type || "";
             // Strip any Blur OR any Convolute whose __adj marker is "sharpen".
-            if (ft === "Blur" || ft.toLowerCase() === "blur") return false;
-            if ((ft === "Convolute" || ft.toLowerCase() === "convolute") && f.__adj === "sharpen") return false;
+            if (filterIs(f, "Blur")) return false;
+            if (filterIs(f, "Convolute") && f.__adj === "sharpen") return false;
             return true;
           });
           if (slider < -0.5 && fabric.filters?.Blur) {
@@ -2951,10 +2967,7 @@ export function CanvasEditor({
           const filters: any[] = Array.isArray(img.filters) ? img.filters : [];
           // Strip existing BlendColor entries (regardless of whether we'll add
           // a new one below). Lets a single BlendColor own the "tint" slot.
-          const remaining = filters.filter((f) => {
-            const ft = f?.type || f?.constructor?.name || "";
-            return ft !== "BlendColor" && ft !== "blend-color";
-          });
+          const remaining = filters.filter((f) => !filterIs(f, "BlendColor"));
           if (value && value.color) {
             const alpha = Math.max(0, Math.min(1, Number(value.intensity) / 100));
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -3038,27 +3051,18 @@ export function CanvasEditor({
         // production/turbopack builds where class names are mangled to "da"
         // etc., so we have to consult the type fields too — otherwise the
         // strip step below misses every existing filter and presets just
-        // accumulate on top of each other.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const ctorMatches = (f: any, ctor: string) => {
-          if (!f || typeof f !== "object") return false;
-          const lc = ctor.toLowerCase();
-          const candidates = [f.type, f.constructor?.type, f.constructor?.name];
-          return candidates.some((c) => {
-            const v = String(c || "").toLowerCase();
-            return v === lc || v.endsWith("." + lc);
-          });
-        };
+        // accumulate on top of each other. Uses the shared filterIs() defined
+        // above so identity matching stays consistent across all 5 handlers.
         for (const img of imgs) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const filters: any[] = Array.isArray(img.filters) ? img.filters : [];
           const remaining = filters.filter((f) => {
-            if (ctorMatches(f, "Brightness")) return false;
-            if (ctorMatches(f, "Contrast")) return false;
-            if (ctorMatches(f, "Saturation")) return false;
-            if (ctorMatches(f, "Sepia")) return false;
-            if (ctorMatches(f, "Grayscale")) return false;
-            if (ctorMatches(f, "ColorMatrix") && f.__adj === "temperature") return false;
+            if (filterIs(f, "Brightness")) return false;
+            if (filterIs(f, "Contrast")) return false;
+            if (filterIs(f, "Saturation")) return false;
+            if (filterIs(f, "Sepia")) return false;
+            if (filterIs(f, "Grayscale")) return false;
+            if (filterIs(f, "ColorMatrix") && f.__adj === "temperature") return false;
             return true;
           });
           if (recipe.brightness != null && fabric.filters?.Brightness) {

@@ -3101,19 +3101,20 @@ export function CanvasEditor({
         vintage:   { sepia: true, contrast: 0.1, saturation: -0.2 },
         bw:        { grayscale: true, contrast: 0.1 },
         // Cinematic teal/orange: lift contrast, drop saturation, slight warm
-        // cast. CSS preview also adds 15% sepia which we approximate with a
-        // small temperature lift (fabric Sepia is on/off only).
-        cinematic: { brightness: -0.05, contrast: 0.15, saturation: -0.15, temperature: 0.05 },
+        // cast. Values are tuned to read on screen — first-pass numbers from
+        // CSS-Tricks-style "subtle" recipes (±0.05/0.15) were imperceptible on
+        // the canvas next to the punchier vivid/sharp presets that use 0.3–0.4.
+        cinematic: { brightness: -0.1, contrast: 0.3, saturation: -0.3, temperature: 0.1 },
         // Stronger warm than `warm`: punchier saturation + larger temperature
         // lift to mimic golden-hour skies.
-        sunset:    { brightness: 0.05, saturation: 0.4, temperature: 0.2 },
+        sunset:    { brightness: 0.1, saturation: 0.3, temperature: 0.3 },
         // Soft pastel — drops contrast (no other preset does this) for the
         // dreamy glow. CSS preview adds a tiny blur; we leave Blur to the
         // sharpness slider so users can layer it themselves.
-        dreamy:    { brightness: 0.1, contrast: -0.15, saturation: 0.1 },
+        dreamy:    { brightness: 0.15, contrast: -0.25, saturation: 0.15 },
         // Washed-film fade — inverse of vivid/sharp: low contrast + low
-        // saturation. Tiny temperature lift for the warm cream cast.
-        faded:     { brightness: 0.05, contrast: -0.1, saturation: -0.25, temperature: 0.05 },
+        // saturation. Small temperature lift for the warm cream cast.
+        faded:     { brightness: 0.1, contrast: -0.2, saturation: -0.35, temperature: 0.05 },
       };
       const presetKey = String(value || "none");
       const recipe = PRESETS[presetKey] || {};

@@ -1321,10 +1321,10 @@ const FILTER_PRESETS: { key: string; label: string; css: string }[] = [
   { key: "cool",      label: "시원한",   css: "hue-rotate(-10deg) saturate(1.15)" },
   { key: "vintage",   label: "빈티지",   css: "sepia(0.5) contrast(1.1) saturate(0.8)" },
   { key: "bw",        label: "흑백",     css: "grayscale(1) contrast(1.1)" },
-  { key: "cinematic", label: "영화같은", css: "contrast(1.15) saturate(0.85) brightness(0.95) sepia(0.15)" },
-  { key: "sunset",    label: "노을",     css: "sepia(0.4) saturate(1.4) hue-rotate(-15deg) brightness(1.05)" },
-  { key: "dreamy",    label: "몽환적",   css: "brightness(1.1) contrast(0.85) saturate(1.1) blur(0.4px)" },
-  { key: "faded",     label: "페이드",   css: "contrast(0.9) saturate(0.75) brightness(1.05) sepia(0.1)" },
+  { key: "cinematic", label: "영화같은", css: "contrast(1.3) saturate(0.7) brightness(0.9) sepia(0.2)" },
+  { key: "sunset",    label: "노을",     css: "sepia(0.4) saturate(1.3) hue-rotate(-20deg) brightness(1.1)" },
+  { key: "dreamy",    label: "몽환적",   css: "brightness(1.15) contrast(0.75) saturate(1.15) blur(0.5px)" },
+  { key: "faded",     label: "페이드",   css: "contrast(0.8) saturate(0.65) brightness(1.1) sepia(0.15)" },
 ];
 
 function FilterPresetSection({

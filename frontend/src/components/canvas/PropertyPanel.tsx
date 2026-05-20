@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { TransparentToggle } from "./TransparentToggle";
+import { TransparentToggle, isTransparentValue } from "./TransparentToggle";
 
 interface PropertyPanelProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -284,8 +284,26 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, onC
             />
             <TransparentToggle
               size={32}
-              value={hasCharRange ? pendingColor : selectedObject.fill}
+              // Image objects: fabric.Image renders its bitmap, ignoring fill,
+              // so toggling fill="transparent" has no visible effect — exactly
+              // the "투명버튼 적용 안 됨" complaint on /editor/72. For images
+              // the toggle reads/writes opacity (0 = invisible, 1 = visible)
+              // instead. Text / shapes keep the fill-based semantics where the
+              // native fill IS the rendered color.
+              value={
+                hasCharRange
+                  ? pendingColor
+                  : isImage
+                    ? ((selectedObject.opacity ?? 1) === 0 ? "transparent" : "#FFFFFF")
+                    : selectedObject.fill
+              }
               onChange={(next) => {
+                if (isImage && !hasCharRange) {
+                  // Map transparent ↔ visible to opacity 0 ↔ 1. The existing
+                  // 불투명도 slider tracks the same field so the two stay in sync.
+                  onUpdate("opacity", isTransparentValue(next) ? 0 : 1);
+                  return;
+                }
                 setPendingColor(next);
                 onUpdate("fill", next);
               }}

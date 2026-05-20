@@ -670,6 +670,14 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, onC
           <>
             <OutlineSection selectedObject={selectedObject} isText={isText} onUpdate={onUpdate} labelStyle={labelStyle} inputStyle={inputStyle} />
             <ShadowSection selectedObject={selectedObject} onUpdate={onUpdate} labelStyle={labelStyle} inputStyle={inputStyle} />
+            {isImage && (
+              <ImageAdjustmentsSection
+                selectedObject={selectedObject}
+                onUpdate={onUpdate}
+                labelStyle={labelStyle}
+                inputStyle={inputStyle}
+              />
+            )}
           </>
         )}
       </div>
@@ -1263,6 +1271,150 @@ function ColorFillSection({ selectedObject, onUpdate, labelStyle, inputStyle }: 
           />
           <span style={{ fontSize: 9, color: "var(--text-tertiary)", width: 14 }}>%</span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Image-only photo adjustments (밝기/대비/채도/컬러톤/온도/선명·흐림) ───
+//
+// User feedback (carousel studio feedback slide 6): images need the same kind
+// of tone-curve controls that every other editor has. Each slider rides on
+// top of an existing fabric filter (Brightness, Contrast, Saturation,
+// HueRotation, ColorMatrix-as-temperature, Blur+Convolute-as-sharpness) and
+// the CanvasEditor side owns the actual filter chain mutation — this panel
+// just reads the current slot from selectedObject.filters and dispatches an
+// __-prefixed update.
+//
+// Why -100..100 sliders instead of native units: every adjustment in this
+// section is the same shape, the consumer-grade ranges (BRIGHT/CONTRAST/SAT
+// in -1..1, hue in radians, temperature as a custom 0..0.3 lift) would each
+// need their own input. -100..100 normalizes them and matches the mental
+// model of "Instagram-style edit sliders".
+function ImageAdjustmentsSection({
+  selectedObject,
+  onUpdate,
+  labelStyle,
+  inputStyle,
+}: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  selectedObject: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onUpdate: (prop: string, value: any) => void;
+  labelStyle: React.CSSProperties;
+  inputStyle: React.CSSProperties;
+}) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const filters: any[] = Array.isArray(selectedObject?.filters) ? selectedObject.filters : [];
+
+  // Read the slider position for a "single-slot" filter (Brightness etc.).
+  // Multiple values would be ambiguous — fabric only lets one of each type
+  // own the slot at a time because the CanvasEditor handler strips dupes.
+  function readSlot(ctor: string, prop: string, range: number): number {
+    const f = filters.find((x) => {
+      const tp = x?.constructor?.name || x?.type || "";
+      return tp === ctor || tp.toLowerCase() === ctor.toLowerCase();
+    });
+    if (!f) return 0;
+    return Math.round(((f[prop] || 0) / range) * 100);
+  }
+  function readTemperature(): number {
+    // The ColorMatrix slot is shared — we tag ours with `.__adj = "temperature"`
+    // in the CanvasEditor handler so we don't pick up someone else's CM.
+    const cm = filters.find((f) => {
+      const tp = f?.constructor?.name || f?.type || "";
+      return (tp === "ColorMatrix" || tp.toLowerCase() === "colormatrix") && f.__adj === "temperature";
+    });
+    if (!cm || !Array.isArray(cm.matrix)) return 0;
+    // R-channel multiplier = 1 + t  →  recover t from index [0] of the row-major matrix.
+    const t = (cm.matrix[0] ?? 1) - 1;
+    return Math.round((t / 0.3) * 100);
+  }
+  function readSharpness(): number {
+    // Negative slot = Blur, positive = sharpen Convolute. Whichever exists
+    // wins; if both exist (shouldn't), Blur takes precedence.
+    const blur = filters.find((f) => {
+      const tp = f?.constructor?.name || f?.type || "";
+      return tp === "Blur" || tp.toLowerCase() === "blur";
+    });
+    if (blur) {
+      // CanvasEditor maps slider→blur via abs(slider)/100 * 0.5, so recover:
+      return -Math.round(((blur.blur || 0) / 0.5) * 100);
+    }
+    const conv = filters.find((f) => {
+      const tp = f?.constructor?.name || f?.type || "";
+      return (tp === "Convolute" || tp.toLowerCase() === "convolute") && f.__adj === "sharpen";
+    });
+    if (conv && Array.isArray(conv.matrix)) {
+      // center value c = 1 + 4 * s  →  s = (c - 1) / 4
+      const c = conv.matrix[4] ?? 1;
+      const s = (c - 1) / 4;
+      return Math.round(s * 100);
+    }
+    return 0;
+  }
+
+  const adjustments: { label: string; prop: string; value: number; min: number; max: number; help?: string }[] = [
+    { label: "밝기",      prop: "__brightness", value: readSlot("Brightness", "brightness", 1), min: -100, max: 100 },
+    { label: "대비",      prop: "__contrast",   value: readSlot("Contrast", "contrast", 1),     min: -100, max: 100 },
+    { label: "채도",      prop: "__saturation", value: readSlot("Saturation", "saturation", 1), min: -100, max: 100 },
+    { label: "컬러톤",    prop: "__hue",        value: readSlot("HueRotation", "rotation", Math.PI), min: -100, max: 100, help: "색조 회전" },
+    { label: "온도",      prop: "__temperature", value: readTemperature(), min: -100, max: 100, help: "왼쪽: 시원, 오른쪽: 따뜻" },
+    { label: "선명/흐림", prop: "__sharpness",  value: readSharpness(), min: -100, max: 100, help: "왼쪽: 흐림, 오른쪽: 선명" },
+  ];
+
+  return (
+    <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+      <label style={{ ...labelStyle, marginBottom: 6 }}>이미지 보정</label>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {adjustments.map((a) => (
+          <div key={a.prop} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span
+              title={a.help || a.label}
+              style={{ fontSize: 11, color: "var(--text-secondary)", width: 56, flexShrink: 0 }}
+            >
+              {a.label}
+            </span>
+            <input
+              type="range"
+              min={a.min}
+              max={a.max}
+              value={a.value}
+              onChange={(e) => onUpdate(a.prop, Number(e.target.value))}
+              style={{ flex: 1, accentColor: "var(--accent)" }}
+            />
+            <input
+              type="number"
+              min={a.min}
+              max={a.max}
+              value={a.value}
+              onChange={(e) => onUpdate(a.prop, Number(e.target.value))}
+              style={{ ...inputStyle, width: 46, padding: "3px 5px", fontSize: 10 }}
+            />
+            <button
+              type="button"
+              onClick={() => onUpdate(a.prop, 0)}
+              title="초기화"
+              disabled={a.value === 0}
+              style={{
+                width: 18,
+                height: 18,
+                padding: 0,
+                fontSize: 11,
+                lineHeight: "16px",
+                color: a.value === 0 ? "var(--text-tertiary)" : "var(--text-secondary)",
+                background: "transparent",
+                border: "1px solid var(--border)",
+                borderRadius: 3,
+                cursor: a.value === 0 ? "default" : "pointer",
+                opacity: a.value === 0 ? 0.4 : 1,
+                flexShrink: 0,
+              }}
+            >
+              ↺
+            </button>
+          </div>
+        ))}
       </div>
     </div>
   );

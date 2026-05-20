@@ -2748,6 +2748,187 @@ export function CanvasEditor({
     const t = target.type;
     const isActiveSel = t === "activeselection" || t === "ActiveSelection";
 
+    // Image adjustments — 6 named sliders (밝기·대비·채도·컬러톤·온도·선명/흐림)
+    // surface as separate __-prefixed prop keys so the PropertyPanel doesn't
+    // have to know about the fabric filter machinery. value is -100..100
+    // (0 = neutral); the handler maps that into fabric's native filter range
+    // and swaps a single matching filter on every image in the selection.
+    const ADJUST_FILTER_MAP: Record<string, { ctor: string; prop: string; range: number }> = {
+      __brightness: { ctor: "Brightness", prop: "brightness", range: 1 }, // -1..1
+      __contrast:   { ctor: "Contrast",   prop: "contrast",   range: 1 }, // -1..1
+      __saturation: { ctor: "Saturation", prop: "saturation", range: 1 }, // -1..1
+      __hue:        { ctor: "HueRotation", prop: "rotation",  range: Math.PI }, // -π..π
+    };
+    if (ADJUST_FILTER_MAP[prop]) {
+      const cfg = ADJUST_FILTER_MAP[prop];
+      (async () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const fabric: any = await getFabric();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const targets: any[] = isActiveSel && Array.isArray(target._objects)
+          ? target._objects
+          : [target];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const imgs = targets.filter((m: any) => {
+          const tp = String(m.type || "").toLowerCase();
+          return tp === "image" || tp === "fabricimage";
+        });
+        if (imgs.length === 0) return;
+        pushUndo();
+        const slider = Number(value) || 0;
+        const fabricVal = (slider / 100) * cfg.range;
+        for (const img of imgs) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const filters: any[] = Array.isArray(img.filters) ? img.filters : [];
+          // Strip whatever this slider owns (matched by constructor name OR
+          // serialized type string — both forms appear after toJSON round-trip).
+          const remaining = filters.filter((f) => {
+            const ft = f?.constructor?.name || f?.type || "";
+            return ft !== cfg.ctor && ft.toLowerCase() !== cfg.ctor.toLowerCase();
+          });
+          if (Math.abs(slider) > 0.5) {
+            const Ctor = fabric.filters?.[cfg.ctor];
+            if (Ctor) remaining.push(new Ctor({ [cfg.prop]: fabricVal }));
+          }
+          img.filters = remaining;
+          if (typeof img.applyFilters === "function") img.applyFilters();
+          img.dirty = true;
+        }
+        target.dirty = true;
+        canvas.requestRenderAll();
+        saveCurrentSlide();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const snap: any = { ...target };
+        snap.type = target.type;
+        snap.filters = target.filters;
+        snap.__fabricRef = target;
+        setSelectedObject(snap);
+      })();
+      return;
+    }
+
+    // Temperature: warm (positive) shifts toward red/yellow, cool (negative)
+    // toward blue. Implemented as a fabric.filters.ColorMatrix so a single
+    // filter slot owns the channel rebalance — slider 0 strips it, magnitude
+    // maps to up to ±0.3 across the R/B channels (subtle enough that 100 is
+    // visibly warm without saturating skin tones).
+    if (prop === "__temperature") {
+      (async () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const fabric: any = await getFabric();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const targets: any[] = isActiveSel && Array.isArray(target._objects) ? target._objects : [target];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const imgs = targets.filter((m: any) => {
+          const tp = String(m.type || "").toLowerCase();
+          return tp === "image" || tp === "fabricimage";
+        });
+        if (imgs.length === 0) return;
+        pushUndo();
+        const slider = Number(value) || 0;
+        const t = (slider / 100) * 0.3;
+        for (const img of imgs) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const filters: any[] = Array.isArray(img.filters) ? img.filters : [];
+          // Identify temperature ColorMatrix by a marker on .__adj. Other
+          // ColorMatrix uses (e.g. future presets) should set their own marker
+          // so this slider doesn't tear them out.
+          const remaining = filters.filter((f) => {
+            const ft = f?.constructor?.name || f?.type || "";
+            if (ft !== "ColorMatrix" && ft.toLowerCase() !== "colormatrix") return true;
+            return f.__adj !== "temperature";
+          });
+          if (Math.abs(slider) > 0.5 && fabric.filters?.ColorMatrix) {
+            // 4x5 row-major matrix. Lift R, drop B for warm (t > 0).
+            const matrix = [
+              1 + t, 0, 0, 0, 0,
+              0, 1, 0, 0, 0,
+              0, 0, 1 - t, 0, 0,
+              0, 0, 0, 1, 0,
+            ];
+            const cm = new fabric.filters.ColorMatrix({ matrix });
+            cm.__adj = "temperature";
+            remaining.push(cm);
+          }
+          img.filters = remaining;
+          if (typeof img.applyFilters === "function") img.applyFilters();
+          img.dirty = true;
+        }
+        target.dirty = true;
+        canvas.requestRenderAll();
+        saveCurrentSlide();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const snap: any = { ...target };
+        snap.type = target.type;
+        snap.filters = target.filters;
+        snap.__fabricRef = target;
+        setSelectedObject(snap);
+      })();
+      return;
+    }
+
+    // Sharpness — single slider that doubles as blur (slider < 0) and sharpen
+    // (slider > 0). Blur uses fabric.filters.Blur (0..1); sharpen uses a
+    // Convolute with the canonical 3x3 sharpening kernel scaled by intensity.
+    // Both paths strip each other so the slot stays exclusive.
+    if (prop === "__sharpness") {
+      (async () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const fabric: any = await getFabric();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const targets: any[] = isActiveSel && Array.isArray(target._objects) ? target._objects : [target];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const imgs = targets.filter((m: any) => {
+          const tp = String(m.type || "").toLowerCase();
+          return tp === "image" || tp === "fabricimage";
+        });
+        if (imgs.length === 0) return;
+        pushUndo();
+        const slider = Number(value) || 0;
+        for (const img of imgs) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const filters: any[] = Array.isArray(img.filters) ? img.filters : [];
+          const remaining = filters.filter((f) => {
+            const ft = f?.constructor?.name || f?.type || "";
+            // Strip any Blur OR any Convolute whose __adj marker is "sharpen".
+            if (ft === "Blur" || ft.toLowerCase() === "blur") return false;
+            if ((ft === "Convolute" || ft.toLowerCase() === "convolute") && f.__adj === "sharpen") return false;
+            return true;
+          });
+          if (slider < -0.5 && fabric.filters?.Blur) {
+            // Blur in fabric ~0..1. Map -100..0 → 0..0.5.
+            const blur = Math.min(1, (Math.abs(slider) / 100) * 0.5);
+            remaining.push(new fabric.filters.Blur({ blur }));
+          } else if (slider > 0.5 && fabric.filters?.Convolute) {
+            // Strength-scaled sharpen kernel. At slider=100 we apply the
+            // canonical [[0,-1,0],[-1,5,-1],[0,-1,0]]; at lower values we
+            // interpolate with the identity kernel so the effect ramps in
+            // smoothly.
+            const s = Math.min(1, slider / 100);
+            const c = 1 + 4 * s; // center
+            const e = -1 * s;     // edges
+            const matrix = [0, e, 0, e, c, e, 0, e, 0];
+            const conv = new fabric.filters.Convolute({ matrix, opaque: false });
+            conv.__adj = "sharpen";
+            remaining.push(conv);
+          }
+          img.filters = remaining;
+          if (typeof img.applyFilters === "function") img.applyFilters();
+          img.dirty = true;
+        }
+        target.dirty = true;
+        canvas.requestRenderAll();
+        saveCurrentSlide();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const snap: any = { ...target };
+        snap.type = target.type;
+        snap.filters = target.filters;
+        snap.__fabricRef = target;
+        setSelectedObject(snap);
+      })();
+      return;
+    }
+
     // Image color fill via fabric.filters.BlendColor (mode "tint"). Value is
     // either `null` (remove the filter) or `{ color: "#rrggbb", intensity: 0-100 }`.
     // Applies to every image member in a multi-select; non-image members are skipped.

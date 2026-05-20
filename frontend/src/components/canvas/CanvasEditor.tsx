@@ -2933,10 +2933,25 @@ export function CanvasEditor({
             remaining.push(conv);
           }
           img.filters = remaining;
-          if (remaining.length === 0 && img._originalElement) {
-            img._element = img._originalElement;
-            img._filterScalingX = 1;
-            img._filterScalingY = 1;
+          if (remaining.length === 0) {
+            // fabric v7's WebGL applyFilters() can leave _element cached at
+            // the LAST filtered output (typically solid black from when the
+            // slider crossed through extreme negative values). Force the
+            // element back to the original by every route fabric supports —
+            // the prop names get mangled in production builds, so we try
+            // several to maximize the chance one survives.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const i: any = img;
+            const orig = i._originalElement || i.originalElement || i._image;
+            if (orig) {
+              i._element = orig;
+              i._filterScalingX = 1;
+              i._filterScalingY = 1;
+            }
+            // Belt-and-braces: also strip any cached filter canvas so the
+            // next render reads from _element fresh.
+            i._cacheCanvas = null;
+            i._cacheContext = null;
           }
           if (typeof img.applyFilters === "function") img.applyFilters();
           img.dirty = true;
@@ -2991,10 +3006,25 @@ export function CanvasEditor({
             remaining.push(bc);
           }
           img.filters = remaining;
-          if (remaining.length === 0 && img._originalElement) {
-            img._element = img._originalElement;
-            img._filterScalingX = 1;
-            img._filterScalingY = 1;
+          if (remaining.length === 0) {
+            // fabric v7's WebGL applyFilters() can leave _element cached at
+            // the LAST filtered output (typically solid black from when the
+            // slider crossed through extreme negative values). Force the
+            // element back to the original by every route fabric supports —
+            // the prop names get mangled in production builds, so we try
+            // several to maximize the chance one survives.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const i: any = img;
+            const orig = i._originalElement || i.originalElement || i._image;
+            if (orig) {
+              i._element = orig;
+              i._filterScalingX = 1;
+              i._filterScalingY = 1;
+            }
+            // Belt-and-braces: also strip any cached filter canvas so the
+            // next render reads from _element fresh.
+            i._cacheCanvas = null;
+            i._cacheContext = null;
           }
           if (typeof img.applyFilters === "function") img.applyFilters();
           img.dirty = true;
@@ -3006,6 +3036,114 @@ export function CanvasEditor({
         const snap: any = { ...target };
         snap.type = target.type;
         snap.filters = target.filters;
+        snap.__fabricRef = target;
+        setSelectedObject(snap);
+      })();
+      return;
+    }
+
+    // Filter presets — one-click recipes (화사한/선명한/밝은/...). Each preset
+    // strips every "preset-managed" filter slot (Brightness/Contrast/Saturation
+    // /Sepia/Grayscale/ColorMatrix-as-temperature) and reinstates only what the
+    // recipe specifies. Sharpness, color fill, and other unrelated filters are
+    // left untouched.
+    //
+    // Effects-tab sliders read the same slots — so applying a preset
+    // immediately updates the slider positions and the user can fine-tune from
+    // there.
+    if (prop === "__filterPreset") {
+      const PRESETS: Record<string, {
+        brightness?: number; contrast?: number; saturation?: number;
+        temperature?: number; sepia?: boolean; grayscale?: boolean;
+      }> = {
+        none:    {},
+        vivid:   { saturation: 0.4, brightness: 0.1 },
+        sharp:   { contrast: 0.3, saturation: 0.2 },
+        bright:  { brightness: 0.2, contrast: 0.05 },
+        warm:    { temperature: 0.15, saturation: 0.15, brightness: 0.05 },
+        cool:    { temperature: -0.15, saturation: 0.15 },
+        vintage: { sepia: true, contrast: 0.1, saturation: -0.2 },
+        bw:      { grayscale: true, contrast: 0.1 },
+      };
+      const presetKey = String(value || "none");
+      const recipe = PRESETS[presetKey] || {};
+      (async () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const fabric: any = await getFabric();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const targets: any[] = isActiveSel && Array.isArray(target._objects) ? target._objects : [target];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const imgs = targets.filter((m: any) => {
+          const tp = String(m.type || "").toLowerCase();
+          return tp === "image" || tp === "fabricimage";
+        });
+        if (imgs.length === 0) return;
+        pushUndo();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const ctorMatches = (f: any, ctor: string) => {
+          const ft = f?.constructor?.name || f?.type || "";
+          const lc = ctor.toLowerCase();
+          const fl = String(ft).toLowerCase();
+          return fl === lc || fl.endsWith("." + lc);
+        };
+        for (const img of imgs) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const filters: any[] = Array.isArray(img.filters) ? img.filters : [];
+          const remaining = filters.filter((f) => {
+            if (ctorMatches(f, "Brightness")) return false;
+            if (ctorMatches(f, "Contrast")) return false;
+            if (ctorMatches(f, "Saturation")) return false;
+            if (ctorMatches(f, "Sepia")) return false;
+            if (ctorMatches(f, "Grayscale")) return false;
+            if (ctorMatches(f, "ColorMatrix") && f.__adj === "temperature") return false;
+            return true;
+          });
+          if (recipe.brightness != null && fabric.filters?.Brightness) {
+            remaining.push(new fabric.filters.Brightness({ brightness: recipe.brightness }));
+          }
+          if (recipe.contrast != null && fabric.filters?.Contrast) {
+            remaining.push(new fabric.filters.Contrast({ contrast: recipe.contrast }));
+          }
+          if (recipe.saturation != null && fabric.filters?.Saturation) {
+            remaining.push(new fabric.filters.Saturation({ saturation: recipe.saturation }));
+          }
+          if (recipe.sepia && fabric.filters?.Sepia) {
+            remaining.push(new fabric.filters.Sepia());
+          }
+          if (recipe.grayscale && fabric.filters?.Grayscale) {
+            remaining.push(new fabric.filters.Grayscale());
+          }
+          if (recipe.temperature != null && fabric.filters?.ColorMatrix) {
+            const t = recipe.temperature;
+            const matrix = [
+              1 + t, 0, 0, 0, 0,
+              0, 1, 0, 0, 0,
+              0, 0, 1 - t, 0, 0,
+              0, 0, 0, 1, 0,
+            ];
+            const cm = new fabric.filters.ColorMatrix({ matrix });
+            cm.__adj = "temperature";
+            remaining.push(cm);
+          }
+          img.filters = remaining;
+          img.__filterPreset = presetKey === "none" ? null : presetKey;
+          if (remaining.length === 0 && img._originalElement) {
+            img._element = img._originalElement;
+            img._filterScalingX = 1;
+            img._filterScalingY = 1;
+          }
+          if (typeof img.applyFilters === "function") img.applyFilters();
+          img.dirty = true;
+        }
+        target.__filterPreset = presetKey === "none" ? null : presetKey;
+        target.dirty = true;
+        canvas.requestRenderAll();
+        saveCurrentSlide();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const snap: any = { ...target };
+        snap.type = target.type;
+        snap.filters = target.filters;
+        snap.__filterPreset = target.__filterPreset;
         snap.__fabricRef = target;
         setSelectedObject(snap);
       })();

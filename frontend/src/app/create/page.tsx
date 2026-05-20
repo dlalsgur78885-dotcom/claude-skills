@@ -496,10 +496,19 @@ export default function CreatePage() {
       // 3. Persist the rendered canvas slides + the source blueprint so the
       //    editor can re-apply a different template later without re-running
       //    Gemini Vision.
+      //
+      // Also stamp the benchmark post linkage (source_post_id) so the editor's
+      // "원본 링크 보기" button has something to point at. The carousel column
+      // is single-FK; when multiple benchmarks were used we keep the first
+      // (the primary reference). Without this the carousel rendered with
+      // source_post_id = null and the button never showed up — exactly the
+      // /editor/72 case the user flagged after slide 5 deploy.
       const tplSlug = String(rendered.template_slug || "minimal");
+      const primaryRefId = refIds.length > 0 ? refIds[0] : null;
       const res = await api.createCarousel({
         title: (slides[0]?.headline || topic).replace(/\n/g, " "),
         template_id: tplSlug,
+        source_post_id: primaryRefId,
         canvas_data: {
           canvas_slides: rendered.canvas_slides,
           source_slides: slides,

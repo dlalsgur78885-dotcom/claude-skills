@@ -3092,14 +3092,28 @@ export function CanvasEditor({
         brightness?: number; contrast?: number; saturation?: number;
         temperature?: number; sepia?: boolean; grayscale?: boolean;
       }> = {
-        none:    {},
-        vivid:   { saturation: 0.4, brightness: 0.1 },
-        sharp:   { contrast: 0.3, saturation: 0.2 },
-        bright:  { brightness: 0.2, contrast: 0.05 },
-        warm:    { temperature: 0.15, saturation: 0.15, brightness: 0.05 },
-        cool:    { temperature: -0.15, saturation: 0.15 },
-        vintage: { sepia: true, contrast: 0.1, saturation: -0.2 },
-        bw:      { grayscale: true, contrast: 0.1 },
+        none:      {},
+        vivid:     { saturation: 0.4, brightness: 0.1 },
+        sharp:     { contrast: 0.3, saturation: 0.2 },
+        bright:    { brightness: 0.2, contrast: 0.05 },
+        warm:      { temperature: 0.15, saturation: 0.15, brightness: 0.05 },
+        cool:      { temperature: -0.15, saturation: 0.15 },
+        vintage:   { sepia: true, contrast: 0.1, saturation: -0.2 },
+        bw:        { grayscale: true, contrast: 0.1 },
+        // Cinematic teal/orange: lift contrast, drop saturation, slight warm
+        // cast. CSS preview also adds 15% sepia which we approximate with a
+        // small temperature lift (fabric Sepia is on/off only).
+        cinematic: { brightness: -0.05, contrast: 0.15, saturation: -0.15, temperature: 0.05 },
+        // Stronger warm than `warm`: punchier saturation + larger temperature
+        // lift to mimic golden-hour skies.
+        sunset:    { brightness: 0.05, saturation: 0.4, temperature: 0.2 },
+        // Soft pastel — drops contrast (no other preset does this) for the
+        // dreamy glow. CSS preview adds a tiny blur; we leave Blur to the
+        // sharpness slider so users can layer it themselves.
+        dreamy:    { brightness: 0.1, contrast: -0.15, saturation: 0.1 },
+        // Washed-film fade — inverse of vivid/sharp: low contrast + low
+        // saturation. Tiny temperature lift for the warm cream cast.
+        faded:     { brightness: 0.05, contrast: -0.1, saturation: -0.25, temperature: 0.05 },
       };
       const presetKey = String(value || "none");
       const recipe = PRESETS[presetKey] || {};

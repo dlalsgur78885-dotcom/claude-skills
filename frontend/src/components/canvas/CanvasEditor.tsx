@@ -2791,6 +2791,18 @@ export function CanvasEditor({
             if (Ctor) remaining.push(new Ctor({ [cfg.prop]: fabricVal }));
           }
           img.filters = remaining;
+          // When the filter chain goes empty, fabric.js v7's applyFilters
+          // sometimes leaves the WebGL-backed _element cached at the LAST
+          // filtered output instead of reverting to the original bitmap —
+          // which lands the image at solid black (the previous filter's
+          // final state when the slider crossed through 0). Force the
+          // element back to the original first so the next render reads
+          // fresh pixels regardless of what fabric does internally.
+          if (remaining.length === 0 && img._originalElement) {
+            img._element = img._originalElement;
+            img._filterScalingX = 1;
+            img._filterScalingY = 1;
+          }
           if (typeof img.applyFilters === "function") img.applyFilters();
           img.dirty = true;
         }
@@ -2851,6 +2863,14 @@ export function CanvasEditor({
             remaining.push(cm);
           }
           img.filters = remaining;
+          // See the brightness/contrast handler above for the rationale —
+          // fabric v7 can leave _element cached at the previous filter's
+          // output when the chain empties out, which lands as solid black.
+          if (remaining.length === 0 && img._originalElement) {
+            img._element = img._originalElement;
+            img._filterScalingX = 1;
+            img._filterScalingY = 1;
+          }
           if (typeof img.applyFilters === "function") img.applyFilters();
           img.dirty = true;
         }
@@ -2913,6 +2933,11 @@ export function CanvasEditor({
             remaining.push(conv);
           }
           img.filters = remaining;
+          if (remaining.length === 0 && img._originalElement) {
+            img._element = img._originalElement;
+            img._filterScalingX = 1;
+            img._filterScalingY = 1;
+          }
           if (typeof img.applyFilters === "function") img.applyFilters();
           img.dirty = true;
         }
@@ -2966,6 +2991,11 @@ export function CanvasEditor({
             remaining.push(bc);
           }
           img.filters = remaining;
+          if (remaining.length === 0 && img._originalElement) {
+            img._element = img._originalElement;
+            img._filterScalingX = 1;
+            img._filterScalingY = 1;
+          }
           if (typeof img.applyFilters === "function") img.applyFilters();
           img.dirty = true;
         }

@@ -47,33 +47,33 @@ const PAGE_BOUNDARY_KIND = "page_boundary";
 // fabric object reference for INSTANT paste. Survives Next.js client-side
 // nav (the JS module stays loaded) but NOT a full page reload.
 //
-// Layer 2 — sessionStorage('canvas.objectClipboard'): JSON snapshot via
-// fabric's toObject(). Survives full page reloads AND URL-bar navigation
-// to a different /editor/N. Reloaded into a live fabric object on demand.
+// Layer 2 — localStorage('canvas.objectClipboard'): JSON snapshot via
+// fabric's toObject(). Survives full page reloads, URL-bar nav AND
+// cross-tab use (open /editor/A in one tab, /editor/B in another, copy
+// in A, paste in B). Reloaded into a live fabric object on demand.
 //
-// Why both: the in-memory layer is free / instant (no enliven/image refetch),
-// and most paste workflows happen within the same tab session without a
-// reload. The session layer is the fallback that fixes user feedback —
-// "/editor/50 → /editor/51 로 복붙이 안된다" — which manifests when the
-// user types the new URL in the address bar (full reload wipes module state).
+// Why both: the in-memory layer is free / instant (no enliven/image
+// refetch) for same-tab same-session use. The localStorage layer is the
+// fallback that fixes user feedback "/editor/50 → /editor/51 로 복붙이
+// 안된다" — covers reloads, URL-bar nav, and multi-tab workflows.
 const CLIPBOARD_STORAGE_KEY = "canvas.objectClipboard";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const objectClipboardSlot: { value: any } = { value: null };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function persistClipboard(obj: any) {
   try {
-    if (typeof sessionStorage === "undefined") return;
+    if (typeof localStorage === "undefined") return;
     // toObject() serializes core props; image needs `src` included explicitly.
     const data = obj.toObject?.(["src"]);
-    if (data) sessionStorage.setItem(CLIPBOARD_STORAGE_KEY, JSON.stringify(data));
+    if (data) localStorage.setItem(CLIPBOARD_STORAGE_KEY, JSON.stringify(data));
   } catch (e) {
     console.warn("[clipboard] persist failed", e);
   }
 }
 function readPersistedClipboard(): unknown | null {
   try {
-    if (typeof sessionStorage === "undefined") return null;
-    const raw = sessionStorage.getItem(CLIPBOARD_STORAGE_KEY);
+    if (typeof localStorage === "undefined") return null;
+    const raw = localStorage.getItem(CLIPBOARD_STORAGE_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -3017,7 +3017,7 @@ export function CanvasEditor({
       // Ctrl/Cmd + C → copy active object. Writes BOTH layers:
       //   (1) live fabric clone in objectClipboardSlot.value (instant paste,
       //       same tab session, including across Next.js client-side nav)
-      //   (2) sessionStorage JSON snapshot (survives full reload / URL-bar nav
+      //   (2) localStorage JSON snapshot (survives full reload / URL-bar nav
       //       to a different /editor/N — the actual user-reported failure mode)
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && active && !active.isEditing) {
         e.preventDefault();
@@ -3098,7 +3098,7 @@ export function CanvasEditor({
       const hasImage = items && Array.from(items).some((it) => it.type.startsWith("image/"));
 
       // Paste path: prefer the in-memory live clone (fast, no asset refetch),
-      // fall back to the sessionStorage snapshot when the module slot is empty
+      // fall back to the localStorage snapshot when the module slot is empty
       // — that fallback is what makes Ctrl+C in /editor/A still pasteable after
       // a full reload into /editor/B (URL-bar nav, refresh, restored tab).
       const persisted = !objectClipboardSlot.value ? readPersistedClipboard() : null;
@@ -3118,7 +3118,7 @@ export function CanvasEditor({
             baseLeft = objectClipboardSlot.value.left || 0;
             baseTop = objectClipboardSlot.value.top || 0;
           } else {
-            // Reload path: re-hydrate from the JSON snapshot in sessionStorage.
+            // Reload path: re-hydrate from the JSON snapshot in localStorage.
             // fabric.util.enlivenObjects fetches any image src async and returns
             // a fully-constructed fabric object ready to add to a canvas.
             // eslint-disable-next-line @typescript-eslint/no-explicit-any

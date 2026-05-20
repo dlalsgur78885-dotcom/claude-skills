@@ -2791,35 +2791,14 @@ export function CanvasEditor({
             if (Ctor) remaining.push(new Ctor({ [cfg.prop]: fabricVal }));
           }
           img.filters = remaining;
-          // When the filter chain goes empty, fabric.js v7's applyFilters
-          // sometimes leaves the WebGL-backed _element cached at the LAST
-          // filtered output instead of reverting to the original bitmap —
-          // which lands the image at solid black (the previous filter's
-          // final state when the slider crossed through 0). Force the
-          // element back to the original first so the next render reads
-          // fresh pixels regardless of what fabric does internally.
-          if (remaining.length === 0) {
-            // Filter chain emptied → bypass applyFilters entirely. Fabric v7's
-            // WebGL backend can blit a stale (often all-black) texture into
-            // _element even when the chain is empty, so restore directly from
-            // the original element and skip the call. Try every alias because
-            // the private prop names get mangled in production builds.
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const i: any = img;
-            const orig = i._originalElement || i.originalElement || i._image;
-            if (orig) {
-              i._element = orig;
-              i._filterScalingX = 1;
-              i._filterScalingY = 1;
-            }
-            i._cacheCanvas = null;
-            i._cacheContext = null;
-          } else if (typeof img.applyFilters === "function") {
-            img.applyFilters();
-          }
-          img.dirty = true;
+          // Fabric v7.2's applyFilters handles the empty chain correctly:
+          // it restores _element to _originalElement, clears _filteredEl,
+          // evicts WebGL textures, and sets dirty=true. The earlier manual
+          // bypass tried to do this by hand but missed _filteredEl and the
+          // WebGL texture cache, which left brightness/etc. stuck at the
+          // previous filtered state when the slider returned to 0.
+          if (typeof img.applyFilters === "function") img.applyFilters();
         }
-        target.dirty = true;
         canvas.requestRenderAll();
         saveCurrentSlide();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2876,31 +2855,8 @@ export function CanvasEditor({
             remaining.push(cm);
           }
           img.filters = remaining;
-          // See the brightness/contrast handler above for the rationale —
-          // fabric v7 can leave _element cached at the previous filter's
-          // output when the chain empties out, which lands as solid black.
-          if (remaining.length === 0) {
-            // Filter chain emptied → bypass applyFilters entirely. Fabric v7's
-            // WebGL backend can blit a stale (often all-black) texture into
-            // _element even when the chain is empty, so restore directly from
-            // the original element and skip the call. Try every alias because
-            // the private prop names get mangled in production builds.
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const i: any = img;
-            const orig = i._originalElement || i.originalElement || i._image;
-            if (orig) {
-              i._element = orig;
-              i._filterScalingX = 1;
-              i._filterScalingY = 1;
-            }
-            i._cacheCanvas = null;
-            i._cacheContext = null;
-          } else if (typeof img.applyFilters === "function") {
-            img.applyFilters();
-          }
-          img.dirty = true;
+          if (typeof img.applyFilters === "function") img.applyFilters();
         }
-        target.dirty = true;
         canvas.requestRenderAll();
         saveCurrentSlide();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2959,35 +2915,8 @@ export function CanvasEditor({
             remaining.push(conv);
           }
           img.filters = remaining;
-          if (remaining.length === 0) {
-            // fabric v7's WebGL applyFilters() can leave _element cached at
-            // the LAST filtered output (typically solid black from when the
-            // slider crossed through extreme negative values). Force the
-            // element back to the original by every route fabric supports —
-            // the prop names get mangled in production builds, so we try
-            // several to maximize the chance one survives.
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const i: any = img;
-            const orig = i._originalElement || i.originalElement || i._image;
-            if (orig) {
-              i._element = orig;
-              i._filterScalingX = 1;
-              i._filterScalingY = 1;
-            }
-            // Belt-and-braces: also strip any cached filter canvas so the
-            // next render reads from _element fresh.
-            i._cacheCanvas = null;
-            i._cacheContext = null;
-            // Do NOT call applyFilters when chain is empty — the WebGL backend
-            // sometimes overwrites _element with a stale texture readback even
-            // for an empty chain, which lands the image at solid black.
-            img.dirty = true;
-          } else {
-            if (typeof img.applyFilters === "function") img.applyFilters();
-            img.dirty = true;
-          }
+          if (typeof img.applyFilters === "function") img.applyFilters();
         }
-        target.dirty = true;
         canvas.requestRenderAll();
         saveCurrentSlide();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -3037,35 +2966,8 @@ export function CanvasEditor({
             remaining.push(bc);
           }
           img.filters = remaining;
-          if (remaining.length === 0) {
-            // fabric v7's WebGL applyFilters() can leave _element cached at
-            // the LAST filtered output (typically solid black from when the
-            // slider crossed through extreme negative values). Force the
-            // element back to the original by every route fabric supports —
-            // the prop names get mangled in production builds, so we try
-            // several to maximize the chance one survives.
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const i: any = img;
-            const orig = i._originalElement || i.originalElement || i._image;
-            if (orig) {
-              i._element = orig;
-              i._filterScalingX = 1;
-              i._filterScalingY = 1;
-            }
-            // Belt-and-braces: also strip any cached filter canvas so the
-            // next render reads from _element fresh.
-            i._cacheCanvas = null;
-            i._cacheContext = null;
-            // Do NOT call applyFilters when chain is empty — the WebGL backend
-            // sometimes overwrites _element with a stale texture readback even
-            // for an empty chain, which lands the image at solid black.
-            img.dirty = true;
-          } else {
-            if (typeof img.applyFilters === "function") img.applyFilters();
-            img.dirty = true;
-          }
+          if (typeof img.applyFilters === "function") img.applyFilters();
         }
-        target.dirty = true;
         canvas.requestRenderAll();
         saveCurrentSlide();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -3188,29 +3090,9 @@ export function CanvasEditor({
           }
           img.filters = remaining;
           img.__filterPreset = presetKey === "none" ? null : presetKey;
-          if (remaining.length === 0) {
-            // Filter chain emptied → bypass applyFilters entirely. Fabric v7's
-            // WebGL backend can blit a stale (often all-black) texture into
-            // _element even when the chain is empty, so restore directly from
-            // the original element and skip the call. Try every alias because
-            // the private prop names get mangled in production builds.
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const i: any = img;
-            const orig = i._originalElement || i.originalElement || i._image;
-            if (orig) {
-              i._element = orig;
-              i._filterScalingX = 1;
-              i._filterScalingY = 1;
-            }
-            i._cacheCanvas = null;
-            i._cacheContext = null;
-          } else if (typeof img.applyFilters === "function") {
-            img.applyFilters();
-          }
-          img.dirty = true;
+          if (typeof img.applyFilters === "function") img.applyFilters();
         }
         target.__filterPreset = presetKey === "none" ? null : presetKey;
-        target.dirty = true;
         canvas.requestRenderAll();
         saveCurrentSlide();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

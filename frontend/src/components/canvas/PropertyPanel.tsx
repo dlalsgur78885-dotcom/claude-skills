@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { TransparentToggle } from "./TransparentToggle";
 
 interface PropertyPanelProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -23,6 +24,11 @@ const isBoldWeight = (w: unknown) => {
   const s = String(w);
   return s === "bold" || s === "700" || s === "800" || s === "900";
 };
+
+// `TransparentToggle` lives in ./TransparentToggle.tsx — shared with ToolPanel
+// and the channel templates modal so every color picker app-wide can opt into
+// transparency via the same swatch button. User feedback (carousel studio
+// feedback slide 4): "모든 색상을 바꿀 때 '투명' 옵션 추가".
 
 type TabKey = "basic" | "effects" | "ai";
 
@@ -275,6 +281,14 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, onC
                 onUpdate("fill", e.target.value);
               }}
               style={{ width: 32, height: 32, borderRadius: 5, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", padding: 2 }}
+            />
+            <TransparentToggle
+              size={32}
+              value={hasCharRange ? pendingColor : selectedObject.fill}
+              onChange={(next) => {
+                setPendingColor(next);
+                onUpdate("fill", next);
+              }}
             />
             <input
               type="text"
@@ -769,6 +783,11 @@ function GradientFillEditor({
                 onChange={(e) => updateStop(i, { color: e.target.value })}
                 style={{ width: 28, height: 22, padding: 0, border: "1px solid var(--border)", borderRadius: 3, cursor: "pointer" }}
               />
+              <TransparentToggle
+                size={22}
+                value={s.color}
+                onChange={(next) => updateStop(i, { color: next })}
+              />
               <input
                 type="number"
                 step={0.05}
@@ -905,6 +924,11 @@ function OutlineSection({ selectedObject, isText, onUpdate, labelStyle, inputSty
                 value={strokeColor}
                 onChange={(e) => setColor(e.target.value)}
                 style={{ width: 28, height: 22, borderRadius: 4, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", padding: 1 }}
+              />
+              <TransparentToggle
+                size={22}
+                value={strokeColor}
+                onChange={(next) => setColor(next)}
               />
               <input
                 type="text"
@@ -1116,6 +1140,11 @@ function ShadowSection({ selectedObject, onUpdate, labelStyle, inputStyle }: Sha
               onChange={(e) => update({ color: e.target.value })}
               style={{ width: 22, height: 22, padding: 0, border: "1px solid var(--border)", borderRadius: 4, cursor: "pointer", background: "transparent" }}
             />
+            <TransparentToggle
+              size={22}
+              value={spec.color}
+              onChange={(next) => update({ color: next })}
+            />
           </div>
         </div>
         <ShadowParamRow label="방향" suffix="°" min={0} max={360} value={spec.angle}
@@ -1204,6 +1233,11 @@ function ColorFillSection({ selectedObject, onUpdate, labelStyle, inputStyle }: 
             value={spec.color}
             onChange={(e) => update({ color: e.target.value })}
             style={{ width: 32, height: 24, padding: 0, border: "1px solid var(--border)", borderRadius: 4, cursor: "pointer", background: "transparent" }}
+          />
+          <TransparentToggle
+            size={24}
+            value={spec.color}
+            onChange={(next) => update({ color: next })}
           />
           <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "monospace", flex: 1, overflow: "hidden" }}>
             {spec.color}

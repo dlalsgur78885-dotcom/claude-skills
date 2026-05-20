@@ -1328,43 +1328,43 @@ function ImageAdjustmentsSection({
   // Read the slider position for a "single-slot" filter (Brightness etc.).
   // Multiple values would be ambiguous — fabric only lets one of each type
   // own the slot at a time because the CanvasEditor handler strips dupes.
-  function readSlot(ctor: string, prop: string, range: number): number {
-    const f = filters.find((x) => {
-      const tp = x?.constructor?.name || x?.type || "";
-      return tp === ctor || tp.toLowerCase() === ctor.toLowerCase();
+  //
+  // We try several name fields because production builds may mangle the
+  // constructor name (terser drops debug names) while fabric also exposes
+  // a static `type` string AND a serialized `type` property on toObject.
+  function filterMatches(x: unknown, ctor: string): boolean {
+    if (!x || typeof x !== "object") return false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const obj = x as any;
+    const cn = obj?.constructor?.name || "";
+    const tp = obj?.type || "";
+    const stt = obj?.constructor?.type || "";  // fabric's static type marker
+    const lc = ctor.toLowerCase();
+    return [cn, tp, stt].some((s) => {
+      const v = String(s || "").toLowerCase();
+      return v === lc || v.endsWith("." + lc);
     });
+  }
+  function readSlot(ctor: string, prop: string, range: number): number {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const f = filters.find((x) => filterMatches(x, ctor)) as any;
     if (!f) return 0;
     return Math.round(((f[prop] || 0) / range) * 100);
   }
   function readTemperature(): number {
-    // The ColorMatrix slot is shared — we tag ours with `.__adj = "temperature"`
-    // in the CanvasEditor handler so we don't pick up someone else's CM.
-    const cm = filters.find((f) => {
-      const tp = f?.constructor?.name || f?.type || "";
-      return (tp === "ColorMatrix" || tp.toLowerCase() === "colormatrix") && f.__adj === "temperature";
-    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cm = filters.find((f: any) => filterMatches(f, "ColorMatrix") && f.__adj === "temperature") as any;
     if (!cm || !Array.isArray(cm.matrix)) return 0;
-    // R-channel multiplier = 1 + t  →  recover t from index [0] of the row-major matrix.
     const t = (cm.matrix[0] ?? 1) - 1;
     return Math.round((t / 0.3) * 100);
   }
   function readSharpness(): number {
-    // Negative slot = Blur, positive = sharpen Convolute. Whichever exists
-    // wins; if both exist (shouldn't), Blur takes precedence.
-    const blur = filters.find((f) => {
-      const tp = f?.constructor?.name || f?.type || "";
-      return tp === "Blur" || tp.toLowerCase() === "blur";
-    });
-    if (blur) {
-      // CanvasEditor maps slider→blur via abs(slider)/100 * 0.5, so recover:
-      return -Math.round(((blur.blur || 0) / 0.5) * 100);
-    }
-    const conv = filters.find((f) => {
-      const tp = f?.constructor?.name || f?.type || "";
-      return (tp === "Convolute" || tp.toLowerCase() === "convolute") && f.__adj === "sharpen";
-    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const blur = filters.find((f: any) => filterMatches(f, "Blur")) as any;
+    if (blur) return -Math.round(((blur.blur || 0) / 0.5) * 100);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const conv = filters.find((f: any) => filterMatches(f, "Convolute") && f.__adj === "sharpen") as any;
     if (conv && Array.isArray(conv.matrix)) {
-      // center value c = 1 + 4 * s  →  s = (c - 1) / 4
       const c = conv.matrix[4] ?? 1;
       const s = (c - 1) / 4;
       return Math.round(s * 100);
@@ -1372,14 +1372,50 @@ function ImageAdjustmentsSection({
     return 0;
   }
 
+  // The slider position lives in LOCAL state so a dragged slider stays put
+  // even when the filter snapshot from CanvasEditor doesn't round-trip the
+  // value (e.g. production minifies fabric class names and readSlot can't
+  // recover the current setting). The state resets on every selection
+  // change so a different image starts fresh from whatever filters it has.
+  //
+  // The slider is the source of truth for THIS panel session; CanvasEditor
+  // owns the actual fabric filter chain.
+  const sigBase = selectedObject?.__uid__ || selectedObject?.cacheKey || (selectedObject ? "obj" : "none");
+  const [localValues, setLocalValues] = useState<Record<string, number>>(() => ({
+    __brightness: readSlot("Brightness", "brightness", 1),
+    __contrast: readSlot("Contrast", "contrast", 1),
+    __saturation: readSlot("Saturation", "saturation", 1),
+    __hue: readSlot("HueRotation", "rotation", Math.PI),
+    __temperature: readTemperature(),
+    __sharpness: readSharpness(),
+  }));
+  const [signedSig, setSignedSig] = useState<string>(sigBase);
+  if (signedSig !== sigBase) {
+    // Selection changed — reset from the new object's filters.
+    setSignedSig(sigBase);
+    setLocalValues({
+      __brightness: readSlot("Brightness", "brightness", 1),
+      __contrast: readSlot("Contrast", "contrast", 1),
+      __saturation: readSlot("Saturation", "saturation", 1),
+      __hue: readSlot("HueRotation", "rotation", Math.PI),
+      __temperature: readTemperature(),
+      __sharpness: readSharpness(),
+    });
+  }
+
   const adjustments: { label: string; prop: string; value: number; min: number; max: number; help?: string }[] = [
-    { label: "밝기",      prop: "__brightness", value: readSlot("Brightness", "brightness", 1), min: -100, max: 100 },
-    { label: "대비",      prop: "__contrast",   value: readSlot("Contrast", "contrast", 1),     min: -100, max: 100 },
-    { label: "채도",      prop: "__saturation", value: readSlot("Saturation", "saturation", 1), min: -100, max: 100 },
-    { label: "컬러톤",    prop: "__hue",        value: readSlot("HueRotation", "rotation", Math.PI), min: -100, max: 100, help: "색조 회전" },
-    { label: "온도",      prop: "__temperature", value: readTemperature(), min: -100, max: 100, help: "왼쪽: 시원, 오른쪽: 따뜻" },
-    { label: "선명/흐림", prop: "__sharpness",  value: readSharpness(), min: -100, max: 100, help: "왼쪽: 흐림, 오른쪽: 선명" },
+    { label: "밝기",      prop: "__brightness", value: localValues.__brightness, min: -100, max: 100 },
+    { label: "대비",      prop: "__contrast",   value: localValues.__contrast,   min: -100, max: 100 },
+    { label: "채도",      prop: "__saturation", value: localValues.__saturation, min: -100, max: 100 },
+    { label: "컬러톤",    prop: "__hue",        value: localValues.__hue,         min: -100, max: 100, help: "색조 회전" },
+    { label: "온도",      prop: "__temperature", value: localValues.__temperature, min: -100, max: 100, help: "왼쪽: 시원, 오른쪽: 따뜻" },
+    { label: "선명/흐림", prop: "__sharpness",  value: localValues.__sharpness,   min: -100, max: 100, help: "왼쪽: 흐림, 오른쪽: 선명" },
   ];
+
+  function dispatch(prop: string, v: number) {
+    setLocalValues((cur) => ({ ...cur, [prop]: v }));
+    onUpdate(prop, v);
+  }
 
   return (
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
@@ -1398,7 +1434,7 @@ function ImageAdjustmentsSection({
               min={a.min}
               max={a.max}
               value={a.value}
-              onChange={(e) => onUpdate(a.prop, Number(e.target.value))}
+              onChange={(e) => dispatch(a.prop, Number(e.target.value))}
               style={{ flex: 1, accentColor: "var(--accent)" }}
             />
             <input
@@ -1406,12 +1442,12 @@ function ImageAdjustmentsSection({
               min={a.min}
               max={a.max}
               value={a.value}
-              onChange={(e) => onUpdate(a.prop, Number(e.target.value))}
+              onChange={(e) => dispatch(a.prop, Number(e.target.value))}
               style={{ ...inputStyle, width: 46, padding: "3px 5px", fontSize: 10 }}
             />
             <button
               type="button"
-              onClick={() => onUpdate(a.prop, 0)}
+              onClick={() => dispatch(a.prop, 0)}
               title="초기화"
               disabled={a.value === 0}
               style={{

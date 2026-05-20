@@ -41,6 +41,13 @@ function displayDims(w: number, h: number) {
 // other heuristics can recognize it.
 const PAGE_BOUNDARY_KIND = "page_boundary";
 
+// Module-level slot for the in-memory object clipboard so Ctrl+C in /editor/50
+// remains pasteable after Next.js route-changes to /editor/51. Per-component
+// useRefs are wiped at unmount, which broke cross-page paste. Wrapped in a
+// plain object so call sites that expect `.current` semantics keep working.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const objectClipboardSlot: { value: any } = { value: null };
+
 /** Stamp the CSS size of the fabric canvas DOM nodes from a (pageW, pageH).
  *  setDimensions() updates the bitmap buffer AND the CSS by default, which
  *  blows up the on-screen size to the padded buffer dimensions. We want CSS
@@ -272,9 +279,8 @@ export function CanvasEditor({
   // updated handles" vs "switched to a different object". Without this we'd
   // null out the textRange every time fabric refreshes the selection box.
   const selectedObjectIdRef = useRef<string | null>(null);
-  // In-memory clipboard for Ctrl+C / Ctrl+V of canvas objects. Cleared by Ctrl+X.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const objectClipboardRef = useRef<any>(null);
+  // (objectClipboard is at module scope — see objectClipboardSlot above —
+  //  so it survives Next.js route changes between /editor/N and /editor/M.)
   const [slides, setSlides] = useState<SlideData[]>(
     initialSlides || [createCoverSlide(), createEmptySlide(), createCtaSlide()]
   );
@@ -2981,7 +2987,7 @@ export function CanvasEditor({
         e.preventDefault();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         Promise.resolve((active as any).clone()).then((cloned) => {
-          objectClipboardRef.current = cloned;
+          objectClipboardSlot.value = cloned;
         }).catch((err) => console.warn("[copy] clone failed", err));
         return;
       }
@@ -2991,7 +2997,7 @@ export function CanvasEditor({
         e.preventDefault();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         Promise.resolve((active as any).clone()).then((cloned) => {
-          objectClipboardRef.current = cloned;
+          objectClipboardSlot.value = cloned;
           deleteSelected();
         }).catch((err) => console.warn("[cut] clone failed", err));
         return;
@@ -3053,16 +3059,16 @@ export function CanvasEditor({
       // screenshot so they obviously want THAT, not their last copied shape).
       const hasImage = items && Array.from(items).some((it) => it.type.startsWith("image/"));
 
-      if (!hasImage && objectClipboardRef.current) {
+      if (!hasImage && objectClipboardSlot.value) {
         // Paste the previously copied/cut canvas object
         e.preventDefault();
         try {
           const fabric = await getFabric();
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const cloned: any = await Promise.resolve(objectClipboardRef.current.clone());
+          const cloned: any = await Promise.resolve(objectClipboardSlot.value.clone());
           cloned.set({
-            left: (objectClipboardRef.current.left || 0) + 24,
-            top: (objectClipboardRef.current.top || 0) + 24,
+            left: (objectClipboardSlot.value.left || 0) + 24,
+            top: (objectClipboardSlot.value.top || 0) + 24,
             originX: "left",
             originY: "top",
           });
@@ -3072,7 +3078,7 @@ export function CanvasEditor({
           canvas.requestRenderAll();
           saveCurrentSlide();
           // Update the in-memory clipboard so consecutive Ctrl+V keeps offsetting
-          objectClipboardRef.current = cloned;
+          objectClipboardSlot.value = cloned;
           void fabric;
         } catch (err) {
           console.warn("[paste] object clone failed", err);

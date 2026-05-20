@@ -1420,53 +1420,71 @@ function ImageAdjustmentsSection({
   return (
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
       <label style={{ ...labelStyle, marginBottom: 6 }}>이미지 보정</label>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {adjustments.map((a) => (
-          <div key={a.prop} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span
-              title={a.help || a.label}
-              style={{ fontSize: 11, color: "var(--text-secondary)", width: 56, flexShrink: 0 }}
-            >
-              {a.label}
-            </span>
+          <div key={a.prop} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {/* Row 1 — label + bold value badge so the user always sees the
+                exact 정도 (degree/level) at a glance, even before touching
+                the slider. Reset button sits next to the value for symmetry. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span
+                title={a.help || a.label}
+                style={{ fontSize: 11, color: "var(--text-secondary)", flex: 1 }}
+              >
+                {a.label}
+              </span>
+              <span
+                aria-label={`${a.label} 값`}
+                style={{
+                  minWidth: 36,
+                  textAlign: "right",
+                  padding: "2px 6px",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, monospace)",
+                  color: a.value === 0 ? "var(--text-tertiary)" : "var(--accent-text, var(--text-primary))",
+                  background: a.value === 0 ? "transparent" : "var(--bg-overlay)",
+                  borderRadius: 4,
+                  border: a.value === 0 ? "1px solid transparent" : "1px solid var(--border)",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {a.value > 0 ? `+${a.value}` : a.value}
+              </span>
+              <button
+                type="button"
+                onClick={() => dispatch(a.prop, 0)}
+                title="초기화"
+                disabled={a.value === 0}
+                style={{
+                  width: 20,
+                  height: 20,
+                  padding: 0,
+                  fontSize: 12,
+                  lineHeight: "18px",
+                  color: a.value === 0 ? "var(--text-tertiary)" : "var(--text-secondary)",
+                  background: "transparent",
+                  border: "1px solid var(--border)",
+                  borderRadius: 3,
+                  cursor: a.value === 0 ? "default" : "pointer",
+                  opacity: a.value === 0 ? 0.4 : 1,
+                  flexShrink: 0,
+                }}
+              >
+                ↺
+              </button>
+            </div>
+            {/* Row 2 — slider takes the full row width so the user has the
+                widest possible drag range, especially helpful on a narrow
+                220px property panel. */}
             <input
               type="range"
               min={a.min}
               max={a.max}
               value={a.value}
               onChange={(e) => dispatch(a.prop, Number(e.target.value))}
-              style={{ flex: 1, accentColor: "var(--accent)" }}
+              style={{ width: "100%", accentColor: "var(--accent)" }}
             />
-            <input
-              type="number"
-              min={a.min}
-              max={a.max}
-              value={a.value}
-              onChange={(e) => dispatch(a.prop, Number(e.target.value))}
-              style={{ ...inputStyle, width: 46, padding: "3px 5px", fontSize: 10 }}
-            />
-            <button
-              type="button"
-              onClick={() => dispatch(a.prop, 0)}
-              title="초기화"
-              disabled={a.value === 0}
-              style={{
-                width: 18,
-                height: 18,
-                padding: 0,
-                fontSize: 11,
-                lineHeight: "16px",
-                color: a.value === 0 ? "var(--text-tertiary)" : "var(--text-secondary)",
-                background: "transparent",
-                border: "1px solid var(--border)",
-                borderRadius: 3,
-                cursor: a.value === 0 ? "default" : "pointer",
-                opacity: a.value === 0 ? 0.4 : 1,
-                flexShrink: 0,
-              }}
-            >
-              ↺
-            </button>
           </div>
         ))}
       </div>

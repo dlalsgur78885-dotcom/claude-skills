@@ -5,7 +5,7 @@ import { ToolPanel } from "./ToolPanel";
 import { PropertyPanel } from "./PropertyPanel";
 import { SlideNavigator } from "./SlideNavigator";
 import { createCoverSlide, createEmptySlide, createCtaSlide } from "@/lib/canvas-utils";
-import { api, proxiedImageUrl } from "@/lib/api";
+import { api, proxiedImageUrl, resolveImageUrl } from "@/lib/api";
 import { getFabric } from "@/lib/fabric";
 import { CanvasSizeSelector } from "@/components/CanvasSizeSelector";
 import type { SlideData, TemplateSummary } from "@/lib/types";
@@ -1532,6 +1532,53 @@ export function CanvasEditor({
     const newIndex = newSlides.length - 1;
     setCurrentSlideIndex(newIndex);
     loadSlide(newIndex);
+  }
+
+  // Lay the registered CTA image over the CURRENTLY selected slide, sized to
+  // cover the whole page. This used to append a brand-new last slide; users
+  // wanted "CTA 추가" to drop the CTA onto the page they already have open
+  // (e.g. to turn the last content slide into the CTA) rather than getting an
+  // extra page tacked on at the end.
+  //
+  // imageUrl comes from the backend (/api/images/cta/...); resolveImageUrl
+  // makes it absolute in dev (cross-origin :3000→:8000) and leaves it relative
+  // in prod (same-origin). Mirrors importImageFile's add-to-canvas path.
+  function addCtaImage(imageUrl: string) {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    (async () => {
+      try {
+        const fabric = await getFabric();
+        // Resolve the page (export area) rect — NOT canvas.getWidth()/Height(),
+        // which include the 2·PAD band. Same hazard noted in importImageFile.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pb = (canvas as any).__pageBoundary;
+        const pageW = (pb?.width as number) || canvas.getWidth();
+        const pageH = (pb?.height as number) || canvas.getHeight();
+        pushUndo();
+        const img = await fabric.FabricImage.fromURL(resolveImageUrl(imageUrl), { crossOrigin: "anonymous" });
+        const iw = img.width || pageW;
+        const ih = img.height || pageH;
+        // Stretch to exactly cover the page box. CTA images are authored at the
+        // carousel's aspect ratio, so scaleX/scaleY come out near-equal — any
+        // tiny mismatch beats leaving the CTA not filling the page.
+        img.set({
+          originX: "left",
+          originY: "top",
+          left: 0,
+          top: 0,
+          scaleX: pageW / iw,
+          scaleY: pageH / ih,
+        });
+        canvas.add(img);
+        canvas.setActiveObject(img);
+        canvas.requestRenderAll();
+        saveCurrentSlide();
+      } catch (err) {
+        console.error("[addCtaImage] failed", err);
+        alert("CTA 이미지 추가 실패: " + (err instanceof Error ? err.message : String(err)));
+      }
+    })();
   }
 
   function duplicateSlide() {
@@ -3920,6 +3967,7 @@ export function CanvasEditor({
           onAddGradientOverlay={addGradientOverlay}
           onImportImage={importImageFile}
           onImportPsd={importPsd}
+          onAddCta={addCtaImage}
           bgColor={bgColor}
           onApplyBgToCurrent={applyBgToCurrent}
           onApplyBgToAll={applyBgToAll}

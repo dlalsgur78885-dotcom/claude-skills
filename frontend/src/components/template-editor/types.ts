@@ -37,6 +37,10 @@ export interface Background {
   value?: string;
   overlay_color?: string | null;
   overlay_opacity?: number;
+  // Background-gradient fill — read by renderer.ts when type === "gradient".
+  color_a?: string | null;
+  color_b?: string | null;
+  direction?: "vertical" | "horizontal" | "diagonal" | null;
 }
 
 /** Linear-gradient fill (shape decorations only — image/text ignore). */
@@ -44,6 +48,11 @@ export interface GradientFill {
   type: "linear";
   direction: "vertical" | "horizontal" | "diagonal";
   stops: { offset: number; color: string }[];
+}
+
+export interface ColorFillSpec {
+  color: string;     // #rrggbb
+  intensity: number; // 0-100
 }
 
 export interface Decoration {
@@ -55,6 +64,8 @@ export interface Decoration {
   shadow?: ShadowSpec | null;
   stroke?: string | null;
   stroke_width?: number;
+  opacity?: number;  // 0..1, default 1
+  color_fill?: ColorFillSpec | null;  // image-only BlendColor filter
 }
 
 export interface TextSlot {
@@ -62,6 +73,7 @@ export interface TextSlot {
   position: Position;
   size: Size;
   style: TextStyle;
+  opacity?: number;  // 0..1, default 1
 }
 
 export interface ItemBox {

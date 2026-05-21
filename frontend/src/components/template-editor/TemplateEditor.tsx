@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { TemplateData, FabricMeta, LayoutSpec, TextSlot, Decoration } from "./types";
 import { renderLayoutToCanvas } from "./renderer";
 import { setByPath, getByPath, removeArrayItem } from "@/lib/template-paths";
@@ -15,12 +16,13 @@ export type { TemplateData };
 const DISPLAY_SIZE = 560;
 
 interface Props {
+  templateId?: number;
   template: TemplateData;
   onSave: (next: TemplateData) => Promise<void>;
   onClose: () => void;
 }
 
-export function TemplateEditor({ template: initial, onSave, onClose }: Props) {
+export function TemplateEditor({ templateId, template: initial, onSave, onClose }: Props) {
   const [template, setTemplate] = useState<TemplateData>(initial);
   const [layoutName, setLayoutName] = useState<string>(
     Object.keys(initial.layouts || {})[0] || ""
@@ -35,9 +37,86 @@ export function TemplateEditor({ template: initial, onSave, onClose }: Props) {
   // Which layout mini-preview is being hovered — drives the visibility of the
   // per-thumbnail delete button without needing one boolean per item.
   const [hoveredLayoutName, setHoveredLayoutName] = useState<string | null>(null);
+  // Which layout the user is currently copying. When non-null, the copy-target
+  // picker popup is open over that thumbnail.
+  const [copySourceLayout, setCopySourceLayout] = useState<string | null>(null);
+  // Anchor rect (viewport coords) of the thumbnail wrapper for the open copy
+  // popup. Used to position the portal-rendered popup with fixed coords —
+  // the layout bar has overflow-x:auto which CSS-spec-clips overflow-y too,
+  // so an in-tree absolute popup gets cut off.
+  const [copyAnchorRect, setCopyAnchorRect] = useState<{ x: number; y: number; w: number } | null>(null);
+  // Other templates the user can copy this layout INTO. Lazily fetched the
+  // first time the copy popup opens so the editor's initial render stays cheap.
+  const [otherTemplates, setOtherTemplates] = useState<
+    { id: number; name: string }[] | null
+  >(null);
+  const [copyingTo, setCopyingTo] = useState<number | null>(null);
+  const [copyResultMsg, setCopyResultMsg] = useState<string>("");
   // Undo/redo as JSON snapshots (each commit pushes onto undo, clears redo).
   const [undoStack, setUndoStack] = useState<string[]>([]);
   const [redoStack, setRedoStack] = useState<string[]>([]);
+
+  // Close the copy popup when the user clicks outside of it. The popup is
+  // portaled to body and the copy buttons live elsewhere in the tree, so
+  // React's e.stopPropagation() on the popup doesn't reliably stop a native
+  // document-level listener (the native event passes through body to
+  // document independently of React's delegation). Instead, check the click
+  // target directly — if it's inside the popup OR inside any copy button,
+  // ignore. Anything else closes.
+  useEffect(() => {
+    if (!copySourceLayout) return;
+    function handler(e: MouseEvent) {
+      const t = e.target as HTMLElement | null;
+      if (!t) return;
+      if (t.closest('[role="dialog"][aria-label*="복사"]')) return;
+      if (t.closest('button[aria-label*="복사"]')) return;
+      setCopySourceLayout(null);
+      setCopyAnchorRect(null);
+      setCopyResultMsg("");
+    }
+    // setTimeout(0) so the click that opened the popup isn't itself the
+    // outside click that closes it.
+    const id = setTimeout(() => document.addEventListener("mousedown", handler), 0);
+    return () => {
+      clearTimeout(id);
+      document.removeEventListener("mousedown", handler);
+    };
+  }, [copySourceLayout]);
+
+  async function openCopyPopup(layoutName: string, anchor?: HTMLElement) {
+    setCopySourceLayout(layoutName);
+    setCopyResultMsg("");
+    if (anchor) {
+      const r = anchor.getBoundingClientRect();
+      setCopyAnchorRect({ x: r.left, y: r.bottom + 4, w: r.width });
+    }
+    if (otherTemplates !== null) return;
+    try {
+      const res = await api.listTemplates();
+      const list = (res.templates || [])
+        .filter((t) => t.id !== templateId)
+        .map((t) => ({ id: t.id, name: t.name }));
+      setOtherTemplates(list);
+    } catch (e) {
+      setOtherTemplates([]);
+      setCopyResultMsg(e instanceof Error ? e.message : "템플릿 목록을 불러올 수 없습니다");
+    }
+  }
+
+  async function doCopyLayout(dstTemplateId: number) {
+    if (!copySourceLayout || templateId == null) return;
+    setCopyingTo(dstTemplateId);
+    setCopyResultMsg("");
+    try {
+      const res = await api.copyLayoutToTemplate(dstTemplateId, templateId, copySourceLayout);
+      const dstName = otherTemplates?.find((t) => t.id === dstTemplateId)?.name || `#${dstTemplateId}`;
+      setCopyResultMsg(`"${dstName}"에 "${res.layout_name}" 으로 복사됨 ✓`);
+    } catch (e) {
+      setCopyResultMsg(e instanceof Error ? e.message : "복사 실패");
+    } finally {
+      setCopyingTo(null);
+    }
+  }
 
   function commit(next: TemplateData, currentSnapshot: string) {
     setUndoStack((u) => {
@@ -92,6 +171,11 @@ export function TemplateEditor({ template: initial, onSave, onClose }: Props) {
   // selectedMeta in the effect deps (which would cause spurious re-renders).
   const selectedMetaRef = useRef<FabricMeta | null>(null);
   selectedMetaRef.current = selectedMeta;
+  // True while a layout redraw is in flight. canvas.clear() inside the redraw
+  // fires selection:cleared; without this gate that would null selectedMeta
+  // and dissolve the right panel contents (scroll lost, every property edit
+  // collapsed the panel to "선택 없음").
+  const inRedrawRef = useRef(false);
   // Monotonic token so a slow async render that finishes after a newer one
   // started doesn't stomp the newer selection.
   const renderTokenRef = useRef(0);
@@ -127,7 +211,13 @@ export function TemplateEditor({ template: initial, onSave, onClose }: Props) {
         const obj = e.selected?.[0] as any;
         setSelectedMeta(obj?.data || null);
       });
-      canvas.on("selection:cleared", () => setSelectedMeta(null));
+      canvas.on("selection:cleared", () => {
+        // canvas.clear() inside a property-edit redraw dispatches this — we
+        // restore the selection right after, so the null state would only
+        // last for one render and erase the panel. Ignore it during redraw.
+        if (inRedrawRef.current) return;
+        setSelectedMeta(null);
+      });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       canvas.on("object:modified", (e: { target?: any }) => {
@@ -288,15 +378,18 @@ export function TemplateEditor({ template: initial, onSave, onClose }: Props) {
     if (!layout) return;
     const myToken = ++renderTokenRef.current;
     const targetPath = selectedMetaRef.current?.path;
+    inRedrawRef.current = true;
     renderLayoutToCanvas(fabricReady, layoutName, layout, template.brand, scale, canvasW, canvasH).then(() => {
-      if (myToken !== renderTokenRef.current) return; // a newer render started — bail
-      if (!targetPath) return;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const match = fabricReady.getObjects().find((o: any) => o?.data?.path === targetPath);
-      if (match) {
-        fabricReady.setActiveObject(match);
-        fabricReady.requestRenderAll();
+      if (myToken !== renderTokenRef.current) { inRedrawRef.current = false; return; }
+      if (targetPath) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const match = fabricReady.getObjects().find((o: any) => o?.data?.path === targetPath);
+        if (match) {
+          fabricReady.setActiveObject(match);
+          fabricReady.requestRenderAll();
+        }
       }
+      inRedrawRef.current = false;
     });
   }, [fabricReady, layoutName, template, scale, canvasW, canvasH]);
 
@@ -361,6 +454,12 @@ export function TemplateEditor({ template: initial, onSave, onClose }: Props) {
   function patchTemplate(path: string, value: unknown) {
     const prev = templateRef.current;
     const next = setByPath(prev, path, value) as TemplateData;
+    // React state는 비동기라 setTemplate 후에도 다음 render 전까지 ref가
+    // prev 상태다. toggleOn처럼 같은 tick에 patchTemplate을 연달아 두 번
+    // 호출하는 케이스에서 두 번째가 stale prev로 덮어써서 첫번째 변경이
+    // 사라졌다 (외곽선 토글: stroke set → stroke_width set으로 stroke 누락).
+    // ref를 즉시 갱신해 같은 tick 내 후속 호출이 누적된 상태를 보게 한다.
+    templateRef.current = next;
     commit(next, JSON.stringify(prev));
   }
 
@@ -456,6 +555,37 @@ export function TemplateEditor({ template: initial, onSave, onClose }: Props) {
     setSelectedMeta(null);
     setHoveredLayoutName(null);
     commit(next, JSON.stringify(prev));
+  }
+
+  // Rename a layout — the layout key is also the display name and shows up in
+  // selectedMeta.path (e.g. "layouts.foo.decorations[0]"). To rename safely we
+  // (1) rebuild the layouts object preserving insertion order, (2) move
+  // layoutName focus if the active layout was renamed, (3) rewrite any in-
+  // flight selectedMeta.path so the property panel keeps pointing at the same
+  // object. Returns true on success — caller uses this to swap UI back from
+  // edit mode.
+  function renameLayout(oldName: string, newName: string): boolean {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === oldName) return false;
+    const prev = templateRef.current;
+    const layouts = prev.layouts || {};
+    if (!(oldName in layouts)) return false;
+    if (trimmed in layouts) return false;
+    const newLayouts: Record<string, LayoutSpec> = {};
+    for (const k of Object.keys(layouts)) {
+      newLayouts[k === oldName ? trimmed : k] = layouts[k];
+    }
+    const next: TemplateData = { ...prev, layouts: newLayouts };
+    templateRef.current = next;
+    if (oldName === layoutName) setLayoutName(trimmed);
+    if (selectedMeta && selectedMeta.path.startsWith(`layouts.${oldName}.`)) {
+      setSelectedMeta({
+        ...selectedMeta,
+        path: selectedMeta.path.replace(`layouts.${oldName}.`, `layouts.${trimmed}.`),
+      });
+    }
+    commit(next, JSON.stringify(prev));
+    return true;
   }
 
   function explodeGrid() {
@@ -607,6 +737,43 @@ export function TemplateEditor({ template: initial, onSave, onClose }: Props) {
   // Convert a drop event's screen coordinates to template-canvas pixels using
   // the underlying <canvas> element's bounding rect — accounts for the
   // editor's display-fit scale and any wrapper padding.
+  // Replace the selected image decoration's src with a freshly uploaded file.
+  // Reuses the same template-assets upload endpoint as the toolbar PNG picker.
+  const [replaceBusy, setReplaceBusy] = useState(false);
+  async function replaceSelectedImage(file: File) {
+    if (!selectedMeta) return;
+    if (!/\.decorations\[\d+\]$/.test(selectedMeta.path)) return;
+    if (!file.type.startsWith("image/")) { alert("이미지 파일만 가능"); return; }
+    setReplaceBusy(true);
+    try {
+      const { path } = await api.uploadTemplateAsset(file);
+      patchTemplate(`${selectedMeta.path}.src`, path);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "교체 실패");
+    } finally {
+      setReplaceBusy(false);
+    }
+  }
+
+  // Run /api/images/cutout on the selected image's current src; swap in the
+  // returned cutout URL when it lands.
+  const [cutoutBusy, setCutoutBusy] = useState(false);
+  async function cutoutSelectedImage(mode: "standard" | "generative") {
+    if (!selectedMeta) return;
+    if (!/\.decorations\[\d+\]$/.test(selectedMeta.path)) return;
+    const d = getByPath(templateRef.current, selectedMeta.path) as { src?: string | null } | undefined;
+    if (!d?.src) return;
+    setCutoutBusy(true);
+    try {
+      const { url } = await api.cutoutImage({ source_url: d.src, mode });
+      patchTemplate(`${selectedMeta.path}.src`, url);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "누끼 제거 실패");
+    } finally {
+      setCutoutBusy(false);
+    }
+  }
+
   function dropEventToCanvasCoords(e: React.DragEvent<HTMLDivElement>): { x: number; y: number } | null {
     if (!canvasRef.current) return null;
     const rect = canvasRef.current.getBoundingClientRect();
@@ -996,7 +1163,10 @@ export function TemplateEditor({ template: initial, onSave, onClose }: Props) {
           <span style={{ fontSize: 11, color: "var(--text-tertiary)", flexShrink: 0 }}>레이아웃</span>
           {layoutNames.map((n) => {
             const canDelete = layoutNames.length > 1;
-            const showDelete = canDelete && hoveredLayoutName === n;
+            const isHovered = hoveredLayoutName === n;
+            const showDelete = canDelete && isHovered;
+            const showCopy = isHovered && templateId != null;
+            const isCopyOpen = copySourceLayout === n;
             return (
               <div
                 key={n}
@@ -1010,7 +1180,45 @@ export function TemplateEditor({ template: initial, onSave, onClose }: Props) {
                   size={64}
                   active={n === layoutName}
                   onClick={() => setLayoutName(n)}
+                  onRename={(next) => renameLayout(n, next)}
+                  existingNames={layoutNames}
                 />
+                {templateId != null && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const wrapper = (e.currentTarget as HTMLElement).parentElement;
+                      openCopyPopup(n, wrapper || undefined);
+                    }}
+                    title={`레이아웃 "${n}" 다른 템플릿으로 복사`}
+                    aria-label={`레이아웃 ${n} 복사`}
+                    style={{
+                      position: "absolute",
+                      top: -6,
+                      left: -6,
+                      width: 18,
+                      height: 18,
+                      padding: 0,
+                      borderRadius: "50%",
+                      background: "var(--accent, #3CC8FF)",
+                      color: "white",
+                      border: "2px solid var(--bg-subtle)",
+                      fontSize: 11,
+                      lineHeight: 1,
+                      cursor: "pointer",
+                      opacity: showCopy || isCopyOpen ? 1 : 0,
+                      pointerEvents: showCopy || isCopyOpen ? "auto" : "none",
+                      transition: "opacity 100ms",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      boxShadow: "0 1px 4px rgba(0,0,0,0.4)",
+                    }}
+                  >
+                    ⎘
+                  </button>
+                )}
+                {/* Popup rendered via portal further down to escape overflow clipping. */}
                 {canDelete && (
                   <button
                     onClick={() => removeLayout(n)}
@@ -1126,8 +1334,118 @@ export function TemplateEditor({ template: initial, onSave, onClose }: Props) {
           layoutName={layoutName}
           selected={selectedMeta}
           onChange={patchTemplate}
+          onMoveLayer={moveLayer}
+          onDeleteSelected={deleteSelected}
+          onReplaceImage={replaceSelectedImage}
+          onCutoutImage={cutoutSelectedImage}
+          imageBusy={{ replace: replaceBusy, cutout: cutoutBusy }}
         />
       </div>
+
+      {/* Copy-layout target picker — portaled to body to escape the layout-bar
+          overflow clipping. */}
+      {copySourceLayout && copyAnchorRect && typeof document !== "undefined" &&
+        createPortal(
+          <div
+            role="dialog"
+            aria-label="레이아웃 복사 대상 선택"
+            style={{
+              position: "fixed",
+              top: copyAnchorRect.y,
+              left: copyAnchorRect.x,
+              zIndex: 9999,
+              minWidth: Math.max(220, copyAnchorRect.w + 60),
+              maxHeight: 320,
+              overflowY: "auto",
+              background: "var(--bg-elevated, #2a2a2a)",
+              border: "1px solid var(--border, #444)",
+              borderRadius: 6,
+              padding: 6,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.45)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "4px 6px 6px",
+                borderBottom: "1px solid var(--border, #444)",
+                marginBottom: 4,
+              }}
+            >
+              <span style={{ fontSize: 11, color: "var(--text-secondary, #aaa)" }}>
+                &quot;{copySourceLayout}&quot; → 대상 템플릿 선택
+              </span>
+              <button
+                onClick={() => { setCopySourceLayout(null); setCopyAnchorRect(null); }}
+                aria-label="닫기"
+                style={{
+                  width: 18,
+                  height: 18,
+                  padding: 0,
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--text-tertiary, #888)",
+                  fontSize: 13,
+                  cursor: "pointer",
+                  lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            </div>
+            {otherTemplates === null && (
+              <div style={{ padding: "8px 6px", fontSize: 11, color: "var(--text-tertiary, #888)" }}>
+                로딩 중...
+              </div>
+            )}
+            {otherTemplates !== null && otherTemplates.length === 0 && (
+              <div style={{ padding: "8px 6px", fontSize: 11, color: "var(--text-tertiary, #888)" }}>
+                복사 가능한 다른 템플릿이 없습니다
+              </div>
+            )}
+            {otherTemplates?.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => doCopyLayout(t.id)}
+                disabled={copyingTo != null}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "6px 8px",
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--text-primary, #fff)",
+                  fontSize: 12,
+                  cursor: copyingTo != null ? "wait" : "pointer",
+                  borderRadius: 4,
+                  opacity: copyingTo != null && copyingTo !== t.id ? 0.5 : 1,
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-overlay, #3a3a3a)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              >
+                {copyingTo === t.id ? "복사 중..." : t.name}
+              </button>
+            ))}
+            {copyResultMsg && (
+              <div
+                style={{
+                  padding: "6px 8px",
+                  marginTop: 4,
+                  fontSize: 11,
+                  color: copyResultMsg.includes("✓") ? "#4ade80" : "#e85b5b",
+                  borderTop: "1px solid var(--border, #444)",
+                }}
+              >
+                {copyResultMsg}
+              </div>
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

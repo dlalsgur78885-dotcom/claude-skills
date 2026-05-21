@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { HexColorPicker } from "react-colorful";
 import { getByPath } from "@/lib/template-paths";
 import type { TemplateData, FabricMeta, TextStyle, GridSpec, ShadowSpec, GradientFill, Decoration } from "./types";
 
@@ -9,6 +11,11 @@ interface Props {
   layoutName: string;
   selected: FabricMeta | null;
   onChange: (path: string, value: unknown) => void;
+  onMoveLayer?: (direction: "front" | "forward" | "backward" | "back") => void;
+  onDeleteSelected?: () => void;
+  onReplaceImage?: (file: File) => Promise<void> | void;
+  onCutoutImage?: (mode: "standard" | "generative") => Promise<void> | void;
+  imageBusy?: { replace?: boolean; cutout?: boolean };
 }
 
 // ─── Editor-matching design tokens ──────────────────────────────────────
@@ -145,6 +152,94 @@ function SliderRow({
   );
 }
 
+/** Inline color swatch + popover with react-colorful.
+ *
+ * Native <input type="color"> opens the OS picker which closes on click —
+ * "팔레트 안에서 연속 변화" 요구를 만족 못 한다. 이 컴포넌트는 swatch만 노출
+ * 하고 클릭 시 같은 패널 안에 picker를 띄워, 드래그 중에도 onChange가 연속
+ * 발화하고 외부 클릭으로만 닫힌다. */
+function InlineColorPicker({
+  value,
+  onChange,
+  size = 28,
+}: {
+  value: string | undefined;
+  onChange: (s: string) => void;
+  size?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const swatchRef = useRef<HTMLDivElement | null>(null);
+  const display = /^#[0-9a-fA-F]{6}$/.test(value || "") ? (value as string) : "#000000";
+
+  function toggle() {
+    if (!open && swatchRef.current) {
+      const r = swatchRef.current.getBoundingClientRect();
+      // viewport 기준 좌표. popover는 body로 portal되어 fixed 배치되므로
+      // aside의 overflow에 잘리지 않는다. (이전엔 absolute라 aside 안에서
+      // 잘려서 saturation 영역이 화면 밖으로 밀려났음.)
+      const PICKER_W = 216, PICKER_H = 216, PAD = 16;
+      let left = r.left;
+      let top = r.bottom + 6;
+      if (left + PICKER_W + PAD > window.innerWidth) {
+        left = Math.max(8, window.innerWidth - PICKER_W - PAD);
+      }
+      if (top + PICKER_H + PAD > window.innerHeight) {
+        top = Math.max(8, r.top - PICKER_H - 6);
+      }
+      setPos({ top, left });
+    }
+    setOpen((v) => !v);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocMouseDown(e: MouseEvent) {
+      const t = e.target as Element | null;
+      if (t && t.closest) {
+        if (t.closest("[data-color-popover]")) return;
+        if (t.closest("[data-color-swatch]")) return;
+      }
+      setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [open]);
+
+  return (
+    <>
+      <div
+        ref={swatchRef}
+        data-color-swatch=""
+        onClick={toggle}
+        title="클릭해서 색 고르기"
+        style={{
+          width: size, height: size, borderRadius: 4,
+          border: "1px solid var(--border)",
+          background: display,
+          cursor: "pointer",
+          display: "inline-block",
+        }}
+      />
+      {open && typeof document !== "undefined" && createPortal(
+        <div
+          data-color-popover=""
+          style={{
+            position: "fixed", top: pos.top, left: pos.left, zIndex: 1000,
+            padding: 8, borderRadius: 8,
+            background: "var(--bg-elevated)",
+            border: "1px solid var(--border)",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+          }}
+        >
+          <HexColorPicker color={display} onChange={onChange} />
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 function ColorRow({
   label,
   value,
@@ -154,17 +249,11 @@ function ColorRow({
   value: string | undefined;
   onChange: (s: string) => void;
 }) {
-  const display = value || "#000000";
   return (
     <div>
       <label style={LABEL_STYLE}>{label}</label>
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <input
-          type="color"
-          value={/^#[0-9a-fA-F]{6}$/.test(display) ? display : "#000000"}
-          onChange={(e) => onChange(e.target.value)}
-          style={{ width: 32, height: 32, borderRadius: 5, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", padding: 2 }}
-        />
+        <InlineColorPicker value={value} onChange={onChange} size={32} />
         <input
           type="text"
           value={value || ""}
@@ -175,7 +264,6 @@ function ColorRow({
             } else if (v === "") {
               onChange("");
             } else {
-              // accept partial typing; commit only when hex completes
               onChange(v);
             }
           }}
@@ -275,23 +363,56 @@ function WHGrid({
 
 // ─── Editor-style text style controls ───────────────────────────────────
 
+type TabKey = "basic" | "effects" | "ai";
+
+/** Section selector matches the editor's basic-tab ordering: color goes near
+ *  the top (right after position/size/opacity) while typography sits below
+ *  layer-ordering. */
+type TextSection = "all" | "color" | "typography" | "effects";
+
 function TextStyleEditor({
   path,
   style,
   onChange,
+  section = "all",
 }: {
   path: string;
   style: TextStyle | undefined;
   onChange: (path: string, value: unknown) => void;
+  section?: TextSection;
 }) {
   const s: TextStyle = style || {};
   const weight = String(s.font_weight || "normal");
   const bold = isBoldWeight(weight);
 
+  if (section === "effects") {
+    return (
+      <>
+        <OutlineEditor
+          basePath={path}
+          color={s.stroke}
+          width={s.stroke_width}
+          isText
+          onChange={onChange}
+        />
+        <ShadowEditor basePath={path} shadow={s.shadow} onChange={onChange} />
+      </>
+    );
+  }
+
+  if (section === "color") {
+    return (
+      <ColorRow label="색상" value={s.fill} onChange={(v) => onChange(`${path}.fill`, v)} />
+    );
+  }
+
+  // section === "typography" — everything except the leading color picker.
+  // (section === "all" still renders the color first to keep external callers.)
   return (
     <>
-      {/* Color */}
-      <ColorRow label="색상" value={s.fill} onChange={(v) => onChange(`${path}.fill`, v)} />
+      {section === "all" && (
+        <ColorRow label="색상" value={s.fill} onChange={(v) => onChange(`${path}.fill`, v)} />
+      )}
 
       {/* Font family */}
       <TextRow label="글꼴" value={s.font_family} onChange={(v) => onChange(`${path}.font_family`, v)} />
@@ -384,21 +505,6 @@ function TextStyleEditor({
         onChange={(v) => onChange(`${path}.line_height`, v)}
       />
 
-      {/* Outline (stroke) */}
-      <OutlineEditor
-        basePath={path}
-        color={s.stroke}
-        width={s.stroke_width}
-        isText
-        onChange={onChange}
-      />
-
-      {/* Drop shadow */}
-      <ShadowEditor
-        basePath={path}
-        shadow={s.shadow}
-        onChange={onChange}
-      />
     </>
   );
 }
@@ -460,12 +566,7 @@ function ShadowEditor({
           <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>색상</span>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "monospace" }}>{spec.color}</span>
-            <input
-              type="color"
-              value={/^#[0-9a-fA-F]{6}$/.test(spec.color) ? spec.color : "#000000"}
-              onChange={(e) => patch({ color: e.target.value })}
-              style={{ width: 22, height: 22, padding: 0, border: "1px solid var(--border)", borderRadius: 4, cursor: "pointer", background: "transparent" }}
-            />
+            <InlineColorPicker value={spec.color} onChange={(c) => patch({ color: c })} size={22} />
           </div>
         </div>
         <SliderRow label="방향" suffix="°" min={0} max={360} step={1} value={spec.angle}
@@ -482,6 +583,8 @@ function ShadowEditor({
 }
 
 const OUTLINE_DEFAULT_COLOR = "#000000";
+// 캐러셀 에디터(PropertyPanel.tsx)와 통일 — fabric native stroke만으로 image
+// 외곽선이 충분히 보이는 게 확인되어 4px로 되돌림.
 const OUTLINE_DEFAULT_WIDTH = 4;
 const OUTLINE_MAX = 216;
 
@@ -556,12 +659,7 @@ function OutlineEditor({
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>색상</span>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <input
-                type="color"
-                value={c}
-                onChange={(e) => setColor(e.target.value)}
-                style={{ width: 28, height: 22, borderRadius: 4, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", padding: 1 }}
-              />
+              <InlineColorPicker value={c} onChange={setColor} size={22} />
               <input
                 type="text"
                 value={c}
@@ -583,12 +681,35 @@ function OutlineEditor({
 
 // ─── Top-level panel ────────────────────────────────────────────────────
 
-export function LayoutPropertyPanel({ template, layoutName, selected, onChange }: Props) {
+export function LayoutPropertyPanel({ template, layoutName, selected, onChange, onMoveLayer, onDeleteSelected, onReplaceImage, onCutoutImage, imageBusy }: Props) {
   const layoutPath = `layouts.${layoutName}`;
   const layout = template.layouts?.[layoutName];
 
+  const [activeTab, setActiveTab] = useState<TabKey>("basic");
+
+  // 토글·슬라이더 조작 시 autoSave→setTemplate가 LayoutPropertyPanel을
+  // unmount-remount할 수 있어 component-local ref만으로는 scroll이 유지
+  // 안 된다. sessionStorage에 위치를 저장해 다음 mount에서 복원한다.
+  const asideRef = useRef<HTMLElement | null>(null);
+  const SCROLL_KEY = "layoutPanelScroll";
+  useLayoutEffect(() => {
+    if (!asideRef.current) return;
+    const saved = Number(sessionStorage.getItem(SCROLL_KEY) || "0");
+    if (saved > 0 && asideRef.current.scrollTop !== saved) {
+      asideRef.current.scrollTop = saved;
+    }
+  });
+
+  const tabs: { key: TabKey; label: string }[] = [
+    { key: "basic", label: "기본" },
+    { key: "effects", label: "효과" },
+    { key: "ai", label: "AI" },
+  ];
+
   return (
     <aside
+      ref={asideRef as React.RefObject<HTMLElement>}
+      onScroll={(e) => { sessionStorage.setItem(SCROLL_KEY, String((e.currentTarget as HTMLElement).scrollTop)); }}
       style={{
         width: 320,
         borderLeft: "1px solid var(--border)",
@@ -596,54 +717,132 @@ export function LayoutPropertyPanel({ template, layoutName, selected, onChange }
         overflowY: "auto",
       }}
     >
-      {/* Brand */}
-      <div style={SECTION_STYLE}>
-        <p style={SECTION_TITLE}>브랜드 · 전 레이아웃 공유</p>
-        <ColorRow label="주요 색상" value={template.brand?.primary_color} onChange={(v) => onChange("brand.primary_color", v)} />
-        <ColorRow label="배경 색상" value={template.brand?.background_color} onChange={(v) => onChange("brand.background_color", v)} />
-        <TextRow label="글꼴" value={template.brand?.font_family} onChange={(v) => onChange("brand.font_family", v)} />
+      {/* Tab navigation — mirrors canvas/PropertyPanel.tsx */}
+      <div style={{ display: "flex", gap: 2, padding: "8px 12px 0", borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--bg-elevated)", zIndex: 5 }}>
+        {tabs.map((t) => {
+          const active = t.key === activeTab;
+          return (
+            <button
+              key={t.key}
+              onClick={() => setActiveTab(t.key)}
+              style={{
+                flex: 1,
+                padding: "6px 8px",
+                fontSize: 11,
+                fontWeight: active ? 600 : 500,
+                color: active ? "var(--text-primary)" : "var(--text-tertiary)",
+                background: "transparent",
+                border: "none",
+                borderBottom: active ? "2px solid var(--accent)" : "2px solid transparent",
+                marginBottom: -1,
+                cursor: "pointer",
+              }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
       </div>
 
-      {/* Background */}
-      {layout?.background && (
-        <div style={SECTION_STYLE}>
-          <p style={SECTION_TITLE}>배경</p>
-          <div>
-            <label style={LABEL_STYLE}>종류</label>
-            <select
-              value={layout.background.type || "color"}
-              onChange={(e) => onChange(`${layoutPath}.background.type`, e.target.value)}
-              style={INPUT_STYLE}
-            >
-              <option value="color">단색</option>
-              <option value="image_keyword">이미지 키워드</option>
-              <option value="image_path">이미지 경로</option>
-              <option value="gradient">그라데이션</option>
-              <option value="composite">조합</option>
-            </select>
+      {activeTab === "basic" && (
+        <>
+          {/* Brand */}
+          <div style={SECTION_STYLE}>
+            <p style={SECTION_TITLE}>브랜드 · 전 레이아웃 공유</p>
+            <ColorRow label="주요 색상" value={template.brand?.primary_color} onChange={(v) => onChange("brand.primary_color", v)} />
+            <ColorRow label="배경 색상" value={template.brand?.background_color} onChange={(v) => onChange("brand.background_color", v)} />
+            <TextRow label="글꼴" value={template.brand?.font_family} onChange={(v) => onChange("brand.font_family", v)} />
           </div>
-          <TextRow
-            label="값"
-            value={layout.background.value || ""}
-            onChange={(v) => onChange(`${layoutPath}.background.value`, v)}
-          />
-          <OverlayEditor
-            layoutPath={layoutPath}
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            bg={layout.background as any}
-            onChange={onChange}
-          />
-        </div>
+
+          {/* Background — layout-wide. 오버레이도 같이 (에디터엔 없는 layout-wide 설정이라
+              효과 탭으로 분리하면 오히려 객체 효과가 묻혀버린다.) */}
+          {layout?.background && (
+            <div style={SECTION_STYLE}>
+              <p style={SECTION_TITLE}>배경</p>
+              <div>
+                <label style={LABEL_STYLE}>종류</label>
+                <select
+                  value={layout.background.type || "color"}
+                  onChange={(e) => onChange(`${layoutPath}.background.type`, e.target.value)}
+                  style={INPUT_STYLE}
+                >
+                  <option value="color">단색</option>
+                  <option value="image_keyword">이미지 키워드</option>
+                  <option value="image_path">이미지 경로</option>
+                  <option value="gradient">그라데이션</option>
+                  <option value="composite">조합</option>
+                </select>
+              </div>
+              {/* The "값" field holds the solid color / image keyword / image
+                  path — meaningless for a gradient background, so hide it then
+                  and show the gradient color + direction controls instead. */}
+              {layout.background.type !== "gradient" && (
+                <TextRow
+                  label="값"
+                  value={layout.background.value || ""}
+                  onChange={(v) => onChange(`${layoutPath}.background.value`, v)}
+                />
+              )}
+              {layout.background.type === "gradient" && (
+                <>
+                  <ColorRow
+                    label="그라데이션 시작색"
+                    value={layout.background.color_a || "#FFFFFF"}
+                    onChange={(v) => onChange(`${layoutPath}.background.color_a`, v)}
+                  />
+                  <ColorRow
+                    label="그라데이션 끝색"
+                    value={layout.background.color_b || "#000000"}
+                    onChange={(v) => onChange(`${layoutPath}.background.color_b`, v)}
+                  />
+                  <div>
+                    <label style={LABEL_STYLE}>방향</label>
+                    <select
+                      value={layout.background.direction || "vertical"}
+                      onChange={(e) => onChange(`${layoutPath}.background.direction`, e.target.value)}
+                      style={INPUT_STYLE}
+                    >
+                      <option value="vertical">세로 ↓</option>
+                      <option value="horizontal">가로 →</option>
+                      <option value="diagonal">대각선 ↘</option>
+                    </select>
+                  </div>
+                </>
+              )}
+              <OverlayEditor
+                layoutPath={layoutPath}
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                bg={layout.background as any}
+                onChange={onChange}
+              />
+            </div>
+          )}
+
+          {selected ? (
+            <SelectionEditor template={template} selected={selected} onChange={onChange} activeTab={activeTab} onMoveLayer={onMoveLayer} onDeleteSelected={onDeleteSelected} onReplaceImage={onReplaceImage} onCutoutImage={onCutoutImage} imageBusy={imageBusy} />
+          ) : layout?.grid ? (
+            <GridStyleSection layoutPath={layoutPath} grid={layout.grid} onChange={onChange} />
+          ) : (
+            <div style={{ padding: "32px 14px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 12, lineHeight: 1.6 }}>
+              캔버스에서 요소를<br />선택하면 속성이 표시됩니다
+            </div>
+          )}
+        </>
       )}
 
-      {/* Selection details */}
-      {selected ? (
-        <SelectionEditor template={template} selected={selected} onChange={onChange} />
-      ) : layout?.grid ? (
-        <GridStyleSection layoutPath={layoutPath} grid={layout.grid} onChange={onChange} />
-      ) : (
+      {activeTab === "effects" && (
+        selected ? (
+          <SelectionEditor template={template} selected={selected} onChange={onChange} activeTab={activeTab} onMoveLayer={onMoveLayer} onDeleteSelected={onDeleteSelected} onReplaceImage={onReplaceImage} onCutoutImage={onCutoutImage} imageBusy={imageBusy} />
+        ) : (
+          <div style={{ padding: "32px 14px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 12, lineHeight: 1.6 }}>
+            요소를 선택하면<br />외곽선·그림자·그라데이션을<br />설정할 수 있습니다
+          </div>
+        )
+      )}
+
+      {activeTab === "ai" && (
         <div style={{ padding: "32px 14px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 12, lineHeight: 1.6 }}>
-          캔버스에서 요소를<br />선택하면 속성이 표시됩니다
+          AI 기능 준비 중
         </div>
       )}
     </aside>
@@ -735,11 +934,10 @@ function GradientFillEditor({
           </div>
           {stops.map((s, i) => (
             <div key={i} style={{ display: "flex", gap: 4, alignItems: "center" }}>
-              <input
-                type="color"
+              <InlineColorPicker
                 value={(s.color.match(/^#[0-9a-fA-F]{6}/) || ["#000000"])[0]}
-                onChange={(e) => updateStop(i, { color: e.target.value })}
-                style={{ width: 28, height: 22, padding: 0, border: "1px solid var(--border)", borderRadius: 3, cursor: "pointer" }}
+                onChange={(c) => updateStop(i, { color: c })}
+                size={22}
               />
               <input
                 type="number"
@@ -767,26 +965,240 @@ function GradientFillEditor({
   );
 }
 
+function ImageReplaceRow({ busy, onReplace }: { busy: boolean; onReplace: (file: File) => Promise<void> | void }) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  return (
+    <div>
+      <label style={LABEL_STYLE}>이미지 교체</label>
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        disabled={busy}
+        title="선택한 이미지를 업로드한 파일로 교체"
+        style={{
+          width: "100%", padding: "7px 10px",
+          fontSize: 12, fontWeight: 500,
+          color: "rgb(180,200,255)",
+          background: "rgba(94,106,210,0.18)",
+          border: "1px solid rgba(94,106,210,0.45)",
+          borderRadius: 5,
+          cursor: busy ? "default" : "pointer",
+          opacity: busy ? 0.6 : 1,
+        }}
+      >
+        {busy ? "교체 중…" : "🖼️ 다른 이미지로 교체"}
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        style={{ display: "none" }}
+        onChange={async (e) => {
+          const file = e.target.files?.[0];
+          e.currentTarget.value = "";
+          if (file) await onReplace(file);
+        }}
+      />
+    </div>
+  );
+}
+
+function ImageCutoutRow({ busy, onCutout }: { busy: boolean; onCutout: (mode: "standard" | "generative") => Promise<void> | void }) {
+  return (
+    <div>
+      <label style={LABEL_STYLE}>누끼 제거</label>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <button
+          type="button"
+          onClick={() => onCutout("standard")}
+          disabled={busy}
+          title="배경만 제거 (~4초)"
+          style={{
+            width: "100%", padding: "7px 10px",
+            fontSize: 12, fontWeight: 500,
+            color: "rgb(160,230,190)",
+            background: "rgba(100,200,150,0.15)",
+            border: "1px solid rgba(100,200,150,0.35)",
+            borderRadius: 5,
+            cursor: busy ? "default" : "pointer",
+            opacity: busy ? 0.6 : 1,
+          }}
+        >
+          {busy ? "처리 중…" : "✂️ 일반 누끼"}
+        </button>
+        <button
+          type="button"
+          onClick={() => onCutout("generative")}
+          disabled={busy}
+          title="손·사람까지 제거하고 제품만 추출 (~4초)"
+          style={{
+            width: "100%", padding: "7px 10px",
+            fontSize: 12, fontWeight: 500,
+            color: "rgb(255,200,140)",
+            background: "rgba(255,170,80,0.15)",
+            border: "1px solid rgba(255,170,80,0.35)",
+            borderRadius: 5,
+            cursor: busy ? "default" : "pointer",
+            opacity: busy ? 0.6 : 1,
+          }}
+        >
+          {busy ? "처리 중…" : "🎯 생성 누끼 (손 제거)"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ImageColorFillRow({ spec, onChange }: { spec: { color: string; intensity: number } | null; onChange: (next: { color: string; intensity: number } | null) => void }) {
+  const display: { color: string; intensity: number } = spec || { color: "#FF3B6A", intensity: 0 };
+  function update(patch: Partial<{ color: string; intensity: number }>) {
+    const next = { ...display, ...patch };
+    // 색만 만져도 강도 0이면 캔버스에 변화가 안 보여 "기능 안 됨"으로 보인다.
+    // 색상을 건드린 순간 강도가 0이라면 50%로 자동 활성화해 즉시 결과가 보이게.
+    if ("color" in patch && (!next.intensity || next.intensity <= 0)) {
+      next.intensity = 50;
+    }
+    if (!next.intensity || next.intensity <= 0) onChange(null);
+    else onChange(next);
+  }
+  return (
+    <div>
+      <label style={LABEL_STYLE}>색상 채우기</label>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 40 }}>색상</span>
+          <InlineColorPicker value={display.color} onChange={(c) => update({ color: c })} size={24} />
+          <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "monospace", flex: 1 }}>
+            {display.color}
+          </span>
+        </div>
+        <SliderRow
+          label="강도"
+          value={display.intensity}
+          min={0} max={100} step={1} suffix="%"
+          onChange={(v) => update({ intensity: v })}
+        />
+      </div>
+    </div>
+  );
+}
+
+function LayerOrderRow({ onMove }: { onMove: (d: "front" | "forward" | "backward" | "back") => void }) {
+  const buttons = [
+    { key: "front", label: "맨 앞", path: "M3.75 9.75L9 4.5l5.25 5.25M9 4.5v15" },
+    { key: "forward", label: "앞으로", path: "M4.5 15.75L9 11.25l4.5 4.5M9 11.25V21" },
+    { key: "backward", label: "뒤로", path: "M4.5 8.25L9 12.75l4.5-4.5M9 12.75V3" },
+    { key: "back", label: "맨 뒤", path: "M3.75 14.25L9 19.5l5.25-5.25M9 19.5v-15" },
+  ] as const;
+  return (
+    <div>
+      <label style={LABEL_STYLE}>레이어 순서</label>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+        {buttons.map((b) => (
+          <button
+            key={b.key}
+            type="button"
+            onClick={() => onMove(b.key)}
+            style={{
+              display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4,
+              padding: "5px 6px", fontSize: 11,
+              background: "var(--bg-overlay)", color: "var(--text-secondary)",
+              border: "1px solid var(--border)", borderRadius: 5, cursor: "pointer",
+            }}
+          >
+            <svg width="11" height="11" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d={b.path} />
+            </svg>
+            {b.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DeleteRow({ onDelete }: { onDelete: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onDelete}
+      title="삭제 (Delete)"
+      style={{
+        width: "100%",
+        padding: "8px 10px",
+        fontSize: 12, fontWeight: 500,
+        color: "var(--red)",
+        background: "var(--red-muted, rgba(232,91,91,0.12))",
+        border: "1px solid rgba(232,91,91,0.25)",
+        borderRadius: 6,
+        cursor: "pointer",
+        display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+      }}
+    >
+      <svg width="13" height="13" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79" />
+      </svg>
+      요소 삭제
+    </button>
+  );
+}
+
 function SelectionEditor({
   template,
   selected,
   onChange,
+  activeTab,
+  onMoveLayer,
+  onDeleteSelected,
+  onReplaceImage,
+  onCutoutImage,
+  imageBusy,
 }: {
   template: TemplateData;
   selected: FabricMeta;
   onChange: (path: string, value: unknown) => void;
+  activeTab: TabKey;
+  onMoveLayer?: (direction: "front" | "forward" | "backward" | "back") => void;
+  onDeleteSelected?: () => void;
+  onReplaceImage?: (file: File) => Promise<void> | void;
+  onCutoutImage?: (mode: "standard" | "generative") => Promise<void> | void;
+  imageBusy?: { replace?: boolean; cutout?: boolean };
 }) {
   const node = getByPath(template, selected.path);
+  const isReorderable = /\.(decorations|text_slots)\[\d+\]$/.test(selected.path);
 
   if (selected.kind === "text_slot") {
-    const t = node as { role?: string; position?: { x: number; y: number }; size?: { width: number; height: number }; style?: TextStyle };
+    const t = node as { role?: string; position?: { x: number; y: number }; size?: { width: number; height: number }; style?: TextStyle; opacity?: number };
     return (
       <div style={SECTION_STYLE}>
         <p style={SECTION_TITLE}>텍스트 슬롯{t?.role ? ` · ${t.role}` : ""}</p>
-        <XYGrid basePath={`${selected.path}.position`} vals={{ x: t?.position?.x, y: t?.position?.y }} onChange={onChange} />
-        <WHGrid basePath={`${selected.path}.size`} vals={{ width: t?.size?.width, height: t?.size?.height }} onChange={onChange} />
-        <div style={{ height: 1, background: "var(--border)", margin: 0 }} />
-        <TextStyleEditor path={`${selected.path}.style`} style={t?.style} onChange={onChange} />
+        {activeTab === "basic" && (
+          <>
+            {/* 1. 위치 */}
+            <XYGrid basePath={`${selected.path}.position`} vals={{ x: t?.position?.x, y: t?.position?.y }} onChange={onChange} />
+            {/* 2. 크기 */}
+            <WHGrid basePath={`${selected.path}.size`} vals={{ width: t?.size?.width, height: t?.size?.height }} onChange={onChange} />
+            {/* 3. 색상 */}
+            <TextStyleEditor path={`${selected.path}.style`} style={t?.style} onChange={onChange} section="color" />
+            {/* 4. 불투명도 */}
+            <SliderRow
+              label="불투명도"
+              value={Math.round((t?.opacity ?? 1) * 100)}
+              min={0} max={100} step={1} suffix="%"
+              onChange={(v) => onChange(`${selected.path}.opacity`, v / 100)}
+            />
+            {/* 5. 레이어 순서 */}
+            {isReorderable && onMoveLayer && <LayerOrderRow onMove={onMoveLayer} />}
+            {/* 6. 텍스트 속성 (글꼴/크기/굵기/정렬/행간) */}
+            <div style={{ height: 1, background: "var(--border)", margin: 0 }} />
+            <TextStyleEditor path={`${selected.path}.style`} style={t?.style} onChange={onChange} section="typography" />
+            {/* 7. 요소 삭제 */}
+            {onDeleteSelected && <DeleteRow onDelete={onDeleteSelected} />}
+          </>
+        )}
+        {activeTab === "effects" && (
+          <TextStyleEditor path={`${selected.path}.style`} style={t?.style} onChange={onChange} section="effects" />
+        )}
       </div>
     );
   }
@@ -798,34 +1210,63 @@ function SelectionEditor({
     return (
       <div style={SECTION_STYLE}>
         <p style={SECTION_TITLE}>장식{d?.kind ? ` · ${d.kind}` : ""}</p>
-        <XYGrid basePath={`${selected.path}.position`} vals={{ x: d?.position?.x, y: d?.position?.y }} onChange={onChange} />
-        <WHGrid basePath={`${selected.path}.size`} vals={{ width: d?.size?.width, height: d?.size?.height }} onChange={onChange} />
-        {/* Solid color (hidden while gradient mode is on — picker replaced by the gradient stops below). */}
-        {!fillIsGradient && (
-          <ColorRow label="색상" value={solidFill || ""} onChange={(v) => onChange(`${selected.path}.fill`, v)} />
+        {activeTab === "basic" && (
+          <>
+            {/* 1. 위치 */}
+            <XYGrid basePath={`${selected.path}.position`} vals={{ x: d?.position?.x, y: d?.position?.y }} onChange={onChange} />
+            {/* 2. 크기 */}
+            <WHGrid basePath={`${selected.path}.size`} vals={{ width: d?.size?.width, height: d?.size?.height }} onChange={onChange} />
+            {/* 3. 색상 */}
+            {!fillIsGradient && (
+              <ColorRow label="색상" value={solidFill || ""} onChange={(v) => onChange(`${selected.path}.fill`, v)} />
+            )}
+            {/* 4. 불투명도 */}
+            <SliderRow
+              label="불투명도"
+              value={Math.round((d?.opacity ?? 1) * 100)}
+              min={0} max={100} step={1} suffix="%"
+              onChange={(v) => onChange(`${selected.path}.opacity`, v / 100)}
+            />
+            {/* 5. 레이어 순서 */}
+            {isReorderable && onMoveLayer && <LayerOrderRow onMove={onMoveLayer} />}
+            {/* 6. 요소 삭제 */}
+            {onDeleteSelected && <DeleteRow onDelete={onDeleteSelected} />}
+          </>
         )}
-        {/* Gradient toggle — only meaningful for shape decorations. Logos/images
-            paint their bitmap so a gradient fill wouldn't render. */}
-        {d.kind === "shape" && (
-          <GradientFillEditor basePath={selected.path} fill={d.fill} onChange={onChange} />
+        {activeTab === "effects" && (
+          <>
+            {/* image decoration: 교체 / 누끼 / 컬러필 (에디터와 동일 순서) */}
+            {d.kind === "image" && d.src && onReplaceImage && (
+              <ImageReplaceRow busy={!!imageBusy?.replace} onReplace={onReplaceImage} />
+            )}
+            {d.kind === "image" && d.src && onCutoutImage && (
+              <ImageCutoutRow busy={!!imageBusy?.cutout} onCutout={onCutoutImage} />
+            )}
+            {d.kind === "image" && d.src && (
+              <ImageColorFillRow
+                spec={d.color_fill || null}
+                onChange={(spec) => onChange(`${selected.path}.color_fill`, spec)}
+              />
+            )}
+            {d.kind === "shape" && (
+              <GradientFillEditor basePath={selected.path} fill={d.fill} onChange={onChange} />
+            )}
+            <OutlineEditor
+              basePath={selected.path}
+              color={d.stroke}
+              width={d.stroke_width}
+              isText={false}
+              onChange={onChange}
+            />
+            <ShadowEditor basePath={selected.path} shadow={d.shadow} onChange={onChange} />
+          </>
         )}
-        <OutlineEditor
-          basePath={selected.path}
-          color={d.stroke}
-          width={d.stroke_width}
-          isText={false}
-          onChange={onChange}
-        />
-        <ShadowEditor
-          basePath={selected.path}
-          shadow={d.shadow}
-          onChange={onChange}
-        />
       </div>
     );
   }
 
   if (selected.kind === "grid_origin") {
+    if (activeTab !== "basic") return null;
     const p = node as { x?: number; y?: number };
     return (
       <div style={SECTION_STYLE}>
@@ -836,6 +1277,7 @@ function SelectionEditor({
   }
 
   if (selected.kind === "grid_image") {
+    if (activeTab !== "basic") return null;
     const ia = node as { x?: number; y?: number; width?: number; height?: number; border_radius?: number };
     return (
       <div style={SECTION_STYLE}>
@@ -985,6 +1427,7 @@ function OverlayEditor({ layoutPath, bg, onChange }: OverlayEditorProps) {
   }
 
   const stops = bg.overlay_gradient_stops || [];
+  const [gradientOpen, setGradientOpen] = useState(false);
 
   return (
     <>
@@ -1036,64 +1479,86 @@ function OverlayEditor({ layoutPath, bg, onChange }: OverlayEditorProps) {
 
       {kind === "gradient" && (
         <>
-          <div>
-            <label style={LABEL_STYLE}>방향</label>
-            <div style={{ display: "flex", gap: 4 }}>
-              {(["vertical", "horizontal", "diagonal"] as const).map((d) => {
-                const active = bg.overlay_gradient_direction === d;
-                return (
+          <button
+            type="button"
+            onClick={() => setGradientOpen((v) => !v)}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              width: "100%", padding: "6px 8px",
+              fontSize: 11, fontWeight: 500,
+              color: "var(--text-secondary)",
+              background: "var(--bg-overlay)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              cursor: "pointer",
+            }}
+            aria-expanded={gradientOpen}
+          >
+            <span>그라데이션 설정 · {stops.length}개 스톱</span>
+            <span style={{ fontSize: 9, color: "var(--text-tertiary)", transform: gradientOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>▶</span>
+          </button>
+          {gradientOpen && (
+            <>
+              <div>
+                <label style={LABEL_STYLE}>방향</label>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {(["vertical", "horizontal", "diagonal"] as const).map((d) => {
+                    const active = bg.overlay_gradient_direction === d;
+                    return (
+                      <button
+                        key={d}
+                        onClick={() => onChange(`${layoutPath}.background.overlay_gradient_direction`, d)}
+                        style={{
+                          flex: 1, padding: "5px 0",
+                          fontSize: 14,
+                          borderRadius: 4,
+                          background: active ? "var(--accent)" : "var(--bg-overlay)",
+                          color: active ? "white" : "var(--text-secondary)",
+                          border: "1px solid",
+                          borderColor: active ? "var(--accent)" : "var(--border)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {d === "vertical" ? "↓" : d === "horizontal" ? "→" : "↘"}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+              {stops.map((stop: any, i: number) => (
+                <StopEditor
+                  key={i}
+                  stop={stop}
+                  index={i}
+                  onCommit={(patch) => {
+                    const next = [...stops];
+                    next[i] = { ...stop, ...patch };
+                    onChange(`${layoutPath}.background.overlay_gradient_stops`, next);
+                  }}
+                />
+              ))}
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  onClick={() => {
+                    const next = [...stops, { offset: 0.5, color: "#000000", alpha: 0.35 }];
+                    onChange(`${layoutPath}.background.overlay_gradient_stops`, next.sort((a, b) => a.offset - b.offset));
+                  }}
+                  style={{ flex: 1, padding: "5px 0", fontSize: 11, fontWeight: 500, borderRadius: 4, background: "var(--bg-overlay)", color: "var(--text-secondary)", border: "1px solid var(--border)", cursor: "pointer" }}
+                >
+                  + 스톱
+                </button>
+                {stops.length > 2 && (
                   <button
-                    key={d}
-                    onClick={() => onChange(`${layoutPath}.background.overlay_gradient_direction`, d)}
-                    style={{
-                      flex: 1, padding: "5px 0",
-                      fontSize: 14,
-                      borderRadius: 4,
-                      background: active ? "var(--accent)" : "var(--bg-overlay)",
-                      color: active ? "white" : "var(--text-secondary)",
-                      border: "1px solid",
-                      borderColor: active ? "var(--accent)" : "var(--border)",
-                      cursor: "pointer",
-                    }}
+                    onClick={() => onChange(`${layoutPath}.background.overlay_gradient_stops`, stops.slice(0, -1))}
+                    style={{ flex: 1, padding: "5px 0", fontSize: 11, fontWeight: 500, borderRadius: 4, background: "var(--bg-overlay)", color: "var(--red)", border: "1px solid var(--border)", cursor: "pointer" }}
                   >
-                    {d === "vertical" ? "↓" : d === "horizontal" ? "→" : "↘"}
+                    − 스톱
                   </button>
-                );
-              })}
-            </div>
-          </div>
-          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-          {stops.map((stop: any, i: number) => (
-            <StopEditor
-              key={i}
-              stop={stop}
-              index={i}
-              onCommit={(patch) => {
-                const next = [...stops];
-                next[i] = { ...stop, ...patch };
-                onChange(`${layoutPath}.background.overlay_gradient_stops`, next);
-              }}
-            />
-          ))}
-          <div style={{ display: "flex", gap: 6 }}>
-            <button
-              onClick={() => {
-                const next = [...stops, { offset: 0.5, color: "#000000", alpha: 0.35 }];
-                onChange(`${layoutPath}.background.overlay_gradient_stops`, next.sort((a, b) => a.offset - b.offset));
-              }}
-              style={{ flex: 1, padding: "5px 0", fontSize: 11, fontWeight: 500, borderRadius: 4, background: "var(--bg-overlay)", color: "var(--text-secondary)", border: "1px solid var(--border)", cursor: "pointer" }}
-            >
-              + 스톱
-            </button>
-            {stops.length > 2 && (
-              <button
-                onClick={() => onChange(`${layoutPath}.background.overlay_gradient_stops`, stops.slice(0, -1))}
-                style={{ flex: 1, padding: "5px 0", fontSize: 11, fontWeight: 500, borderRadius: 4, background: "var(--bg-overlay)", color: "var(--red)", border: "1px solid var(--border)", cursor: "pointer" }}
-              >
-                − 스톱
-              </button>
-            )}
-          </div>
+                )}
+              </div>
+            </>
+          )}
         </>
       )}
     </>
@@ -1163,11 +1628,10 @@ function StopEditor({
       <div>
         <label style={LABEL_STYLE}>색상</label>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <input
-            type="color"
+          <InlineColorPicker
             value={(colorText || "#000000").slice(0, 7)}
-            onChange={(e) => { setColorText(e.target.value); onCommit({ color: e.target.value }); }}
-            style={{ width: 32, height: 32, borderRadius: 5, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", padding: 2, flexShrink: 0 }}
+            onChange={(c) => { setColorText(c); onCommit({ color: c }); }}
+            size={32}
           />
           <input
             type="text"

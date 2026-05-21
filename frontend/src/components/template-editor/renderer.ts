@@ -50,10 +50,22 @@ function applyTextEffects(
   src: { shadow?: ShadowSpec | null; stroke?: string | null; stroke_width?: number } | undefined,
   scale: number,
   isText: boolean,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  fabric?: any,
 ) {
   if (!src) return;
   if (src.shadow) {
-    obj.shadow = buildShadowString(src.shadow, scale);
+    // fabric v7: direct `obj.shadow = "css string"` bypasses the _set wrapper
+    // that converts strings into a `Shadow` instance. The raw string then has
+    // no .color/.offsetX/.blur, so _setShadow writes undefined/NaN and the
+    // object renders incorrectly (no shadow + possible blank caching).
+    // Use .set() so the wrapper kicks in, or build a Shadow explicitly.
+    const css = buildShadowString(src.shadow, scale);
+    if (fabric && fabric.Shadow) {
+      obj.set("shadow", new fabric.Shadow(css));
+    } else {
+      obj.set("shadow", css);
+    }
   }
   if (src.stroke && (src.stroke_width || 0) > 0) {
     obj.stroke = src.stroke;
@@ -283,13 +295,40 @@ export async function renderLayoutToCanvas(
           cornerColor: "#3CC8FF",
           cornerSize: 8,
           transparentCorners: false,
+          opacity: d.opacity ?? 1,
         });
         // Force the rendered size to match the slot box so user resizes round-trip.
         const naturalW = img.width || w;
         const naturalH = img.height || h;
         img.scaleX = w / naturalW;
         img.scaleY = h / naturalH;
-        applyTextEffects(img, d, scale, false);
+        applyTextEffects(img, d, scale, false, fabric);
+        // BlendColor filter (image-only color tint). intensity 0이면 skip.
+        // fabric v7는 ESM modular: `fabric.BlendColor` (top-level) 와
+        // `fabric.filters.BlendColor` 둘 다 가능. 둘 다 시도하고 fabric의
+        // 즉시 재렌더도 명시한다.
+        if (d.color_fill && d.color_fill.intensity > 0) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const Blend = (fabric as any).filters?.BlendColor || (fabric as any).BlendColor;
+            if (Blend) {
+              const filter = new Blend({
+                color: d.color_fill.color || "#000000",
+                mode: "tint",
+                alpha: Math.max(0, Math.min(1, d.color_fill.intensity / 100)),
+              });
+              img.filters = [filter];
+              img.applyFilters();
+              img.dirty = true;
+            } else {
+              // eslint-disable-next-line no-console
+              console.warn("[renderer] fabric BlendColor not found", Object.keys((fabric as object) || {}));
+            }
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.warn("[renderer] BlendColor apply failed:", e);
+          }
+        }
         canvas.add(withMeta(img, { path, kind: "decoration" }));
         continue;
       } catch {
@@ -312,7 +351,6 @@ export async function renderLayoutToCanvas(
       width: w,
       height: h,
       fill: resolvedFill ?? (showPlaceholderChrome ? "rgba(255,255,255,0.12)" : "transparent"),
-      // User-defined stroke wins over the dashed placeholder chrome.
       stroke: userStroke ? d.stroke : showPlaceholderChrome ? "rgba(255,255,255,0.6)" : undefined,
       strokeWidth: userStroke ? (d.stroke_width || 0) * scale : showPlaceholderChrome ? 1 : 0,
       strokeUniform: userStroke ? true : undefined,
@@ -322,8 +360,13 @@ export async function renderLayoutToCanvas(
       transparentCorners: false,
       originX: "left",
       originY: "top",
+      opacity: d.opacity ?? 1,
     });
-    if (d.shadow) rect.shadow = buildShadowString(d.shadow, scale);
+    if (d.shadow) {
+      // v7: see comment in applyTextEffects — must go through .set() or be a
+      // Shadow instance, otherwise rendering produces NaN shadow params.
+      rect.set("shadow", new fabric.Shadow(buildShadowString(d.shadow, scale)));
+    }
     canvas.add(withMeta(rect, { path, kind: "decoration" }));
 
     if (showPlaceholderChrome) {
@@ -365,8 +408,9 @@ export async function renderLayoutToCanvas(
       editable: false,
       originX: "left",
       originY: "top",
+      opacity: t.opacity ?? 1,
     });
-    applyTextEffects(tb, t.style, scale, true);
+    applyTextEffects(tb, t.style, scale, true, fabric);
     canvas.add(withMeta(tb, { path, kind: "text_slot" }));
   });
 
@@ -423,7 +467,7 @@ export async function renderLayoutToCanvas(
           originX: "left",
           originY: "top",
         });
-        applyTextEffects(title, titleStyle, scale, true);
+        applyTextEffects(title, titleStyle, scale, true, fabric);
         canvas.add(title);
 
         // Subtitle (if defined)
@@ -443,7 +487,7 @@ export async function renderLayoutToCanvas(
             originX: "left",
             originY: "top",
           });
-          applyTextEffects(subtitle, ss, scale, true);
+          applyTextEffects(subtitle, ss, scale, true, fabric);
           canvas.add(subtitle);
         }
 
@@ -465,7 +509,7 @@ export async function renderLayoutToCanvas(
             originX: "left",
             originY: "top",
           });
-          applyTextEffects(desc, ds, scale, true);
+          applyTextEffects(desc, ds, scale, true, fabric);
           canvas.add(desc);
         }
       }

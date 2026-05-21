@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
-import { api, resolveImageUrl } from "@/lib/api";
+import { api, resolveImageUrl, proxiedImageUrl } from "@/lib/api";
 import type { TemplateSummary } from "@/lib/types";
 import { TemplateThumbnail } from "@/components/template-editor/TemplateThumbnail";
 
@@ -94,7 +94,10 @@ export default function CreatePage() {
 
   // Original-size image preview modal (Step 3 picker). Stores the URL to show;
   // null means closed. Clicking the backdrop closes it.
-  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ full: string; preview: string } | null>(null);
+  // True once the full-size original failed to load and we dropped to the
+  // preview-size URL — the thumbnail grid already proved that one loads.
+  const [previewFellBack, setPreviewFellBack] = useState(false);
 
   // Per-slide layout override (slide_index → layout name). Empty when the user
   // hasn't deviated from the auto-pick; populated from the dropdown in Step 1.
@@ -1644,7 +1647,12 @@ export default function CreatePage() {
                                     </div>
                                     <button
                                       type="button"
-                                      onClick={(e) => { e.stopPropagation(); setPreviewImageUrl(img.url || img.preview_url); }}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const full = img.url || img.preview_url || "";
+                                        setPreviewImage({ full, preview: img.preview_url || full });
+                                        setPreviewFellBack(false);
+                                      }}
                                       style={{
                                         padding: "3px 6px",
                                         fontSize: 10,
@@ -1785,9 +1793,9 @@ export default function CreatePage() {
       )}
 
       {/* Full-size image preview overlay — click anywhere to dismiss */}
-      {previewImageUrl && (
+      {previewImage && (
         <div
-          onClick={() => setPreviewImageUrl(null)}
+          onClick={() => setPreviewImage(null)}
           style={{
             position: "fixed",
             inset: 0,
@@ -1800,10 +1808,21 @@ export default function CreatePage() {
             cursor: "zoom-out",
           }}
         >
+          {/* Full-size original: route through the backend image proxy. Search
+              results come from Unsplash/Pexels/Pixabay/Naver; several of those
+              (Naver above all) hotlink-block a direct browser <img> load of the
+              full-size URL — that's why "원본보기" worked for some and not others.
+              If the proxied original still fails (dead URL, expired token,
+              >20MB, odd content-type) we drop to the preview-size URL loaded
+              directly — the thumbnail grid already proved it's browser-loadable
+              — so every visible candidate previews. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={previewImageUrl}
+            src={previewFellBack ? previewImage.preview : proxiedImageUrl(previewImage.full)}
             alt=""
+            onError={() => {
+              if (!previewFellBack && previewImage.preview) setPreviewFellBack(true);
+            }}
             style={{
               maxWidth: "100%",
               maxHeight: "100%",
@@ -1813,6 +1832,24 @@ export default function CreatePage() {
               pointerEvents: "none",
             }}
           />
+          {previewFellBack && (
+            <div
+              style={{
+                position: "absolute",
+                bottom: 20,
+                left: "50%",
+                transform: "translateX(-50%)",
+                fontSize: 12,
+                color: "rgba(255,255,255,0.85)",
+                background: "rgba(0,0,0,0.6)",
+                padding: "6px 14px",
+                borderRadius: 999,
+                pointerEvents: "none",
+              }}
+            >
+              원본을 불러올 수 없어 미리보기 화질로 표시합니다
+            </div>
+          )}
         </div>
       )}
 

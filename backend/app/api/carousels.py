@@ -344,6 +344,49 @@ async def render_carousel_endpoint(
     return {"canvas_slides": canvas_slides, "template_id": template.id, "template_slug": template.slug}
 
 
+def _template_has_multicell(layouts: dict) -> bool:
+    """True if any layout renders more than one image cell — a regular grid
+    (rows×cols > 1) or the irregular per-cell pattern. A template with no
+    multi-cell layout is one-subject-per-slide; the Vision extractor is then
+    told not to split slides into items."""
+    for layout in (layouts or {}).values():
+        if not isinstance(layout, dict):
+            continue
+        grid = layout.get("grid")
+        if isinstance(grid, dict):
+            if (int(grid.get("rows") or 1) * int(grid.get("cols") or 1)) > 1:
+                return True
+        for slot in layout.get("text_slots") or []:
+            if "cell_" in str(slot.get("role") or ""):
+                return True
+    return False
+
+
+_BODY_TEXT_ROLES = {"body", "description", "caption", "subheadline", "subtitle"}
+
+
+def _layout_has_body_slot(layout: dict) -> bool:
+    """True if the layout has a text slot that renders a slide's body/subtext."""
+    if not isinstance(layout, dict):
+        return False
+    for slot in (layout.get("text_slots") or []):
+        if str(slot.get("role") or "").lower() in _BODY_TEXT_ROLES:
+            return True
+    return False
+
+
+def _pick_typed_layout(layouts: dict, prefs: list[str]) -> dict | None:
+    """Find the layout a slide type renders with — mirrors carousel_renderer
+    _pick_layout's name preference, falling back to the first layout."""
+    for name in prefs:
+        if isinstance((layouts or {}).get(name), dict):
+            return layouts[name]
+    for layout in (layouts or {}).values():
+        if isinstance(layout, dict):
+            return layout
+    return None
+
+
 @router.post("/generate-content")
 async def generate_content(
     data: dict,
@@ -354,6 +397,7 @@ async def generate_content(
     from app.services.content_gen import ContentGenerator
     from app.services.content_extractor import extract_slides_from_post_images
     from app.services.post_ingest import ingest_post_by_url_via_hiker
+    from app.services.template_studio import get_template
     from app.models.post import CollectedPost
     from sqlalchemy.orm import selectinload
 
@@ -362,6 +406,7 @@ async def generate_content(
     slide_count = data.get("slide_count", 8)
     ref_ids = list(data.get("ref_ids", []))
     post_urls = data.get("post_urls") or []
+    template_id = data.get("template_id")
 
     # URL이 들어오면 HikerAPI로 자동 수집 → ref_ids에 추가
     ingested_for_extraction: list[CollectedPost] = []
@@ -410,10 +455,37 @@ async def generate_content(
             [im.raw_path for im in (post_with_imgs.images or [])]
             if post_with_imgs else []
         )
+        # When the user picked a template, profile its layouts: a template with
+        # no multi-cell layout is one-subject-per-slide, so Vision is told not to
+        # split slides into items (the "▶지역/▶날짜 → 2칸" over-split bug).
+        template_profile = None
+        if template_id:
+            try:
+                tpl = await get_template(db, int(template_id), user.id)
+                if tpl and tpl.layouts:
+                    layouts = tpl.layouts
+                    cover_layout = _pick_typed_layout(
+                        layouts, ["photo_with_caption", "fullbg_overlay", "single_image", "text_only"]
+                    )
+                    cta_layout = _pick_typed_layout(
+                        layouts,
+                        ["phone_mockup", "fullbg_overlay", "photo_with_caption", "single_image", "text_only"],
+                    )
+                    template_profile = {
+                        "single_content": not _template_has_multicell(layouts),
+                        # cover/cta whose template layout has no body slot must be
+                        # extracted title-only — else the cover gets a description
+                        # the template can't render.
+                        "cover_headline_only": cover_layout is not None and not _layout_has_body_slot(cover_layout),
+                        "cta_headline_only": cta_layout is not None and not _layout_has_body_slot(cta_layout),
+                    }
+            except Exception:
+                logger.warning("[generate-content] template profile load failed", exc_info=True)
         try:
             extracted = await extract_slides_from_post_images(
                 image_urls,
                 cache_key=f"post_{first.id}_{first.instagram_post_id}",
+                template_profile=template_profile,
             )
         except Exception as e:
             logger.exception("Vision content extraction failed")

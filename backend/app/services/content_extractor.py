@@ -67,8 +67,32 @@ mark it `content`, not `cta`.
 - ALWAYS look for small badge/pill labels (typically "What to Eat", "Where to Go", \
 "#01", "TIP", category words in a small colored box) and put them in `tag`. If \
 none, return empty string.
-- Preserve the ORIGINAL TEXT exactly — Korean stays Korean, do not translate.
+- Preserve the ORIGINAL TEXT exactly — Korean stays Korean, do not translate.{extra_rules}
 - Output ONLY the JSON array. No prose."""
+
+
+# Appended to the Vision prompt when the chosen output template renders one
+# subject per slide — keeps Vision from splitting a single subject's attribute
+# lines (지역/날짜/가격 …) into separate `items[]`.
+_SINGLE_CONTENT_RULE = (
+    "\n- ⚠ TARGET TEMPLATE — ONE SUBJECT PER SLIDE: the output carousel uses a "
+    "template where every slide renders exactly ONE subject with ONE image. So "
+    "`items` MUST be empty ([]) for EVERY slide (cover, content, cta alike). "
+    "NEVER split a slide into multiple items. A single subject's attribute lines "
+    "— location/지역, date/날짜, time/시간, price/가격, address/주소 and similar "
+    "\"▶\" metadata bullets — are NOT separate items; keep them inside `body`."
+)
+
+# Appended when the template's cover / cta layout has no body text slot — the
+# slide is title-only, so Vision must not emit a body/subtext for it.
+_COVER_TITLE_ONLY_RULE = (
+    "\n- The COVER slide (index 0) is TITLE-ONLY in this template: put its "
+    "title in `headline`, and leave `body` and `subtext` EMPTY for it."
+)
+_CTA_TITLE_ONLY_RULE = (
+    "\n- The CTA slide is TITLE-ONLY in this template: put its line in "
+    "`headline`, and leave `body` and `subtext` EMPTY for it."
+)
 
 
 async def _download_slide_images(image_urls: list[str], cache_subdir: str) -> list[str]:
@@ -109,13 +133,37 @@ def _unwrap_raw(raw):
     return None
 
 
-async def _vision_extract_chunk(paths: list[str], *, offset: int, total: int, model: str) -> list[dict]:
+def _fold_items_into_body(slide: dict) -> None:
+    """Collapse a slide's `items[]` into `body` and clear `items`.
+
+    Used when the target template is one-subject-per-slide: the slide can't
+    carry multiple item cells, so any items Vision still produced are merged
+    into the body text.
+    """
+    items = slide.get("items") or []
+    if not items:
+        return
+    lines: list[str] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        parts = [str(it.get(k) or "").strip() for k in ("title", "subtitle", "description")]
+        line = " — ".join(p for p in parts if p)
+        if line:
+            lines.append(line)
+    if lines:
+        body = (slide.get("body") or "").strip()
+        slide["body"] = (body + "\n" + "\n".join(lines)).strip() if body else "\n".join(lines)
+    slide["items"] = []
+
+
+async def _vision_extract_chunk(paths: list[str], *, offset: int, total: int, model: str, extra_rules: str = "") -> list[dict]:
     """Run Vision over a slice of slide images, returning {pos: entry} keyed by
     the slide's GLOBAL position in the original carousel (offset + local index).
     Uses Vision's reported `index` when present so a dropped/merged response
     doesn't silently shift content onto the wrong page.
     """
-    prompt = USER_PROMPT_TEMPLATE.format(n=len(paths))
+    prompt = USER_PROMPT_TEMPLATE.format(n=len(paths), extra_rules=extra_rules)
     if offset > 0 or len(paths) < total:
         # Help the model number this chunk's slides against the full carousel
         prompt += (
@@ -155,10 +203,25 @@ async def extract_slides_from_post_images(
     *,
     cache_key: str,
     model: str = "gemini-flash-lite",
+    template_profile: dict | None = None,
 ) -> list[dict]:
-    """Run Gemini Vision over the slide images and return extracted slide list."""
+    """Run Gemini Vision over the slide images and return extracted slide list.
+
+    template_profile: optional {"single_content": bool}. When single_content is
+    True the chosen output template renders one subject per slide, so Vision is
+    told not to split slides and any stray `items[]` are folded into `body`.
+    """
     if not image_urls:
         return []
+
+    single_content = bool(template_profile and template_profile.get("single_content"))
+    cover_headline_only = bool(template_profile and template_profile.get("cover_headline_only"))
+    cta_headline_only = bool(template_profile and template_profile.get("cta_headline_only"))
+    extra_rules = _SINGLE_CONTENT_RULE if single_content else ""
+    if cover_headline_only:
+        extra_rules += _COVER_TITLE_ONLY_RULE
+    if cta_headline_only:
+        extra_rules += _CTA_TITLE_ONLY_RULE
 
     paths = await _download_slide_images(image_urls, cache_subdir=cache_key)
     total = len(paths)
@@ -170,7 +233,7 @@ async def extract_slides_from_post_images(
     for start in range(0, total, _VISION_CHUNK_SIZE):
         chunk = paths[start : start + _VISION_CHUNK_SIZE]
         chunk_entries = await _vision_extract_chunk(
-            chunk, offset=start, total=total, model=model
+            chunk, offset=start, total=total, model=model, extra_rules=extra_rules
         )
         if len(chunk_entries) != len(chunk):
             logger.warning(
@@ -206,6 +269,8 @@ async def extract_slides_from_post_images(
                 "tag": "", "headline": "", "body": "", "subtext": "", "items": [],
             })
             continue
+        if single_content:
+            _fold_items_into_body(s)
         ttype = (s.get("type") or "").strip().lower()
         if ttype not in ("cover", "content", "cta"):
             ttype = "cover" if i == 0 else "content"
@@ -223,13 +288,20 @@ async def extract_slides_from_post_images(
         # not a follow/share prompt. Pure-text CTAs stay as cta.
         if ttype == "cta" and (s.get("items") or []):
             ttype = "content"
+        body = (s.get("body") or "").strip()
+        subtext = (s.get("subtext") or s.get("subtitle") or "").strip()
+        # cover/cta whose template layout is title-only: drop body/subtext so
+        # the extraction matches the template (no orphan description field).
+        if (i == 0 and cover_headline_only) or (ttype == "cta" and cta_headline_only):
+            body = ""
+            subtext = ""
         cleaned.append({
             "index": i,
             "type": ttype,
             "tag": (s.get("tag") or "").strip(),
             "headline": (s.get("headline") or "").strip(),
-            "body": (s.get("body") or "").strip(),
-            "subtext": (s.get("subtext") or s.get("subtitle") or "").strip(),
+            "body": body,
+            "subtext": subtext,
             "items": s.get("items") or [],
         })
     return cleaned

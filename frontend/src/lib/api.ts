@@ -589,6 +589,29 @@ class ApiClient {
     return res.json();
   }
 
+  // CTA image — reusable call-to-action PNG dropped onto a fresh last slide.
+  async getCtaImage(): Promise<{ url: string | null }> {
+    return this.fetch("/cta");
+  }
+
+  async uploadCtaImage(file: File): Promise<{ url: string }> {
+    const fd = new FormData();
+    fd.append("file", file);
+    const headers: Record<string, string> = {};
+    if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
+    // FormData: do NOT set Content-Type — let the browser fill the multipart boundary
+    const res = await fetch(`${API_BASE}/cta/upload`, {
+      method: "POST",
+      headers,
+      body: fd,
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(e.detail || "CTA 이미지 업로드 실패");
+    }
+    return res.json();
+  }
+
   // User fonts — uploaded font files the editor registers as FontFaces.
   async getFonts(): Promise<{ fonts: { family: string; filename: string; url: string }[] }> {
     return this.fetch("/fonts");

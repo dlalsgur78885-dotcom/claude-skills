@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { api, resolveImageUrl, proxiedImageUrl } from "@/lib/api";
-import type { TemplateSummary } from "@/lib/types";
+import type { Post, TemplateSummary } from "@/lib/types";
 import { TemplateThumbnail } from "@/components/template-editor/TemplateThumbnail";
 
 type Slide = { index: number; type: string; headline: string; body?: string; subtext?: string; cta_text?: string; items?: Array<{ title?: string; subtitle?: string; description?: string; image_path?: string }> };
@@ -17,6 +17,15 @@ type RefImage = { post_id: number; slide_index: number; url: string; caption: st
 
 function imageKey(slideIdx: number, itemIdx: number | null | undefined): ImageKey {
   return itemIdx === null || itemIdx === undefined ? `${slideIdx}` : `${slideIdx}:${itemIdx}`;
+}
+
+// raw_path may be a local /api/images/raw/... path OR a remote Instagram CDN
+// URL. Remote URLs must go through the backend proxy to render (expiry/CORS).
+function imgSrc(raw?: string | null): string {
+  if (!raw) return "";
+  if (raw.startsWith("/")) return resolveImageUrl(raw);
+  if (raw.startsWith("http")) return proxiedImageUrl(raw);
+  return raw;
 }
 
 // Mirrors backend `carousel_renderer._LAYOUT_PREFERENCE` + `_pick_layout` so
@@ -76,6 +85,9 @@ export default function CreatePage() {
   const [slideCount, setSlideCount] = useState(8);
   const [refPosts, setRefPosts] = useState<RefPost[]>([]);
   const [refImages, setRefImages] = useState<RefImage[]>([]);
+  // Full reference posts (with slide images) fetched from ?refs= ids — so the
+  // 템플릿 선택 step can show the user WHAT they're benchmarking up front.
+  const [refPostDetails, setRefPostDetails] = useState<Post[]>([]);
 
   // Step 2
   const [slides, setSlides] = useState<Slide[]>([]);
@@ -168,6 +180,14 @@ export default function CreatePage() {
       document.removeEventListener("keydown", onKey);
     };
   }, [templatePickerOpen]);
+
+  // Fetch the reference posts named in ?refs= so Step 0 can preview them.
+  useEffect(() => {
+    if (refIds.length === 0) return;
+    Promise.all(refIds.map((id) => api.getPost(id).catch(() => null)))
+      .then((posts) => setRefPostDetails(posts.filter((p): p is Post => p !== null)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refParam]);
 
   // Load templates once on mount
   useEffect(() => {
@@ -870,6 +890,45 @@ export default function CreatePage() {
           <p style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20 }}>
             선택한 {refIds.length}개 포스트를 어떤 디자인으로 만들지 정해주세요. 템플릿의 슬라이드 구성에 따라 다음 단계에서 가져올 이미지 수가 달라집니다.
           </p>
+          {/* 벤치마킹 소재 미리보기 — 어떤 포스트를 참고하는지 보여준다 */}
+          {refPostDetails.length > 0 && (
+            <div style={{ marginBottom: 20, padding: 12, background: "var(--bg-subtle)", border: "1px solid var(--border)", borderRadius: 8 }}>
+              <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600 }}>벤치마킹 소재</span>
+              {refPostDetails.map((p) => (
+                <div key={p.id} style={{ marginTop: 8 }}>
+                  <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
+                    {p.images.map((img) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        key={img.id}
+                        src={imgSrc(img.raw_path)}
+                        alt={`슬라이드 ${img.slide_index + 1}`}
+                        loading="lazy"
+                        onError={(e) => {
+                          const el = e.currentTarget as HTMLImageElement;
+                          const fallback = img.source_url ? imgSrc(img.source_url) : "";
+                          if (fallback && el.dataset.fellBack !== "1") {
+                            el.dataset.fellBack = "1";
+                            el.src = fallback;
+                          } else {
+                            el.style.opacity = "0.3";
+                          }
+                        }}
+                        style={{ width: 96, height: 96, borderRadius: 6, objectFit: "cover", flexShrink: 0, background: "var(--bg-overlay)", border: "1px solid var(--border)" }}
+                      />
+                    ))}
+                    {p.images.length === 0 && (
+                      <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>이미지 없음</span>
+                    )}
+                  </div>
+                  <a href={p.post_url} target="_blank" rel="noopener noreferrer"
+                    style={{ fontSize: 11, color: "var(--text-tertiary)", textDecoration: "none" }}>
+                    {(p.caption || "캡션 없음").slice(0, 80)}{(p.caption || "").length > 80 ? "…" : ""} ↗
+                  </a>
+                </div>
+              ))}
+            </div>
+          )}
           {templates.length === 0 ? (
             <div style={{ padding: 24, textAlign: "center", color: "var(--text-tertiary)", fontSize: 13, border: "1px dashed var(--border)", borderRadius: 8 }}>
               템플릿을 불러오는 중…
@@ -1098,7 +1157,7 @@ export default function CreatePage() {
                     {refImg ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={refImg.url}
+                        src={imgSrc(refImg.url)}
                         alt={`slide ${slide.index}`}
                         style={{ width: 120, height: 120, borderRadius: 6, objectFit: "cover", background: "var(--bg-overlay)", border: "1px solid var(--border)" }}
                         onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.3"; }}
@@ -1424,7 +1483,7 @@ export default function CreatePage() {
                     {refImg?.url && (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={resolveImageUrl(refImg.url)}
+                        src={imgSrc(refImg.url)}
                         alt={`벤치 슬라이드 ${slide.index + 1}`}
                         title="벤치마크 원본 슬라이드 — 어떤 위치의 셀인지 참고용"
                         onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
@@ -1522,7 +1581,7 @@ export default function CreatePage() {
                             {refImg?.url && (
                               // eslint-disable-next-line @next/next/no-img-element
                               <img
-                                src={resolveImageUrl(refImg.url)}
+                                src={imgSrc(refImg.url)}
                                 alt=""
                                 title={`벤치 슬라이드 ${slide.index + 1}`}
                                 onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}

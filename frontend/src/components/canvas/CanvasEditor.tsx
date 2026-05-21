@@ -328,6 +328,13 @@ export function CanvasEditor({
   // loadSlide inside the same tick.
   const slidesRef = useRef<SlideData[]>(slides);
   slidesRef.current = slides;
+  // loadSlide is async (image reconstruction). A token cancels a superseded
+  // load so two rapid slide switches don't both add objects to the same
+  // canvas — that merged/scrambled slides. loadingRef makes saveCurrentSlide
+  // skip while a load is mid-flight, so it never serializes a half-built
+  // canvas back onto the slide.
+  const loadTokenRef = useRef(0);
+  const loadingRef = useRef(false);
 
   // ─── Auto-save ─────────────────────────────────────────────────────────
   // Watch the slides array; whenever the user mutates something the editor
@@ -942,6 +949,9 @@ export function CanvasEditor({
   const saveCurrentSlide = useCallback(() => {
     const canvas = fabricRef.current;
     if (!canvas) return;
+    // A slide load is mid-flight — the canvas is half-built. Serializing it
+    // now would overwrite the slide with partial or empty content.
+    if (loadingRef.current) return;
 
     const json = canvas.toJSON();
     const { w, h } = canvasSizeRef.current;
@@ -978,6 +988,11 @@ export function CanvasEditor({
     const currentSlides = slidesRef.current;
     if (!canvas || !currentSlides[index]) return;
 
+    // Token + flag so a rapid follow-up load cancels this one, and so
+    // saveCurrentSlide skips while this load is in flight.
+    const myToken = ++loadTokenRef.current;
+    loadingRef.current = true;
+
     const slideData = currentSlides[index];
 
     // Slide data may be in two formats:
@@ -1003,6 +1018,7 @@ export function CanvasEditor({
       // Fabric round-trip path
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (canvas as any).loadFromJSON(cleanData).then(async () => {
+        if (myToken !== loadTokenRef.current) return;
         // loadFromJSON reapplies the dimensions / backgroundColor / viewport
         // transform that were baked into the saved JSON — i.e. page-sized
         // buffer, page-color gutter, identity transform. Re-establish our
@@ -1021,6 +1037,9 @@ export function CanvasEditor({
         markBackdropObjects(canvas);
         canvas.renderAll();
         lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
+        if (myToken === loadTokenRef.current) loadingRef.current = false;
+      }).catch(() => {
+        if (myToken === loadTokenRef.current) loadingRef.current = false;
       });
       return;
     }
@@ -1050,6 +1069,7 @@ export function CanvasEditor({
     // Add objects (sequentially so z-order matches the source array)
     (async () => {
       const fabric = await getFabric();
+      if (myToken !== loadTokenRef.current) return;
       // Put the page boundary in first so every reconstructed object lands
       // above it. (canvas.clear() above wiped the prior boundary.)
       ensurePageBoundary(canvas, fabric, canvasSizeRef.current.w, canvasSizeRef.current.h, bgFill);
@@ -1118,6 +1138,7 @@ export function CanvasEditor({
           try {
             const proxied = proxiedImageUrl(obj.src);
             const img = await fabric.FabricImage.fromURL(proxied, { crossOrigin: "anonymous" });
+            if (myToken !== loadTokenRef.current) return;
 
             // Map source design-space coords to current PAGE dims (not the
             // padded buffer). Object coords are page-relative (0..pageW), and
@@ -1255,7 +1276,10 @@ export function CanvasEditor({
       canvas.renderAll();
       // After load completes, capture this as the baseline for future undos
       lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
-    })();
+      if (myToken === loadTokenRef.current) loadingRef.current = false;
+    })().catch(() => {
+      if (myToken === loadTokenRef.current) loadingRef.current = false;
+    });
   }
 
   // ─── Image crop ─────────────────────────────────────────────────────────
@@ -2282,6 +2306,116 @@ export function CanvasEditor({
     }
     setSlides((prev) => prev.map((s) => ({ ...s, background: color })));
     setBgColor(color);
+  }
+
+  // Recolor every text object across ALL slides in one shot. User feedback
+  // (carousel studio feedback #5, slide 4): changing text color page-by-page
+  // is tedious. Mirrors applyBgToAll — confirm once, bypass the per-slide undo
+  // stack (revert = re-pick the old color).
+  function applyTextColorToAll(color: string) {
+    if (!confirm(`모든 슬라이드의 텍스트 색상을 ${color}(으)로 변경하시겠습니까?`)) return;
+
+    // A fabric object is text when its type matches a text class — lowercase
+    // compare covers live instances ("textbox"/"i-text") and toJSON output
+    // ("Textbox"/"IText").
+    const isText = (t: unknown) => {
+      const s = String(t || "").toLowerCase();
+      return s === "textbox" || s === "i-text" || s === "itext" || s === "text";
+    };
+    // Per-character `fill` overrides win over the object-level fill, so a bulk
+    // recolor has to strip them too — but ONLY fill, leaving per-char weight /
+    // font intact. Mutates the styles map in place.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const stripCharFill = (styles: any) => {
+      if (!styles || typeof styles !== "object") return;
+      for (const line of Object.values(styles)) {
+        if (line && typeof line === "object") {
+          for (const ch of Object.values(line as Record<string, unknown>)) {
+            if (ch && typeof ch === "object") delete (ch as { fill?: unknown }).fill;
+          }
+        }
+      }
+    };
+
+    const canvas = fabricRef.current;
+    // Flush the live canvas into `slides` first so the current slide's stored
+    // objects carry any unsaved edits before the bulk map runs over them.
+    saveCurrentSlide();
+    // Recolor every text object on the live canvas (= the current slide).
+    if (canvas) {
+      for (const obj of canvas.getObjects()) {
+        if (!isText(obj.type)) continue;
+        obj.set("fill", color);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        stripCharFill((obj as any).styles);
+        obj.dirty = true;
+      }
+      canvas.requestRenderAll();
+      // Sync the snapshot baseline so the canvas-modified watcher doesn't
+      // double-count this as a separate undo step.
+      lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
+    }
+    // Bulk-update every slide's stored text objects. saveCurrentSlide() above
+    // already refreshed the current slide's entry, so `prev` is up to date.
+    setSlides((prev) =>
+      prev.map((s) => ({
+        ...s,
+        objects: (s.objects || []).map((o) => {
+          if (!isText(o.type)) return o;
+          const next = { ...o, fill: color };
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const st = (next as any).styles;
+          if (st && typeof st === "object") {
+            const cloned = JSON.parse(JSON.stringify(st));
+            stripCharFill(cloned);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (next as any).styles = cloned;
+          }
+          return next;
+        }),
+      })),
+    );
+  }
+
+  // Bulk-set letter-spacing on every text object across ALL slides in one
+  // shot (carousel studio feedback slide 7: per-page 자간 editing is tedious).
+  // The simpler sibling of applyTextColorToAll — charSpacing is object-level
+  // only, so there are no per-character styles to strip. `value` is raw
+  // fabric charSpacing (1/1000 em).
+  function applyCharSpacingToAll(value: number) {
+    const shown = Math.round(value / 10);
+    if (!confirm(`모든 슬라이드의 모든 텍스트 자간을 ${shown}(으)로 변경하시겠습니까?`)) return;
+
+    const isText = (t: unknown) => {
+      const s = String(t || "").toLowerCase();
+      return s === "textbox" || s === "i-text" || s === "itext" || s === "text";
+    };
+
+    const canvas = fabricRef.current;
+    // Flush the live canvas into `slides` so the current slide's stored
+    // objects carry any unsaved edits before the bulk map runs over them.
+    saveCurrentSlide();
+    if (canvas) {
+      for (const obj of canvas.getObjects()) {
+        if (!isText(obj.type)) continue;
+        obj.set("charSpacing", value);
+        // charSpacing changes glyph metrics — reflow the textbox now so the
+        // current slide repaints correctly (other slides reflow on load).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (typeof (obj as any).initDimensions === "function") (obj as any).initDimensions();
+        obj.dirty = true;
+      }
+      canvas.requestRenderAll();
+      lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
+    }
+    setSlides((prev) =>
+      prev.map((s) => ({
+        ...s,
+        objects: (s.objects || []).map((o) =>
+          isText(o.type) ? { ...o, charSpacing: value } : o
+        ),
+      })),
+    );
   }
 
   function undo() {
@@ -4038,6 +4172,8 @@ export function CanvasEditor({
           bgColor={bgColor}
           onApplyBgToCurrent={applyBgToCurrent}
           onApplyBgToAll={applyBgToAll}
+          onApplyTextColorToAll={applyTextColorToAll}
+          onApplyCharSpacingToAll={applyCharSpacingToAll}
           caption={caption}
           hashtags={hashtags}
           sourcePostUrl={sourcePostUrl}

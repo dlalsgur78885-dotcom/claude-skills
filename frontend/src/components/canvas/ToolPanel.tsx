@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { api } from "@/lib/api";
 import { TransparentToggle } from "./TransparentToggle";
 
 interface ToolPanelProps {
@@ -15,6 +16,14 @@ interface ToolPanelProps {
   bgColor?: string;
   onApplyBgToCurrent?: (color: string) => void;
   onApplyBgToAll?: (color: string) => void;
+  // Recolor every text object across all slides at once. No "current color"
+  // to mirror (text objects each have their own fill) — the swatch is just a
+  // picker, the button commits it everywhere.
+  onApplyTextColorToAll?: (color: string) => void;
+  // Bulk-apply letter-spacing (charSpacing) to every text object on every
+  // slide — feedback slide 7. Bundled with the text-color control in the
+  // shared "전체 텍스트" section. Receives raw fabric charSpacing (1/1000 em).
+  onApplyCharSpacingToAll?: (value: number) => void;
   // Instagram caption + hashtag chips generated upstream (콘텐츠 확인 step).
   // We don't allow editing them here — the editor's role is the visual side,
   // captions belong to the post flow. Show-and-copy is enough.
@@ -25,11 +34,41 @@ interface ToolPanelProps {
   // the caption button so users can pop the source open in a new tab without
   // backtracking through the works list.
   sourcePostUrl?: string;
+  // CTA image — registered once on the backend, then dropped onto a fresh
+  // last slide. This panel owns registration/persistence; the canvas owns the
+  // insert (creating the new slide + placing the image full-bleed).
+  onAddCta?: (imageUrl: string) => void;
 }
 
-export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOverlay, onImportPsd, onImportImage, bgColor, onApplyBgToCurrent, onApplyBgToAll, caption, hashtags, sourcePostUrl }: ToolPanelProps) {
+export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOverlay, onImportPsd, onImportImage, bgColor, onApplyBgToCurrent, onApplyBgToAll, onApplyTextColorToAll, onApplyCharSpacingToAll, caption, hashtags, sourcePostUrl, onAddCta }: ToolPanelProps) {
   const [captionOpen, setCaptionOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [ctaOpen, setCtaOpen] = useState(false);
+  const [ctaUrl, setCtaUrl] = useState<string | null>(null);
+  const [ctaBusy, setCtaBusy] = useState(false);
+  // Color staged for the "전체 텍스트 색상 변경" bulk action. Local because
+  // there's no single "current" text color across a multi-slide deck.
+  const [bulkTextColor, setBulkTextColor] = useState("#000000");
+  // Letter-spacing staged for the "전체 자간 적용" bulk action. Display units
+  // (= charSpacing / 10); 0 = 기본.
+  const [bulkCharSpacing, setBulkCharSpacing] = useState(0);
+
+  useEffect(() => {
+    if (!onAddCta) return;
+    api.getCtaImage().then((r) => setCtaUrl(r.url)).catch(() => {});
+  }, [onAddCta]);
+
+  async function handleRegisterCta(file: File) {
+    setCtaBusy(true);
+    try {
+      const r = await api.uploadCtaImage(file);
+      setCtaUrl(r.url);
+    } catch (err) {
+      alert("CTA 이미지 등록 실패: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setCtaBusy(false);
+    }
+  }
   const captionText = (caption || "").trim();
   const tagList = Array.isArray(hashtags) ? hashtags.filter(Boolean) : [];
   const fullText = [
@@ -307,6 +346,93 @@ export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOver
         </div>
       )}
 
+      {(onApplyTextColorToAll || onApplyCharSpacingToAll) && (
+        <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+          <p style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8, paddingLeft: 2 }}>
+            전체 텍스트
+          </p>
+          {onApplyTextColorToAll && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <label
+                title="모든 슬라이드에 적용할 텍스트 색"
+                style={{
+                  position: "relative",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  width: 30, height: 26,
+                  background: bulkTextColor,
+                  border: "1px solid var(--border)",
+                  borderRadius: 5,
+                  cursor: "pointer",
+                  overflow: "hidden",
+                  flexShrink: 0,
+                }}
+              >
+                <input
+                  type="color"
+                  value={bulkTextColor}
+                  onChange={(e) => setBulkTextColor(e.target.value)}
+                  style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => onApplyTextColorToAll(bulkTextColor)}
+                title="모든 슬라이드의 텍스트를 이 색으로 일괄 변경"
+                style={{
+                  flex: 1,
+                  padding: "4px 8px", fontSize: 11,
+                  color: "var(--text-secondary)",
+                  background: "var(--bg-overlay)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 5,
+                  cursor: "pointer",
+                }}
+              >
+                전체 텍스트 색상 변경
+              </button>
+            </div>
+          )}
+          {onApplyCharSpacingToAll && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
+              <input
+                type="number"
+                min="-20"
+                max="100"
+                step="1"
+                value={bulkCharSpacing}
+                onChange={(e) => setBulkCharSpacing(Number(e.target.value))}
+                title="모든 슬라이드에 적용할 자간 (0 = 기본, 클수록 넓게)"
+                style={{
+                  width: 44,
+                  padding: "4px 6px", fontSize: 11,
+                  color: "var(--text-primary)",
+                  background: "var(--bg-overlay)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 5,
+                  flexShrink: 0,
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => onApplyCharSpacingToAll(bulkCharSpacing * 10)}
+                title="모든 슬라이드의 모든 텍스트 자간을 일괄 적용"
+                style={{
+                  flex: 1,
+                  padding: "4px 8px", fontSize: 11,
+                  color: "var(--text-secondary)",
+                  background: "var(--bg-overlay)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 5,
+                  cursor: "pointer",
+                }}
+              >
+                전체 자간 적용
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {(captionText || tagList.length > 0) && (
         <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
           <p style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8, paddingLeft: 2 }}>
@@ -393,6 +519,95 @@ export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOver
             </svg>
             <span style={{ flex: 1 }}>원본 링크 보기</span>
           </a>
+        </div>
+      )}
+
+      {onAddCta && (
+        <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+          <p style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8, paddingLeft: 2 }}>
+            CTA
+          </p>
+          <button
+            type="button"
+            onClick={() => setCtaOpen((o) => !o)}
+            title="캐러셀 맨 뒷장에 넣을 CTA 이미지를 등록하고 추가합니다"
+            style={{ ...btnStyle, fontSize: 12 }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--bg-overlay)";
+              e.currentTarget.style.borderColor = "var(--border-strong)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.borderColor = "var(--border)";
+            }}
+          >
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" />
+            </svg>
+            <span style={{ flex: 1 }}>CTA 등록&추가</span>
+            <svg
+              width="12" height="12" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor"
+              style={{ transform: ctaOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+            </svg>
+          </button>
+          {ctaOpen && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+              <label
+                style={{ ...btnStyle, fontSize: 12 }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "var(--bg-overlay)";
+                  e.currentTarget.style.borderColor = "var(--border-strong)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "transparent";
+                  e.currentTarget.style.borderColor = "var(--border)";
+                }}
+              >
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+                </svg>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", color: "var(--text-primary)" }}>PNG 파일 등록하기</span>
+                  <span style={{ display: "block", fontSize: 10, color: ctaUrl ? "var(--green)" : "var(--text-tertiary)" }}>
+                    {ctaBusy ? "업로드 중…" : ctaUrl ? "등록됨 ✓" : "등록된 파일 없음"}
+                  </span>
+                </span>
+                <input
+                  type="file"
+                  accept="image/png,.png"
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleRegisterCta(f);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => { if (ctaUrl) onAddCta(ctaUrl); }}
+                disabled={!ctaUrl}
+                title={ctaUrl ? "등록한 CTA 이미지를 맨 뒤 새 슬라이드로 추가" : "먼저 PNG 파일을 등록하세요"}
+                style={{ ...btnStyle, fontSize: 12, opacity: ctaUrl ? 1 : 0.5, cursor: ctaUrl ? "pointer" : "default" }}
+                onMouseEnter={(e) => {
+                  if (!ctaUrl) return;
+                  e.currentTarget.style.background = "var(--bg-overlay)";
+                  e.currentTarget.style.borderColor = "var(--border-strong)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "transparent";
+                  e.currentTarget.style.borderColor = "var(--border)";
+                }}
+              >
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                </svg>
+                <span style={{ flex: 1 }}>CTA 추가</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 

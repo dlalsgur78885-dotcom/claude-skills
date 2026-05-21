@@ -35,29 +35,6 @@ function fillToCss(fill: unknown): string {
   return "transparent";
 }
 
-// Pick the rect that "represents" this image in design coords. For fabric-format
-// images saved with cover-fit clipPath, the clip's box IS the slot the user
-// sees, even though the underlying image extends beyond it. Render to that
-// box and let CSS object-fit:cover handle the crop.
-function imageBox(obj: Obj): { x: number; y: number; w: number; h: number } {
-  const clip = obj.clipPath;
-  if (clip && (clip.absolutePositioned || clip.left != null)) {
-    const cw = (Number(clip.width) || 0) * (Number(clip.scaleX) || 1);
-    const ch = (Number(clip.height) || 0) * (Number(clip.scaleY) || 1);
-    if (cw > 0 && ch > 0) {
-      return { x: Number(clip.left) || 0, y: Number(clip.top) || 0, w: cw, h: ch };
-    }
-  }
-  const sx = Number(obj.scaleX) || 1;
-  const sy = Number(obj.scaleY) || 1;
-  return {
-    x: Number(obj.left) || 0,
-    y: Number(obj.top) || 0,
-    w: (Number(obj.width) || 0) * sx,
-    h: (Number(obj.height) || 0) * sy,
-  };
-}
-
 export function SlideThumbnail({ slide, size = 80 }: Props) {
   const designW = Number(slide.width) || 1080;
   const designH = Number(slide.height) || 1080;
@@ -115,21 +92,70 @@ export function SlideThumbnail({ slide, size = 80 }: Props) {
           const opacity = typeof obj.opacity === "number" ? obj.opacity : 1;
 
           if (t === "image" || t === "fabricimage") {
-            const { x, y, w, h } = imageBox(obj);
-            if (!obj.src || w <= 0 || h <= 0) return null;
+            if (!obj.src) return null;
+            const sx = Number(obj.scaleX) || 1;
+            const sy = Number(obj.scaleY) || 1;
+            const imgX = Number(obj.left) || 0;
+            const imgY = Number(obj.top) || 0;
+            const imgW = (Number(obj.width) || 0) * sx;
+            const imgH = (Number(obj.height) || 0) * sy;
+            if (imgW <= 0 || imgH <= 0) return null;
+            const src = proxiedImageUrl(String(obj.src));
+            // Cover-fit images carry an absolutePositioned clipPath = the visible
+            // slot. Draw the image at its REAL pan/zoom and clip it to that slot
+            // so the thumbnail mirrors the canvas crop. (objectFit:cover would
+            // re-center and ignore the user's pan/resize — the slide preview
+            // then never reflects a moved/resized photo.)
+            const clip = obj.clipPath;
+            if (clip && (clip.absolutePositioned || clip.left != null)) {
+              const clipX = Number(clip.left) || 0;
+              const clipY = Number(clip.top) || 0;
+              const clipW = (Number(clip.width) || 0) * (Number(clip.scaleX) || 1);
+              const clipH = (Number(clip.height) || 0) * (Number(clip.scaleY) || 1);
+              if (clipW > 0 && clipH > 0) {
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      position: "absolute",
+                      left: clipX,
+                      top: clipY,
+                      width: clipW,
+                      height: clipH,
+                      overflow: "hidden",
+                      opacity,
+                      pointerEvents: "none",
+                    }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={src}
+                      alt=""
+                      style={{
+                        position: "absolute",
+                        left: imgX - clipX,
+                        top: imgY - clipY,
+                        width: imgW,
+                        height: imgH,
+                        display: "block",
+                      }}
+                    />
+                  </div>
+                );
+              }
+            }
             return (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 key={i}
-                src={proxiedImageUrl(String(obj.src))}
+                src={src}
                 alt=""
                 style={{
                   position: "absolute",
-                  left: x,
-                  top: y,
-                  width: w,
-                  height: h,
-                  objectFit: "cover",
+                  left: imgX,
+                  top: imgY,
+                  width: imgW,
+                  height: imgH,
                   opacity,
                   pointerEvents: "none",
                   display: "block",

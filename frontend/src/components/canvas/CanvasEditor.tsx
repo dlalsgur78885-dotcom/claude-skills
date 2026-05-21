@@ -7,6 +7,7 @@ import { SlideNavigator } from "./SlideNavigator";
 import { createCoverSlide, createEmptySlide, createCtaSlide } from "@/lib/canvas-utils";
 import { api, proxiedImageUrl, resolveImageUrl } from "@/lib/api";
 import { getFabric } from "@/lib/fabric";
+import { loadAllUserFonts, loadUserFont, type UserFont } from "@/lib/fonts";
 import { CanvasSizeSelector } from "@/components/CanvasSizeSelector";
 import type { SlideData, TemplateSummary } from "@/lib/types";
 
@@ -378,6 +379,53 @@ export function CanvasEditor({
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [saveStatus]);
+
+  // ─── User fonts ──────────────────────────────────────────────────────────
+  // Fonts the user uploaded (slide-6 feedback: "폰트를 선택할 수 있는 옵션이
+  // 없음"). Registered as FontFaces on mount so canvas text — and the PNG
+  // export, which is a client-side toDataURL — render them correctly.
+  const [userFonts, setUserFonts] = useState<UserFont[]>([]);
+  useEffect(() => {
+    let alive = true;
+    loadAllUserFonts().then((fonts) => {
+      if (!alive) return;
+      setUserFonts(fonts);
+      // A slide loaded before its fonts finished would have rendered in the
+      // fallback face — recompute text metrics and repaint now they're ready.
+      refreshFontRendering();
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Recompute every text object's metrics against the (now loaded) fonts and
+  // repaint. Fabric measures glyphs at construction, so text built before a
+  // font arrived keeps stale widths until initDimensions() runs again.
+  function refreshFontRendering() {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    for (const obj of canvas.getObjects()) {
+      const t = String(obj.type || "").toLowerCase();
+      if (t === "textbox" || t === "i-text") {
+        if (typeof obj.initDimensions === "function") obj.initDimensions();
+        obj.dirty = true;
+      }
+    }
+    canvas.requestRenderAll();
+  }
+
+  // Upload a font file, register it as a FontFace, and apply it to the
+  // current text selection.
+  async function handleUploadFont(file: File): Promise<void> {
+    const f = await api.uploadFont(file);
+    await loadUserFont(f.family, f.url);
+    setUserFonts((prev) => [
+      ...prev.filter((p) => p.filename !== f.filename),
+      { family: f.family, filename: f.filename, url: f.url },
+    ]);
+    updateSelectedProperty("fontFamily", f.family);
+    refreshFontRendering();
+  }
 
   // Canvas size is per-carousel — pulled from first slide's stored width/height (default 1080).
   const initialW = Number(initialSlides?.[0]?.width) || 1080;
@@ -4204,6 +4252,8 @@ export function CanvasEditor({
           selectedObject={selectedObject}
           selectedTextRange={selectedTextRange}
           onUpdate={updateSelectedProperty}
+          userFonts={userFonts}
+          onUploadFont={handleUploadFont}
           onChangeLayer={changeLayer}
           onDelete={deleteSelected}
           onCutout={(mode) => cutoutSelectedImage(mode)}

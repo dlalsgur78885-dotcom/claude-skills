@@ -589,6 +589,33 @@ class ApiClient {
     return res.json();
   }
 
+  // User fonts — uploaded font files the editor registers as FontFaces.
+  async getFonts(): Promise<{ fonts: { family: string; filename: string; url: string }[] }> {
+    return this.fetch("/fonts");
+  }
+
+  async uploadFont(file: File): Promise<{ family: string; filename: string; url: string }> {
+    const fd = new FormData();
+    fd.append("file", file);
+    const headers: Record<string, string> = {};
+    if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
+    // FormData: do NOT set Content-Type — let the browser fill the multipart boundary
+    const res = await fetch(`${API_BASE}/fonts/upload`, {
+      method: "POST",
+      headers,
+      body: fd,
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(e.detail || "폰트 업로드 실패");
+    }
+    return res.json();
+  }
+
+  async deleteFont(filename: string): Promise<{ ok: boolean }> {
+    return this.fetch(`/fonts/${encodeURIComponent(filename)}`, { method: "DELETE" });
+  }
+
   // Orchestrator
   async orchestrate(request: string, context: Record<string, unknown> = {}) {
     return this.fetch("/carousels/orchestrate", {

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { TransparentToggle, isTransparentValue } from "./TransparentToggle";
+import { type UserFont } from "@/lib/fonts";
 
 interface PropertyPanelProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -9,6 +10,9 @@ interface PropertyPanelProps {
   selectedTextRange?: { start: number; end: number } | null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onUpdate: (prop: string, value: any) => void;
+  // User-uploaded fonts + an uploader — slide-6 feedback (font selection).
+  userFonts?: UserFont[];
+  onUploadFont?: (file: File) => Promise<void>;
   onChangeLayer?: (action: "forward" | "backward" | "front" | "back") => void;
   onDelete?: () => void;
   onCutout?: (mode: "standard" | "generative") => void;
@@ -32,7 +36,7 @@ const isBoldWeight = (w: unknown) => {
 
 type TabKey = "basic" | "effects" | "ai";
 
-export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, onChangeLayer, onDelete, onCutout, cutoutBusy, onEnhance, enhanceBusy, onReplaceImage, replaceBusy }: PropertyPanelProps) {
+export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, userFonts, onUploadFont, onChangeLayer, onDelete, onCutout, cutoutBusy, onEnhance, enhanceBusy, onReplaceImage, replaceBusy }: PropertyPanelProps) {
   const [activeTab, setActiveTab] = useState<TabKey>("basic");
   const replaceInputRef = useRef<HTMLInputElement>(null);
   // Single image OR a multi-selection containing at least one image.
@@ -69,6 +73,8 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, onC
   // "100" applied 1, then 10, then 100, leaving intermediate small sizes if the
   // user then deleted chars. Commit on blur / Enter instead.
   const [pendingFontSize, setPendingFontSize] = useState<string>("");
+  // Busy flag for the font-file uploader (slide-6 feedback).
+  const [fontUploading, setFontUploading] = useState(false);
   useEffect(() => {
     if (!selectedObject) return;
     if (hasCharRange && selectedTextRange) {
@@ -152,6 +158,24 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, onC
     } else {
       currentBold = isBoldWeight(textRef.fontWeight);
     }
+  }
+
+  // Font dropdown options: 기본 + every user-uploaded font. If the selected
+  // text uses a font that's in neither list (e.g. one baked into a template),
+  // surface it too so the <select> reflects reality instead of snapping to
+  // the first option.
+  // The app default is Pretendard, but generated carousels store the bare
+  // "Pretendard" while editor-created text stores "Pretendard, sans-serif" —
+  // treat anything starting with "pretendard" as the single 기본 preset.
+  const DEFAULT_FONT = "Pretendard, sans-serif";
+  const rawFont = String(textRef?.fontFamily || DEFAULT_FONT).trim();
+  const currentFont = rawFont.toLowerCase().startsWith("pretendard") ? DEFAULT_FONT : rawFont;
+  const fontOptions: { label: string; value: string }[] = [
+    { label: "기본 (Pretendard)", value: DEFAULT_FONT },
+    ...(userFonts || []).map((f) => ({ label: f.family, value: f.family })),
+  ];
+  if (isText && !fontOptions.some((o) => o.value === currentFont)) {
+    fontOptions.unshift({ label: `현재: ${currentFont}`, value: currentFont });
   }
 
   // Tab visibility — each tab can be empty for some object types (e.g. a
@@ -548,6 +572,60 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, onC
             <p style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: "0.08em", textTransform: "uppercase", margin: 0, paddingLeft: 2 }}>
               {textCount > 1 ? `텍스트 · ${textCount}개 일괄 편집` : "텍스트"}
             </p>
+
+            <div>
+              <label style={labelStyle}>폰트</label>
+              <select
+                value={currentFont}
+                onChange={(e) => onUpdate("fontFamily", e.target.value)}
+                style={{ ...inputStyle, cursor: "pointer" }}
+              >
+                {fontOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              {onUploadFont && (
+                <label
+                  title="폰트 파일을 업로드해 선택한 텍스트에 바로 적용합니다"
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                    marginTop: 6, padding: "5px 8px", fontSize: 11,
+                    color: "var(--text-secondary)",
+                    background: "var(--bg-overlay)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 5,
+                    cursor: fontUploading ? "default" : "pointer",
+                  }}
+                >
+                  <svg width="12" height="12" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+                  </svg>
+                  <span>{fontUploading ? "업로드 중…" : "폰트 파일 업로드"}</span>
+                  <input
+                    type="file"
+                    accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+                    disabled={fontUploading}
+                    style={{ display: "none" }}
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!f) return;
+                      setFontUploading(true);
+                      try {
+                        await onUploadFont(f);
+                      } catch (err) {
+                        alert("폰트 업로드 실패: " + (err instanceof Error ? err.message : String(err)));
+                      } finally {
+                        setFontUploading(false);
+                      }
+                    }}
+                  />
+                </label>
+              )}
+              <p style={{ fontSize: 9, color: "var(--text-tertiary)", margin: "5px 0 0", lineHeight: 1.5 }}>
+                ttf · otf · woff · woff2
+              </p>
+            </div>
 
             <div>
               <label style={labelStyle}>

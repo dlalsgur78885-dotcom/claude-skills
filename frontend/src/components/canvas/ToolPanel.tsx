@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { api } from "@/lib/api";
 import { TransparentToggle } from "./TransparentToggle";
+import { type UserFont } from "@/lib/fonts";
 
 interface ToolPanelProps {
   onAddText: () => void;
@@ -16,14 +17,12 @@ interface ToolPanelProps {
   bgColor?: string;
   onApplyBgToCurrent?: (color: string) => void;
   onApplyBgToAll?: (color: string) => void;
-  // Recolor every text object across all slides at once. No "current color"
-  // to mirror (text objects each have their own fill) — the swatch is just a
-  // picker, the button commits it everywhere.
-  onApplyTextColorToAll?: (color: string) => void;
-  // Bulk-apply letter-spacing (charSpacing) to every text object on every
-  // slide — feedback slide 7. Bundled with the text-color control in the
-  // shared "전체 텍스트" section. Receives raw fabric charSpacing (1/1000 em).
-  onApplyCharSpacingToAll?: (value: number) => void;
+  // Bulk-edit every text object across all slides — the "전체 수정" modal.
+  // `changes` carries only the user-opted-in fabric props (fill / fontFamily
+  // / fontSize / lineHeight / charSpacing). One confirm, one apply pass.
+  onApplyTextPropsToAll?: (changes: Record<string, unknown>) => void;
+  // Uploaded fonts, for the "전체 수정" modal's font dropdown.
+  userFonts?: UserFont[];
   // Instagram caption + hashtag chips generated upstream (콘텐츠 확인 step).
   // We don't allow editing them here — the editor's role is the visual side,
   // captions belong to the post flow. Show-and-copy is enough.
@@ -40,18 +39,39 @@ interface ToolPanelProps {
   onAddCta?: (imageUrl: string) => void;
 }
 
-export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOverlay, onImportPsd, onImportImage, bgColor, onApplyBgToCurrent, onApplyBgToAll, onApplyTextColorToAll, onApplyCharSpacingToAll, caption, hashtags, sourcePostUrl, onAddCta }: ToolPanelProps) {
+export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOverlay, onImportPsd, onImportImage, bgColor, onApplyBgToCurrent, onApplyBgToAll, onApplyTextPropsToAll, userFonts, caption, hashtags, sourcePostUrl, onAddCta }: ToolPanelProps) {
   const [captionOpen, setCaptionOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [ctaOpen, setCtaOpen] = useState(false);
   const [ctaUrl, setCtaUrl] = useState<string | null>(null);
   const [ctaBusy, setCtaBusy] = useState(false);
-  // Color staged for the "전체 텍스트 색상 변경" bulk action. Local because
-  // there's no single "current" text color across a multi-slide deck.
-  const [bulkTextColor, setBulkTextColor] = useState("#000000");
-  // Letter-spacing staged for the "전체 자간 적용" bulk action. Display units
-  // (= charSpacing / 10); 0 = 기본.
-  const [bulkCharSpacing, setBulkCharSpacing] = useState(0);
+  // "전체 수정" modal — bulk-edit text props across every slide. Each row
+  // opts in via its checkbox; only checked props get applied. fontSize /
+  // lineHeight / charSpacing values are display units (charSpacing = ÷10).
+  const [editAllOpen, setEditAllOpen] = useState(false);
+  const [bulkEdit, setBulkEdit] = useState({
+    fill:        { on: false, value: "#000000" },
+    fontFamily:  { on: false, value: "Pretendard, sans-serif" },
+    fontSize:    { on: false, value: 36 },
+    lineHeight:  { on: false, value: 1.4 },
+    charSpacing: { on: false, value: 0 },
+  });
+  function applyBulkEdit() {
+    if (!onApplyTextPropsToAll) return;
+    const changes: Record<string, unknown> = {};
+    if (bulkEdit.fill.on) changes.fill = bulkEdit.fill.value;
+    if (bulkEdit.fontFamily.on) changes.fontFamily = bulkEdit.fontFamily.value;
+    if (bulkEdit.fontSize.on) changes.fontSize = bulkEdit.fontSize.value;
+    if (bulkEdit.lineHeight.on) changes.lineHeight = bulkEdit.lineHeight.value;
+    // charSpacing input is display units (÷10) — convert to raw fabric value.
+    if (bulkEdit.charSpacing.on) changes.charSpacing = bulkEdit.charSpacing.value * 10;
+    if (Object.keys(changes).length === 0) {
+      alert("적용할 항목을 하나 이상 체크하세요.");
+      return;
+    }
+    onApplyTextPropsToAll(changes);
+    setEditAllOpen(false);
+  }
 
   useEffect(() => {
     if (!onAddCta) return;
@@ -346,90 +366,30 @@ export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOver
         </div>
       )}
 
-      {(onApplyTextColorToAll || onApplyCharSpacingToAll) && (
+      {onApplyTextPropsToAll && (
         <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
           <p style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8, paddingLeft: 2 }}>
             전체 텍스트
           </p>
-          {onApplyTextColorToAll && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <label
-                title="모든 슬라이드에 적용할 텍스트 색"
-                style={{
-                  position: "relative",
-                  display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  width: 30, height: 26,
-                  background: bulkTextColor,
-                  border: "1px solid var(--border)",
-                  borderRadius: 5,
-                  cursor: "pointer",
-                  overflow: "hidden",
-                  flexShrink: 0,
-                }}
-              >
-                <input
-                  type="color"
-                  value={bulkTextColor}
-                  onChange={(e) => setBulkTextColor(e.target.value)}
-                  style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
-                />
-              </label>
-              <button
-                type="button"
-                onClick={() => onApplyTextColorToAll(bulkTextColor)}
-                title="모든 슬라이드의 텍스트를 이 색으로 일괄 변경"
-                style={{
-                  flex: 1,
-                  padding: "4px 8px", fontSize: 11,
-                  color: "var(--text-secondary)",
-                  background: "var(--bg-overlay)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 5,
-                  cursor: "pointer",
-                }}
-              >
-                전체 텍스트 색상 변경
-              </button>
-            </div>
-          )}
-          {onApplyCharSpacingToAll && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
-              <input
-                type="number"
-                min="-20"
-                max="100"
-                step="1"
-                value={bulkCharSpacing}
-                onChange={(e) => setBulkCharSpacing(Number(e.target.value))}
-                title="모든 슬라이드에 적용할 자간 (0 = 기본, 클수록 넓게)"
-                style={{
-                  width: 44,
-                  padding: "4px 6px", fontSize: 11,
-                  color: "var(--text-primary)",
-                  background: "var(--bg-overlay)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 5,
-                  flexShrink: 0,
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => onApplyCharSpacingToAll(bulkCharSpacing * 10)}
-                title="모든 슬라이드의 모든 텍스트 자간을 일괄 적용"
-                style={{
-                  flex: 1,
-                  padding: "4px 8px", fontSize: 11,
-                  color: "var(--text-secondary)",
-                  background: "var(--bg-overlay)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 5,
-                  cursor: "pointer",
-                }}
-              >
-                전체 자간 적용
-              </button>
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={() => setEditAllOpen(true)}
+            title="모든 슬라이드의 모든 텍스트 속성을 한 번에 일괄 수정"
+            style={{ ...btnStyle, fontSize: 12 }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--bg-overlay)";
+              e.currentTarget.style.borderColor = "var(--border-strong)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.borderColor = "var(--border)";
+            }}
+          >
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" />
+            </svg>
+            <span style={{ flex: 1 }}>전체 수정</span>
+          </button>
         </div>
       )}
 
@@ -608,6 +568,129 @@ export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOver
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {editAllOpen && (
+        <div
+          onClick={() => setEditAllOpen(false)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 10000,
+            background: "rgba(0,0,0,0.55)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(380px, 92vw)",
+              maxHeight: "86vh", overflowY: "auto",
+              background: "var(--bg-elevated)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              boxShadow: "0 18px 48px rgba(0,0,0,0.45)",
+              padding: 20,
+              display: "flex", flexDirection: "column", gap: 14,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <strong style={{ fontSize: 14 }}>전체 텍스트 수정</strong>
+              <button
+                type="button"
+                onClick={() => setEditAllOpen(false)}
+                aria-label="닫기"
+                style={{
+                  width: 26, height: 26, borderRadius: 6,
+                  border: "1px solid var(--border)", background: "transparent",
+                  cursor: "pointer", color: "var(--text-secondary)",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                <svg width="12" height="12" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: 0, lineHeight: 1.5 }}>
+              체크한 항목만 모든 슬라이드의 모든 텍스트에 일괄 적용됩니다.
+            </p>
+
+            {/* 색상 */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="checkbox" checked={bulkEdit.fill.on}
+                onChange={(e) => setBulkEdit((p) => ({ ...p, fill: { ...p.fill, on: e.target.checked } }))} />
+              <span style={{ fontSize: 12, color: "var(--text-secondary)", width: 62, flexShrink: 0 }}>색상</span>
+              <label style={{
+                position: "relative", width: 36, height: 26,
+                background: bulkEdit.fill.value, border: "1px solid var(--border)",
+                borderRadius: 5, cursor: bulkEdit.fill.on ? "pointer" : "default",
+                overflow: "hidden", opacity: bulkEdit.fill.on ? 1 : 0.4,
+              }}>
+                <input type="color" value={bulkEdit.fill.value} disabled={!bulkEdit.fill.on}
+                  onChange={(e) => setBulkEdit((p) => ({ ...p, fill: { ...p.fill, value: e.target.value } }))}
+                  style={{ position: "absolute", inset: 0, opacity: 0, cursor: "inherit" }} />
+              </label>
+            </div>
+
+            {/* 폰트 */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="checkbox" checked={bulkEdit.fontFamily.on}
+                onChange={(e) => setBulkEdit((p) => ({ ...p, fontFamily: { ...p.fontFamily, on: e.target.checked } }))} />
+              <span style={{ fontSize: 12, color: "var(--text-secondary)", width: 62, flexShrink: 0 }}>폰트</span>
+              <select value={bulkEdit.fontFamily.value} disabled={!bulkEdit.fontFamily.on}
+                onChange={(e) => setBulkEdit((p) => ({ ...p, fontFamily: { ...p.fontFamily, value: e.target.value } }))}
+                style={{ flex: 1, minWidth: 0, padding: "5px 6px", fontSize: 12, background: "var(--bg-overlay)", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text-primary)", cursor: "pointer", opacity: bulkEdit.fontFamily.on ? 1 : 0.4 }}>
+                <option value="Pretendard, sans-serif">기본 (Pretendard)</option>
+                {(userFonts || []).map((f) => (
+                  <option key={f.family} value={f.family}>{f.family}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* 글꼴 크기 */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="checkbox" checked={bulkEdit.fontSize.on}
+                onChange={(e) => setBulkEdit((p) => ({ ...p, fontSize: { ...p.fontSize, on: e.target.checked } }))} />
+              <span style={{ fontSize: 12, color: "var(--text-secondary)", width: 62, flexShrink: 0 }}>글꼴 크기</span>
+              <input type="number" min="1" max="500" step="1"
+                value={bulkEdit.fontSize.value} disabled={!bulkEdit.fontSize.on}
+                onChange={(e) => setBulkEdit((p) => ({ ...p, fontSize: { ...p.fontSize, value: Number(e.target.value) } }))}
+                style={{ flex: 1, minWidth: 0, padding: "5px 8px", fontSize: 12, background: "var(--bg-overlay)", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text-primary)", opacity: bulkEdit.fontSize.on ? 1 : 0.4 }} />
+            </div>
+
+            {/* 행간 */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="checkbox" checked={bulkEdit.lineHeight.on}
+                onChange={(e) => setBulkEdit((p) => ({ ...p, lineHeight: { ...p.lineHeight, on: e.target.checked } }))} />
+              <span style={{ fontSize: 12, color: "var(--text-secondary)", width: 62, flexShrink: 0 }}>행간</span>
+              <input type="number" min="0.8" max="3" step="0.1"
+                value={bulkEdit.lineHeight.value} disabled={!bulkEdit.lineHeight.on}
+                onChange={(e) => setBulkEdit((p) => ({ ...p, lineHeight: { ...p.lineHeight, value: Number(e.target.value) } }))}
+                style={{ flex: 1, minWidth: 0, padding: "5px 8px", fontSize: 12, background: "var(--bg-overlay)", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text-primary)", opacity: bulkEdit.lineHeight.on ? 1 : 0.4 }} />
+            </div>
+
+            {/* 자간 — 표시 단위(charSpacing÷10), 0 = 기본 */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="checkbox" checked={bulkEdit.charSpacing.on}
+                onChange={(e) => setBulkEdit((p) => ({ ...p, charSpacing: { ...p.charSpacing, on: e.target.checked } }))} />
+              <span style={{ fontSize: 12, color: "var(--text-secondary)", width: 62, flexShrink: 0 }}>자간</span>
+              <input type="number" min="-20" max="100" step="1"
+                value={bulkEdit.charSpacing.value} disabled={!bulkEdit.charSpacing.on}
+                onChange={(e) => setBulkEdit((p) => ({ ...p, charSpacing: { ...p.charSpacing, value: Number(e.target.value) } }))}
+                style={{ flex: 1, minWidth: 0, padding: "5px 8px", fontSize: 12, background: "var(--bg-overlay)", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text-primary)", opacity: bulkEdit.charSpacing.on ? 1 : 0.4 }} />
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+              <button type="button" onClick={() => setEditAllOpen(false)}
+                style={{ padding: "7px 14px", fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-overlay)", border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer" }}>
+                취소
+              </button>
+              <button type="button" onClick={applyBulkEdit}
+                style={{ padding: "7px 14px", fontSize: 12, fontWeight: 500, color: "white", background: "var(--accent)", border: "none", borderRadius: 6, cursor: "pointer" }}>
+                적용
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

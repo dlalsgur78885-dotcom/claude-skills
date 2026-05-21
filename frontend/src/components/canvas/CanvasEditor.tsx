@@ -2308,12 +2308,17 @@ export function CanvasEditor({
     setBgColor(color);
   }
 
-  // Recolor every text object across ALL slides in one shot. User feedback
-  // (carousel studio feedback #5, slide 4): changing text color page-by-page
-  // is tedious. Mirrors applyBgToAll — confirm once, bypass the per-slide undo
-  // stack (revert = re-pick the old color).
-  function applyTextColorToAll(color: string) {
-    if (!confirm(`모든 슬라이드의 텍스트 색상을 ${color}(으)로 변경하시겠습니까?`)) return;
+  // Bulk-apply text properties to every text object across ALL slides in one
+  // shot — backs the "전체 수정" modal (carousel studio feedback slide 7+:
+  // editing per-page, per-property is tedious — set everything once, apply
+  // once). `changes` carries only the properties the user opted into; keys
+  // map straight to fabric props (fill / fontFamily / fontSize / lineHeight /
+  // charSpacing). Mirrors applyBgToAll — confirm once, bypass the per-slide
+  // undo stack (revert = re-open the modal).
+  function applyTextPropsToAll(changes: Record<string, unknown>) {
+    const keys = Object.keys(changes);
+    if (keys.length === 0) return;
+    if (!confirm(`모든 슬라이드의 모든 텍스트에 선택한 ${keys.length}개 속성을 적용하시겠습니까?`)) return;
 
     // A fabric object is text when its type matches a text class — lowercase
     // compare covers live instances ("textbox"/"i-text") and toJSON output
@@ -2324,7 +2329,7 @@ export function CanvasEditor({
     };
     // Per-character `fill` overrides win over the object-level fill, so a bulk
     // recolor has to strip them too — but ONLY fill, leaving per-char weight /
-    // font intact. Mutates the styles map in place.
+    // font intact. Mutates the styles map in place; only runs when fill changes.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const stripCharFill = (styles: any) => {
       if (!styles || typeof styles !== "object") return;
@@ -2336,18 +2341,23 @@ export function CanvasEditor({
         }
       }
     };
+    const recolors = "fill" in changes;
 
     const canvas = fabricRef.current;
     // Flush the live canvas into `slides` first so the current slide's stored
     // objects carry any unsaved edits before the bulk map runs over them.
     saveCurrentSlide();
-    // Recolor every text object on the live canvas (= the current slide).
     if (canvas) {
       for (const obj of canvas.getObjects()) {
         if (!isText(obj.type)) continue;
-        obj.set("fill", color);
+        for (const [k, v] of Object.entries(changes)) obj.set(k, v);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        stripCharFill((obj as any).styles);
+        if (recolors) stripCharFill((obj as any).styles);
+        // font / size / spacing / line-height all change glyph metrics —
+        // reflow the textbox so the current slide repaints correctly (other
+        // slides reflow when they next load).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (typeof (obj as any).initDimensions === "function") (obj as any).initDimensions();
         obj.dirty = true;
       }
       canvas.requestRenderAll();
@@ -2362,9 +2372,9 @@ export function CanvasEditor({
         ...s,
         objects: (s.objects || []).map((o) => {
           if (!isText(o.type)) return o;
-          const next = { ...o, fill: color };
+          const next = { ...o, ...changes };
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const st = (next as any).styles;
+          const st = recolors ? (next as any).styles : null;
           if (st && typeof st === "object") {
             const cloned = JSON.parse(JSON.stringify(st));
             stripCharFill(cloned);
@@ -2373,47 +2383,6 @@ export function CanvasEditor({
           }
           return next;
         }),
-      })),
-    );
-  }
-
-  // Bulk-set letter-spacing on every text object across ALL slides in one
-  // shot (carousel studio feedback slide 7: per-page 자간 editing is tedious).
-  // The simpler sibling of applyTextColorToAll — charSpacing is object-level
-  // only, so there are no per-character styles to strip. `value` is raw
-  // fabric charSpacing (1/1000 em).
-  function applyCharSpacingToAll(value: number) {
-    const shown = Math.round(value / 10);
-    if (!confirm(`모든 슬라이드의 모든 텍스트 자간을 ${shown}(으)로 변경하시겠습니까?`)) return;
-
-    const isText = (t: unknown) => {
-      const s = String(t || "").toLowerCase();
-      return s === "textbox" || s === "i-text" || s === "itext" || s === "text";
-    };
-
-    const canvas = fabricRef.current;
-    // Flush the live canvas into `slides` so the current slide's stored
-    // objects carry any unsaved edits before the bulk map runs over them.
-    saveCurrentSlide();
-    if (canvas) {
-      for (const obj of canvas.getObjects()) {
-        if (!isText(obj.type)) continue;
-        obj.set("charSpacing", value);
-        // charSpacing changes glyph metrics — reflow the textbox now so the
-        // current slide repaints correctly (other slides reflow on load).
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if (typeof (obj as any).initDimensions === "function") (obj as any).initDimensions();
-        obj.dirty = true;
-      }
-      canvas.requestRenderAll();
-      lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
-    }
-    setSlides((prev) =>
-      prev.map((s) => ({
-        ...s,
-        objects: (s.objects || []).map((o) =>
-          isText(o.type) ? { ...o, charSpacing: value } : o
-        ),
       })),
     );
   }
@@ -4172,8 +4141,8 @@ export function CanvasEditor({
           bgColor={bgColor}
           onApplyBgToCurrent={applyBgToCurrent}
           onApplyBgToAll={applyBgToAll}
-          onApplyTextColorToAll={applyTextColorToAll}
-          onApplyCharSpacingToAll={applyCharSpacingToAll}
+          onApplyTextPropsToAll={applyTextPropsToAll}
+          userFonts={userFonts}
           caption={caption}
           hashtags={hashtags}
           sourcePostUrl={sourcePostUrl}

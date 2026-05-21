@@ -965,16 +965,44 @@ function GradientFillEditor({
   );
 }
 
+const _REPLACE_ACCEPT = ["image/png", "image/jpeg", "image/webp"];
+
 function ImageReplaceRow({ busy, onReplace }: { busy: boolean; onReplace: (file: File) => Promise<void> | void }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // Feedback slide 7: clicking 교체 used to open the OS file dialog straight
+  // away. Instead open a small modal with a drag-and-drop zone (clicking the
+  // zone still falls back to the OS picker).
+  const [open, setOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  async function handleFile(file: File | undefined | null) {
+    if (!file) return;
+    if (file.type && !_REPLACE_ACCEPT.includes(file.type)) {
+      alert("PNG · JPG · WebP 이미지만 올릴 수 있습니다.");
+      return;
+    }
+    setOpen(false);
+    setDragOver(false);
+    await onReplace(file);
+  }
+
   return (
     <div>
       <label style={LABEL_STYLE}>이미지 교체</label>
       <button
         type="button"
-        onClick={() => inputRef.current?.click()}
+        onClick={() => setOpen(true)}
         disabled={busy}
-        title="선택한 이미지를 업로드한 파일로 교체"
+        title="선택한 이미지를 다른 파일로 교체"
         style={{
           width: "100%", padding: "7px 10px",
           fontSize: 12, fontWeight: 500,
@@ -993,12 +1021,79 @@ function ImageReplaceRow({ busy, onReplace }: { busy: boolean; onReplace: (file:
         type="file"
         accept="image/png,image/jpeg,image/webp"
         style={{ display: "none" }}
-        onChange={async (e) => {
+        onChange={(e) => {
           const file = e.target.files?.[0];
           e.currentTarget.value = "";
-          if (file) await onReplace(file);
+          handleFile(file);
         }}
       />
+      {open && typeof document !== "undefined" && createPortal(
+        <div
+          onClick={() => setOpen(false)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 1000,
+            background: "rgba(0,0,0,0.6)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 380, maxWidth: "90vw",
+              background: "var(--bg-elevated)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              padding: 18,
+              boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", flex: 1 }}>
+                이미지 교체
+              </span>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                style={{
+                  width: 22, height: 22, padding: 0, lineHeight: "20px",
+                  fontSize: 14, color: "var(--text-secondary)",
+                  background: "transparent", border: "1px solid var(--border)",
+                  borderRadius: 4, cursor: "pointer",
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => { e.preventDefault(); handleFile(e.dataTransfer.files?.[0]); }}
+              onClick={() => inputRef.current?.click()}
+              style={{
+                border: `2px dashed ${dragOver ? "var(--accent)" : "var(--border)"}`,
+                background: dragOver ? "var(--accent-muted, rgba(94,106,210,0.12))" : "transparent",
+                borderRadius: 8,
+                padding: "36px 16px",
+                textAlign: "center",
+                cursor: "pointer",
+                transition: "border-color 0.12s, background 0.12s",
+              }}
+            >
+              <div style={{ fontSize: 28, marginBottom: 8 }}>🖼️</div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                여기로 이미지를 드래그하거나
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent)", textDecoration: "underline", marginTop: 2 }}>
+                클릭해서 파일 선택
+              </div>
+              <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 8 }}>
+                PNG · JPG · WebP
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }

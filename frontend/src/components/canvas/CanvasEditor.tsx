@@ -1526,12 +1526,31 @@ export function CanvasEditor({
   }
 
   function addSlide() {
+    // saveCurrentSlide() and the append below BOTH go through setSlides — the
+    // append MUST be a functional update so it sees the just-saved current
+    // slide as `prev`, otherwise a plain setSlides([...slides, …]) snapshots a
+    // stale array and silently drops the current slide's unsaved edits.
     saveCurrentSlide();
-    const newSlides = [...slides, createEmptySlide()];
-    setSlides(newSlides);
-    const newIndex = newSlides.length - 1;
+    // New slide lands at the current end of the array. saveCurrentSlide only
+    // rewrites an existing entry, never changes length, so the pre-append
+    // length is the new slide's index.
+    const newIndex = slidesRef.current.length;
+    // Match the carousel's page size — createEmptySlide()'s 1080×1080 default
+    // would make a square slide inside a 4:5 carousel.
+    const { w, h } = canvasSizeRef.current;
+    setSlides((prev) => {
+      const next = [...prev, createEmptySlide(w, h)];
+      // Sync the ref NOW so the loadSlide() below (next tick) sees the new
+      // slide. Without this loadSlide reads a stale slidesRef, finds no entry
+      // at newIndex, early-returns, and the canvas keeps showing the previous
+      // slide — which auto-save then writes back onto the blank slide, making
+      // the "+" button look like it duplicates.
+      slidesRef.current = next;
+      return next;
+    });
     setCurrentSlideIndex(newIndex);
-    loadSlide(newIndex);
+    currentSlideIndexRef.current = newIndex;
+    setTimeout(() => loadSlide(newIndex), 0);
   }
 
   // Lay the registered CTA image over the CURRENTLY selected slide, sized to

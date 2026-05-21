@@ -47,6 +47,14 @@ function autoPickLayout(slide: Slide, templateLayouts: string[]): string | null 
   return templateLayouts[0];
 }
 
+// Cell count a layout renders. Grid layouts are named `grid_RxC` (mirrors the
+// backend LayoutType enum); everything else is a single-image layout.
+function layoutCellCount(layoutName: string): number {
+  const m = /grid[_-]?(\d+)\s*x\s*(\d+)/i.exec(layoutName || "");
+  if (m) return Math.max(1, parseInt(m[1], 10) * parseInt(m[2], 10));
+  return 1;
+}
+
 // Step labels differ by entry path. The "수집된 소재 → 캐러셀 만들기" flow
 // (refIds in the URL) needs the user to pick a template up front — the
 // template's grid shape decides how many images each slide consumes, so it
@@ -195,6 +203,7 @@ export default function CreatePage() {
           slide_count: slideCount,
           ref_ids: ids,
           post_urls: postUrls,
+          template_id: selectedTemplateId,
         }),
       }) as any;
       // Fresh blueprint → previous per-slide layout choices no longer apply.
@@ -638,6 +647,47 @@ export default function CreatePage() {
       const sameItem = (k.item_index ?? null) === (itemIndex ?? null);
       return sameSlide && sameItem ? { ...k, keywords: [value] } : k;
     }));
+  }
+
+  // Set a slide's layout AND re-shape its image-selection cells to that
+  // layout's cell count. The layout `<select>` only recorded the name before,
+  // so the picker still showed Vision's original cell count regardless of the
+  // chosen layout. autoName is the auto-matched layout — passing the same
+  // value clears the override.
+  function setSlideLayout(slideIndex: number, layoutName: string, autoName: string) {
+    setLayoutOverrides((prev) => {
+      const next = { ...prev };
+      if (!layoutName || layoutName === autoName) delete next[slideIndex];
+      else next[slideIndex] = layoutName;
+      return next;
+    });
+    const effective = layoutName || autoName;
+    const n = layoutCellCount(effective);
+    const slide = slides.find((s) => s.index === slideIndex);
+    setImageKeywords((prev) => {
+      const mine = prev.filter((k) => k.slide_index === slideIndex);
+      const others = prev.filter((k) => k.slide_index !== slideIndex);
+      const base = mine[0];
+      const style = base?.style || "photo";
+      const country = base?.country;
+      const built: typeof prev = [];
+      if (n <= 1) {
+        const kw = base?.keywords?.length ? base.keywords : [slide?.headline || ""].filter(Boolean);
+        built.push({ slide_index: slideIndex, item_index: null, keywords: kw, style, country });
+      } else {
+        const items = slide?.items || [];
+        for (let j = 0; j < n; j++) {
+          const existing = mine.find((k) => (k.item_index ?? null) === j);
+          const kw = existing?.keywords?.length
+            ? existing.keywords
+            : [items[j]?.title || slide?.headline || ""].filter(Boolean);
+          built.push({ slide_index: slideIndex, item_index: j, keywords: kw, style, country });
+        }
+      }
+      return [...others, ...built].sort(
+        (a, b) => a.slide_index - b.slide_index || (a.item_index ?? -1) - (b.item_index ?? -1),
+      );
+    });
   }
 
   const inputStyle: React.CSSProperties = {
@@ -1087,15 +1137,7 @@ export default function CreatePage() {
                           </div>
                           <select
                             value={current}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setLayoutOverrides((prev) => {
-                                const next = { ...prev };
-                                if (!v || v === auto) delete next[slide.index];
-                                else next[slide.index] = v;
-                                return next;
-                              });
-                            }}
+                            onChange={(e) => setSlideLayout(slide.index, e.target.value, auto || "")}
                             style={{
                               width: "100%",
                               padding: "3px 6px",
@@ -1114,6 +1156,32 @@ export default function CreatePage() {
                               </option>
                             ))}
                           </select>
+                          {slides.some((s) => s.index > slide.index) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                slides.forEach((s) => {
+                                  if (s.index > slide.index) {
+                                    setSlideLayout(s.index, current, autoPickLayout(s, tplLayouts) || "");
+                                  }
+                                });
+                              }}
+                              title="이 레이아웃을 이후 모든 슬라이드에 적용"
+                              style={{
+                                width: "100%",
+                                marginTop: 4,
+                                padding: "3px 6px",
+                                fontSize: 10,
+                                background: "var(--bg-overlay)",
+                                color: "var(--text-secondary)",
+                                border: "1px solid var(--border)",
+                                borderRadius: 4,
+                                cursor: "pointer",
+                              }}
+                            >
+                              ↓ 이후 슬라이드에 적용
+                            </button>
+                          )}
                         </div>
                       );
                     })()}
@@ -1124,8 +1192,12 @@ export default function CreatePage() {
                     <input type="text" value={slide.headline} onChange={(e) => updateSlide(slide.index, "headline", e.target.value)}
                       style={{ ...inputStyle, fontWeight: 600, marginBottom: 6 }} placeholder="제목" />
 
-                    {/* Single-element slide: headline + description + (optional cover subtext) + keyword */}
-                    {!isGrid && (slide.body || slide.subtext || slide.type === "content" || slide.type === "cover") && (() => {
+                    {/* Single-element slide: headline + description + keyword.
+                        The description field is data-driven — it shows when the
+                        slide actually has body/subtext. A title-only cover/cta
+                        (template layout with no body slot) is extracted with an
+                        empty body, so no orphan description field appears. */}
+                    {!isGrid && (slide.body || slide.subtext || slide.type === "content") && (() => {
                       const k = imageKey(slide.index, null);
                       const busy = paraphrasing.has(k);
                       const has = !!(slide.body || "").trim();

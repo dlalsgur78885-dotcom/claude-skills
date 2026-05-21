@@ -661,6 +661,23 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, onC
                 onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
               />
             </div>
+
+            <div>
+              <label style={labelStyle}>자간</label>
+              {/* Fabric stores charSpacing in 1/1000 em — unintuitive at that
+                  scale, so the input shows charSpacing/10 (0 = 기본, 클수록 넓게). */}
+              <input
+                type="number"
+                min="-20"
+                max="100"
+                step="1"
+                value={Math.round((Number(textRef?.charSpacing) || 0) / 10)}
+                onChange={(e) => onUpdate("charSpacing", Number(e.target.value) * 10)}
+                style={inputStyle}
+                onFocus={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
+                onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+              />
+            </div>
           </div>
         )}
 

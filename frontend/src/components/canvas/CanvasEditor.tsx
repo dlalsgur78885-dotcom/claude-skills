@@ -2809,7 +2809,7 @@ export function CanvasEditor({
     // (fontSize/textAlign/etc) to children, so we have to iterate ourselves.
     const TEXT_BATCH_PROPS = new Set([
       "fontSize", "fontWeight", "fontStyle", "fontFamily",
-      "textAlign", "lineHeight", "underline", "linethrough", "fill",
+      "textAlign", "lineHeight", "charSpacing", "underline", "linethrough", "fill",
     ]);
     const t = target.type;
     const isActiveSel = t === "activeselection" || t === "ActiveSelection";

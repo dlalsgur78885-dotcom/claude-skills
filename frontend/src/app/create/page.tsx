@@ -661,6 +661,34 @@ export default function CreatePage() {
     }
   }
 
+  // Rephrase a single slide's headline (제목) in place. Backs the cover
+  // slide's 제목 치환 button — covers are title-only so the description
+  // paraphrase button never appears for them. Reuses the batch /paraphrase
+  // endpoint with a one-item list; busy state keyed `h<sidx>` so it doesn't
+  // collide with the description / cell keys.
+  async function paraphraseHeadline(sidx: number) {
+    const slide = slides.find((s) => s.index === sidx);
+    const txt = (slide?.headline || "").trim();
+    if (!txt) return;
+    const key = `h${sidx}`;
+    setParaphrasing((prev) => new Set(prev).add(key));
+    try {
+      const res = await api.paraphrase([txt]);
+      const rewrite = (res.paraphrased || [])[0];
+      if (rewrite) {
+        setSlides((prev) => prev.map((s) => (s.index === sidx ? { ...s, headline: rewrite } : s)));
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "치환 실패");
+    } finally {
+      setParaphrasing((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  }
+
   function updateKeyword(slideIndex: number, itemIndex: number | null | undefined, value: string) {
     setImageKeywords((prev) => prev.map((k) => {
       const sameSlide = k.slide_index === slideIndex;
@@ -1250,6 +1278,29 @@ export default function CreatePage() {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <input type="text" value={slide.headline} onChange={(e) => updateSlide(slide.index, "headline", e.target.value)}
                       style={{ ...inputStyle, fontWeight: 600, marginBottom: 6 }} placeholder="제목" />
+
+                    {/* 표지 슬라이드는 제목만 있어 아래 설명 치환 버튼이 안 뜬다.
+                        제목 자체를 다른 표현으로 바꾸는 버튼을 따로 제공한다. */}
+                    {slide.type === "cover" && (() => {
+                      const hbusy = paraphrasing.has(`h${slide.index}`);
+                      const hhas = !!(slide.headline || "").trim();
+                      return (
+                        <button
+                          onClick={() => paraphraseHeadline(slide.index)}
+                          disabled={hbusy || !hhas}
+                          title="제목을 같은 의미, 다른 표현으로 다시 쓰기"
+                          style={{
+                            marginBottom: 6, padding: "3px 10px", fontSize: 11, fontWeight: 500,
+                            color: "rgb(180,165,255)", background: "rgba(120,100,255,0.12)",
+                            border: "1px solid rgba(120,100,255,0.3)", borderRadius: 5,
+                            cursor: hbusy || !hhas ? "default" : "pointer",
+                            opacity: hbusy || !hhas ? 0.5 : 1,
+                          }}
+                        >
+                          {hbusy ? "치환 중…" : "🔄 제목 치환"}
+                        </button>
+                      );
+                    })()}
 
                     {/* Single-element slide: headline + description + keyword.
                         The description field is data-driven — it shows when the

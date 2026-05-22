@@ -107,6 +107,15 @@ async def _add_missing_columns(conn) -> None:
         await conn.execute(text(
             "ALTER TABLE users ADD COLUMN paraphrase_prompt TEXT"
         ))
+    # users: separate 제목/캡션 치환 프롬프트 (feedback #11-13).
+    if "title_paraphrase_prompt" not in cols:
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN title_paraphrase_prompt TEXT"
+        ))
+    if "caption_paraphrase_prompt" not in cols:
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN caption_paraphrase_prompt TEXT"
+        ))
 
     # post_images: source_url stores the original Instagram CDN URL so the UI
     # has a fallback once the local /api/images/raw/... cache is cleaned up

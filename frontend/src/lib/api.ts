@@ -402,23 +402,32 @@ class ApiClient {
     });
   }
 
-  // Per-account override for the /carousels/paraphrase prompt. Empty string
-  // clears the override so the system default is used again.
+  // Per-account override for the rewrite ("치환") prompts. Three kinds — 제목 /
+  // 속지 / 캡션 — each separately overridable. Empty string clears that kind's
+  // override so the system default is used again (feedback #11-13).
   async getParaphrasePrompt() {
-    return this.fetch<{ prompt: string; default_prompt: string }>("/users/me/paraphrase-prompt");
+    return this.fetch<{
+      body: { prompt: string; default_prompt: string };
+      title: { prompt: string; default_prompt: string };
+      caption: { prompt: string; default_prompt: string };
+    }>("/users/me/paraphrase-prompt");
   }
 
-  async setParaphrasePrompt(prompt: string) {
-    return this.fetch<{ prompt: string }>("/users/me/paraphrase-prompt", {
+  async setParaphrasePrompt(kind: "body" | "title" | "caption", prompt: string) {
+    return this.fetch<{ kind: string; prompt: string }>("/users/me/paraphrase-prompt", {
       method: "PUT",
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ kind, prompt }),
     });
   }
 
-  async paraphrase(texts: string[], tone: "marketing" | "casual" | "punchy" = "marketing") {
+  async paraphrase(
+    texts: string[],
+    kind: "body" | "title" = "body",
+    tone: "marketing" | "casual" | "punchy" = "marketing",
+  ) {
     return this.fetch<{ paraphrased: string[] }>("/carousels/paraphrase", {
       method: "POST",
-      body: JSON.stringify({ texts, tone }),
+      body: JSON.stringify({ texts, tone, kind }),
     });
   }
 

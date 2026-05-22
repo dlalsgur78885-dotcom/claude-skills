@@ -26,18 +26,44 @@ class UserRoleUpdate(BaseModel):
 
 
 class ParaphrasePromptUpdate(BaseModel):
+    # kind: "body" (카드뉴스 속지) | "title" (제목) | "caption" (캡션)
+    kind: str = "body"
     # Empty string is meaningful: it clears the override (back to system default).
     prompt: str
 
 
+# kind -> User column. 제목·속지·캡션은 글 성격이 달라 프롬프트를 따로 둔다
+# (carousel studio feedback #11-13).
+_PARAPHRASE_PROMPT_FIELDS = {
+    "body": "paraphrase_prompt",
+    "title": "title_paraphrase_prompt",
+    "caption": "caption_paraphrase_prompt",
+}
+
+
 @router.get("/me/paraphrase-prompt")
 async def get_my_paraphrase_prompt(user: User = Depends(get_current_user)):
-    """Return the current user's saved paraphrase prompt override (or empty)
-    plus the system default body so the UI can show it as a starting point."""
-    from app.api.carousels import default_paraphrase_body
+    """Return the user's saved override + system default for all three
+    rewrite-prompt kinds (제목 / 속지 / 캡션) so the settings modal can show
+    each kind in its own tab."""
+    from app.api.carousels import (
+        default_paraphrase_body,
+        default_paraphrase_title,
+        default_paraphrase_caption,
+    )
     return {
-        "prompt": user.paraphrase_prompt or "",
-        "default_prompt": default_paraphrase_body(n=10, tone="marketing"),
+        "body": {
+            "prompt": user.paraphrase_prompt or "",
+            "default_prompt": default_paraphrase_body(n=10, tone="marketing"),
+        },
+        "title": {
+            "prompt": getattr(user, "title_paraphrase_prompt", None) or "",
+            "default_prompt": default_paraphrase_title(n=10),
+        },
+        "caption": {
+            "prompt": getattr(user, "caption_paraphrase_prompt", None) or "",
+            "default_prompt": default_paraphrase_caption(),
+        },
     }
 
 
@@ -47,14 +73,16 @@ async def update_my_paraphrase_prompt(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Save a per-account override for the carousel description paraphrase
-    prompt. Empty string clears the override so the user falls back to the
-    built-in system prompt."""
+    """Save a per-account override for one rewrite-prompt kind (제목/속지/캡션).
+    Empty string clears that kind's override → falls back to the system prompt."""
+    field = _PARAPHRASE_PROMPT_FIELDS.get(data.kind)
+    if not field:
+        raise HTTPException(status_code=400, detail="알 수 없는 프롬프트 종류입니다")
     value = (data.prompt or "").strip()
-    user.paraphrase_prompt = value or None
+    setattr(user, field, value or None)
     db.add(user)
     await db.commit()
-    return {"prompt": user.paraphrase_prompt or ""}
+    return {"kind": data.kind, "prompt": getattr(user, field) or ""}
 
 
 @router.get("/", response_model=list[UserResponse])

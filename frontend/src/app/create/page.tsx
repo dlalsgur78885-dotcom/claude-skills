@@ -127,33 +127,47 @@ export default function CreatePage() {
   // is exactly the "레이아웃을 바꿔도 결과에 반영 안 됨" bug.
   const [layoutOverrides, setLayoutOverrides] = useState<Record<number, string>>({});
 
-  // Per-account override for the description-paraphrase prompt. The modal
-  // loads the user's saved value AND the system default so the user can see
-  // exactly what they're replacing.
+  // Per-account override for the rewrite ("치환") prompts — 제목 / 속지 / 캡션,
+  // each editable in its own tab of the settings modal (feedback #11-13). One
+  // fetch loads every kind's saved value + system default.
+  type PromptKind = "title" | "body" | "caption";
+  type PromptEntry = { prompt: string; default_prompt: string };
   const [paraphrasePromptModalOpen, setParaphrasePromptModalOpen] = useState(false);
-  const [paraphrasePrompt, setParaphrasePrompt] = useState<string>("");
-  const [paraphrasePromptDefault, setParaphrasePromptDefault] = useState<string>("");
+  const [paraphrasePromptKind, setParaphrasePromptKind] = useState<PromptKind>("title");
+  const [paraphrasePrompts, setParaphrasePrompts] = useState<Record<PromptKind, PromptEntry>>({
+    title: { prompt: "", default_prompt: "" },
+    body: { prompt: "", default_prompt: "" },
+    caption: { prompt: "", default_prompt: "" },
+  });
   const [paraphrasePromptSaving, setParaphrasePromptSaving] = useState(false);
   const [paraphrasePromptLoaded, setParaphrasePromptLoaded] = useState(false);
 
-  async function openParaphrasePromptModal() {
+  async function openParaphrasePromptModal(kind: PromptKind = "title") {
+    setParaphrasePromptKind(kind);
     setParaphrasePromptModalOpen(true);
     if (paraphrasePromptLoaded) return;
     try {
       const res = await api.getParaphrasePrompt();
-      setParaphrasePrompt(res.prompt || "");
-      setParaphrasePromptDefault(res.default_prompt || "");
+      setParaphrasePrompts({ title: res.title, body: res.body, caption: res.caption });
       setParaphrasePromptLoaded(true);
     } catch (err) {
       alert(err instanceof Error ? err.message : "프롬프트 불러오기 실패");
     }
   }
 
+  function setActivePromptText(text: string) {
+    setParaphrasePrompts((prev) => ({
+      ...prev,
+      [paraphrasePromptKind]: { ...prev[paraphrasePromptKind], prompt: text },
+    }));
+  }
+
   async function saveParaphrasePrompt() {
     setParaphrasePromptSaving(true);
     try {
-      const res = await api.setParaphrasePrompt(paraphrasePrompt);
-      setParaphrasePrompt(res.prompt || "");
+      const kind = paraphrasePromptKind;
+      const res = await api.setParaphrasePrompt(kind, paraphrasePrompts[kind].prompt);
+      setParaphrasePrompts((prev) => ({ ...prev, [kind]: { ...prev[kind], prompt: res.prompt || "" } }));
       setParaphrasePromptModalOpen(false);
     } catch (err) {
       alert(err instanceof Error ? err.message : "프롬프트 저장 실패");
@@ -673,7 +687,7 @@ export default function CreatePage() {
     const key = `h${sidx}`;
     setParaphrasing((prev) => new Set(prev).add(key));
     try {
-      const res = await api.paraphrase([txt]);
+      const res = await api.paraphrase([txt], "title");
       const rewrite = (res.paraphrased || [])[0];
       if (rewrite) {
         setSlides((prev) => prev.map((s) => (s.index === sidx ? { ...s, headline: rewrite } : s)));
@@ -1122,8 +1136,8 @@ export default function CreatePage() {
             <h1 style={{ fontSize: 20, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>콘텐츠 확인</h1>
             <button
               type="button"
-              onClick={openParaphrasePromptModal}
-              title="🔄 병렬 치환 버튼이 사용하는 LLM 프롬프트를 본인 계정에만 적용되게 수정"
+              onClick={() => openParaphrasePromptModal()}
+              title="제목 / 속지 / 캡션 치환이 쓰는 LLM 프롬프트를 본인 계정에만 적용되게 수정"
               style={{
                 padding: "5px 10px",
                 fontSize: 11,
@@ -1135,7 +1149,7 @@ export default function CreatePage() {
                 cursor: "pointer",
               }}
             >
-              ⚙ 병렬 치환 프롬프트 설정
+              ⚙ 치환 프롬프트 설정
             </button>
           </div>
           <p style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 24 }}>
@@ -1897,17 +1911,50 @@ export default function CreatePage() {
             }}
           >
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-              <h2 style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>병렬 치환 프롬프트 설정</h2>
+              <h2 style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>치환 프롬프트 설정</h2>
               <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>본인 계정에만 적용</span>
             </div>
+
+            {/* 제목 / 속지 / 캡션 — 글 성격이 달라 프롬프트를 따로 둔다 (피드백 #11-13) */}
+            <div style={{ display: "flex", gap: 4 }}>
+              {([
+                { k: "title" as PromptKind, label: "제목" },
+                { k: "body" as PromptKind, label: "속지" },
+                { k: "caption" as PromptKind, label: "캡션" },
+              ]).map((t) => {
+                const active = paraphrasePromptKind === t.k;
+                return (
+                  <button
+                    key={t.k}
+                    type="button"
+                    onClick={() => setParaphrasePromptKind(t.k)}
+                    style={{
+                      flex: 1, padding: "6px 0", fontSize: 12, fontWeight: 500,
+                      color: active ? "white" : "var(--text-secondary)",
+                      background: active ? "var(--accent)" : "var(--bg-overlay)",
+                      border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+                      borderRadius: 6, cursor: "pointer",
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+
             <p style={{ fontSize: 12, color: "var(--text-tertiary)", margin: 0, lineHeight: 1.6 }}>
-              🔄 병렬 치환 버튼이 LLM에 보내는 본문을 직접 작성합니다. 입력 텍스트와 JSON 출력 형식은 서버가 자동으로 추가하니, 원칙·예시·금지 규칙만 자유롭게 적으세요. 비워두면 시스템 기본값을 사용합니다.
+              {paraphrasePromptKind === "title"
+                ? "제목 치환이 LLM에 보내는 규칙 본문입니다. 짧고 후킹력 있는 제목으로 바꾸는 규칙을 적으세요."
+                : paraphrasePromptKind === "caption"
+                ? "캡션 치환이 LLM에 보내는 규칙 본문입니다. hook·body·금지 규칙을 적으세요 — JSON 출력 형식은 서버가 붙입니다."
+                : "속지(카드뉴스 본문) 치환이 LLM에 보내는 규칙 본문입니다."}{" "}
+              입력 텍스트와 출력 형식은 서버가 자동으로 추가합니다. 비워두면 시스템 기본값을 사용합니다.
             </p>
             <textarea
               data-testid="paraphrase-prompt-textarea"
-              value={paraphrasePrompt}
-              onChange={(e) => setParaphrasePrompt(e.target.value)}
-              placeholder={paraphrasePromptDefault || "프롬프트를 불러오는 중…"}
+              value={paraphrasePrompts[paraphrasePromptKind].prompt}
+              onChange={(e) => setActivePromptText(e.target.value)}
+              placeholder={paraphrasePrompts[paraphrasePromptKind].default_prompt || "프롬프트를 불러오는 중…"}
               spellCheck={false}
               style={{
                 flex: 1, minHeight: 320, maxHeight: "60vh",
@@ -1917,28 +1964,29 @@ export default function CreatePage() {
               }}
             />
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "var(--text-tertiary)" }}>
-              {paraphrasePrompt.trim() ? (
-                <span>현재: <b style={{ color: "rgb(180,165,255)" }}>본인 설정 사용</b> ({paraphrasePrompt.trim().length.toLocaleString()}자)</span>
+              {paraphrasePrompts[paraphrasePromptKind].prompt.trim() ? (
+                <span>현재: <b style={{ color: "rgb(180,165,255)" }}>본인 설정 사용</b> ({paraphrasePrompts[paraphrasePromptKind].prompt.trim().length.toLocaleString()}자)</span>
               ) : (
                 <span>현재: <b style={{ color: "var(--text-secondary)" }}>시스템 기본값 사용</b></span>
               )}
               <span style={{ flex: 1 }} />
               <button
                 type="button"
-                onClick={() => setParaphrasePrompt(paraphrasePromptDefault || "")}
-                disabled={!paraphrasePromptDefault}
+                onClick={() => setActivePromptText(paraphrasePrompts[paraphrasePromptKind].default_prompt || "")}
+                disabled={!paraphrasePrompts[paraphrasePromptKind].default_prompt}
                 style={{
                   padding: "5px 10px", fontSize: 11,
                   background: "var(--bg-overlay)", color: "var(--text-secondary)",
                   border: "1px solid var(--border)", borderRadius: 5,
-                  cursor: paraphrasePromptDefault ? "pointer" : "not-allowed", opacity: paraphrasePromptDefault ? 1 : 0.5,
+                  cursor: paraphrasePrompts[paraphrasePromptKind].default_prompt ? "pointer" : "not-allowed",
+                  opacity: paraphrasePrompts[paraphrasePromptKind].default_prompt ? 1 : 0.5,
                 }}
               >
                 기본값 불러오기
               </button>
               <button
                 type="button"
-                onClick={() => setParaphrasePrompt("")}
+                onClick={() => setActivePromptText("")}
                 style={{
                   padding: "5px 10px", fontSize: 11,
                   background: "var(--bg-overlay)", color: "var(--text-secondary)",
@@ -1967,7 +2015,9 @@ export default function CreatePage() {
                   cursor: paraphrasePromptSaving ? "default" : "pointer", opacity: paraphrasePromptSaving ? 0.5 : 1,
                 }}
               >
-                {paraphrasePromptSaving ? "저장 중…" : "저장"}
+                {paraphrasePromptSaving
+                  ? "저장 중…"
+                  : `${paraphrasePromptKind === "title" ? "제목" : paraphrasePromptKind === "caption" ? "캡션" : "속지"} 프롬프트 저장`}
               </button>
             </div>
           </div>

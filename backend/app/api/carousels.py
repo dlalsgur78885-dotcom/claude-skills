@@ -879,6 +879,7 @@ async def translate_keyword_endpoint(
 class ParaphraseRequest(BaseModel):
     texts: list[str]
     tone: str = "marketing"  # "marketing" | "casual" | "punchy"
+    kind: str = "body"  # "body" (카드뉴스 속지) | "title" (제목)
 
 
 def default_paraphrase_body(n: int, tone: str = "marketing") -> str:
@@ -955,6 +956,37 @@ def default_paraphrase_body(n: int, tone: str = "marketing") -> str:
     )
 
 
+def default_paraphrase_title(n: int) -> str:
+    """System-default body for /paraphrase when kind='title' — the 카드뉴스
+    표지·슬라이드 제목 rewrite voice. Titles need a short, punchy hook, unlike
+    the length-preserving body rewrite (feedback #11-13)."""
+    return (
+        f"다음 {n}개의 한국어 카드뉴스 제목을 다시 써주세요.\n\n"
+        f"# 핵심 원칙\n"
+        f"제목은 짧고 강한 후킹 문장입니다. 원문의 핵심 주제는 유지하되 표현·구조는 새롭게.\n\n"
+        f"# 원칙\n"
+        f"- 원문의 핵심 주제·소재는 그대로 유지\n"
+        f"- 클릭하고 계속 보고 싶게 만드는 후킹 표현 사용\n"
+        f"- 10~20자 내외의 짧은 제목 중심 — 설명식으로 길게 늘이지 말 것\n"
+        f"- 레퍼런스 원문과 문장 구조·어순이 겹치지 않게 변경\n"
+        f"- 원문에 없던 정보·과장은 추가하지 말 것, 사실은 왜곡하지 말 것\n"
+        f"- 입력 순서 그대로 출력\n\n"
+        f"# ❌ 쓰지 말 것 (AI 티)\n"
+        f"- 느낌표(!) — 평서문이나 명사구로 끝낼 것\n"
+        f"- '마법·신세계·혁명·판타지·천국·꿀맛·완벽·비밀·정수' 같은 추상·과장 명사\n"
+        f"- 'X의 Y' 외침 패턴 ('~의 마법', '~의 발견', '~의 매력')\n"
+        f"- '혁신적·획기적·압도적·환상적·놀라운' 같은 과대 형용사\n"
+        f"- 번역투 '~을 통해', '~에 대해', 이중 피동 '~되어진다'\n\n"
+        f"# 예시\n"
+        f"  원문: '겨울에 가기 좋은 국내 여행지 추천'\n"
+        f"  좋음: '겨울에 진짜 가봐야 하는 국내 여행지'\n"
+        f"  나쁨: '겨울 여행의 마법 같은 국내 명소 대공개!' ← 과장·느낌표\n"
+        f"  원문: '직장인 점심 도시락 꿀팁'\n"
+        f"  좋음: '점심값 아끼는 직장인 도시락 노하우'\n"
+        f"  나쁨: '도시락의 신세계, 직장인 점심 혁명!' ← 추상·외침"
+    )
+
+
 @router.post("/paraphrase")
 async def paraphrase_endpoint(
     body: ParaphraseRequest,
@@ -975,15 +1007,15 @@ async def paraphrase_endpoint(
 
     numbered = "\n".join(f"{i+1}. {t}" for i, t in enumerate(texts))
 
-    # User-supplied body wins when present — accounts that want a different
-    # voice / set of rules can override without touching server code. The
-    # input + JSON output framing is still added by the system so the LLM
-    # response shape stays consistent regardless of what the user wrote.
-    user_body = (getattr(user, "paraphrase_prompt", None) or "").strip()
-    if user_body:
-        body_text = user_body
+    # 제목과 속지(body)는 글의 성격이 달라 프롬프트를 분리한다 (feedback #11-13).
+    # 유형별 사용자 오버라이드가 있으면 그게 우선, 없으면 유형별 기본 프롬프트.
+    # 입력 + JSON 출력 형식 framing 은 어느 경우든 서버가 덧붙인다.
+    if body.kind == "title":
+        user_body = (getattr(user, "title_paraphrase_prompt", None) or "").strip()
+        body_text = user_body or default_paraphrase_title(len(texts))
     else:
-        body_text = default_paraphrase_body(len(texts), body.tone)
+        user_body = (getattr(user, "paraphrase_prompt", None) or "").strip()
+        body_text = user_body or default_paraphrase_body(len(texts), body.tone)
 
     prompt = (
         f"{body_text}\n\n"
@@ -1028,6 +1060,39 @@ class CaptionParaphraseRequest(BaseModel):
     topic: str = ""
 
 
+def default_paraphrase_caption() -> str:
+    """System-default rules body for /paraphrase-caption (feedback #11-13).
+    The {hook, body} JSON output framing is added by the endpoint; this is the
+    editable rules portion, mirroring default_paraphrase_body for /paraphrase."""
+    return (
+        "# hook (첫 줄, 10자 이내)\n"
+        "- 인스타 캡션의 첫 줄은 미리보기에 보이는 부분. **사용자가 '더보기'를 누르게 만드는 미끼.**\n"
+        "- 독자의 **욕망·결핍·FOMO**를 자극: '나만 모르면 어쩌지', '나도 갖고 싶다', '안 가면 손해'\n"
+        "- 10자 이내 (공백 포함). 이모지 금지. 일반 명사구·평서문·반문형 모두 OK\n"
+        "- 캡션 본문 주제·청자를 읽고 그에 맞춰 작성\n"
+        "- 좋은 예 (구체적 갈증 자극):\n"
+        "  · 여행 캐러셀 → '현지인만 아는 곳', '여행 가기 전 필독', '관광객 1도 없음'\n"
+        "  · 쇼핑·맛집 → '직원만 아는 픽', '재고 떨어지기 전', '한국에 없음'\n"
+        "  · 정보·팁    → '다들 잘못 알고 있음', '이거 모르면 손해', '돈 아끼는 법'\n"
+        "  · 일반       → '저장 필수', '후회 없음', '진짜 있음'\n"
+        "- 나쁜 예: '여행의 마법', '꿈의 발견', '환상의 코스', '신세계' ← 추상·과장\n"
+        "- 나쁜 예: '재밌는 여행', '맛있는 간식' ← 평범, 후킹력 0\n\n"
+        "# body (본문, 원문과 같은 의미 다른 표현)\n"
+        "- 원문 캡션의 사실·제품명·브랜드·수치를 단어 그대로 유지\n"
+        "- 표현·접속사·문장 순서는 자연스럽게 변주\n"
+        "- 길이 원문 ±30% 이내\n"
+        "- 마지막에는 저장·공유·댓글·팔로우 등 행동 유도(CTA)를 자연스럽게 포함\n\n"
+        "# ❌ 절대 금지 (AI 티)\n"
+        "- 느낌표(!) 전면 금지 — 평서문으로만 끝낼 것 (hook도 body도)\n"
+        "- 추상 명사: 마법·판타지·신세계·혁명·천국·꿀맛·완벽·발견\n"
+        "- 'X의 Y' 외침 패턴: '~의 마법', '~의 발견', '~의 매력'\n"
+        "- 정도부사 매우·정말·너무·대단히 남용\n"
+        "- 번역투: '~을 통해', '~에 대해', '~에 있어서', '~되어진다', '~할 수 있다'(단언 가능 시)\n"
+        "- 형식명사: '~다는 것이다', '~할 필요가 있다'\n"
+        "- 의성·의태 과장: 톡!, 폭발!, 귀여움 폭발"
+    )
+
+
 @router.post("/paraphrase-caption")
 async def paraphrase_caption_endpoint(
     body: CaptionParaphraseRequest,
@@ -1049,36 +1114,19 @@ async def paraphrase_caption_endpoint(
     topic = (body.topic or "").strip()
     topic_line = f"주제 컨텍스트: {topic!r}\n\n" if topic else ""
 
+    # 캡션 치환 규칙도 계정별로 덮어쓸 수 있다 (feedback #11-13). hook/body 의
+    # JSON 출력 형식 framing 은 서버가 유지하고, 규칙 본문만 사용자 값으로 교체.
+    caption_rules = (getattr(user, "caption_paraphrase_prompt", None) or "").strip()
+    if not caption_rules:
+        caption_rules = default_paraphrase_caption()
+
     prompt = (
         f"인스타그램 카드뉴스의 한국어 캡션을 다시 써주세요. **출력은 100% 한국어로만**.\n\n"
         f"{topic_line}"
         f"# 출력 형식\n"
         f"단일 JSON 객체(배열 X, 마크다운 X)만 출력:\n"
         f'  {{"hook": "한국어 한 줄", "body": "한국어 본문"}}\n\n'
-        f"# hook (첫 줄, 10자 이내)\n"
-        f"- 인스타 캡션의 첫 줄은 미리보기에 보이는 부분. **사용자가 '더보기'를 누르게 만드는 미끼.**\n"
-        f"- 독자의 **욕망·결핍·FOMO**를 자극: '나만 모르면 어쩌지', '나도 갖고 싶다', '안 가면 손해'\n"
-        f"- 10자 이내 (공백 포함). 이모지 금지. 일반 명사구·평서문·반문형 모두 OK\n"
-        f"- 캡션 본문 주제·청자를 읽고 그에 맞춰 작성\n"
-        f"- 좋은 예 (구체적 갈증 자극):\n"
-        f"  · 여행 캐러셀 → '현지인만 아는 곳', '여행 가기 전 필독', '관광객 1도 없음'\n"
-        f"  · 쇼핑·맛집 → '직원만 아는 픽', '재고 떨어지기 전', '한국에 없음'\n"
-        f"  · 정보·팁    → '다들 잘못 알고 있음', '이거 모르면 손해', '돈 아끼는 법'\n"
-        f"  · 일반       → '저장 필수', '후회 없음', '진짜 있음'\n"
-        f"- 나쁜 예: '여행의 마법', '꿈의 발견', '환상의 코스', '신세계' ← 추상·과장\n"
-        f"- 나쁜 예: '재밌는 여행', '맛있는 간식' ← 평범, 후킹력 0\n\n"
-        f"# body (본문, 원문과 같은 의미 다른 표현)\n"
-        f"- 원문 캡션의 사실·제품명·브랜드·수치를 단어 그대로 유지\n"
-        f"- 표현·접속사·문장 순서는 자연스럽게 변주\n"
-        f"- 길이 원문 ±30% 이내\n\n"
-        f"# ❌ 절대 금지 (AI 티)\n"
-        f"- 느낌표(!) 전면 금지 — 평서문으로만 끝낼 것 (hook도 body도)\n"
-        f"- 추상 명사: 마법·판타지·신세계·혁명·천국·꿀맛·완벽·발견\n"
-        f"- 'X의 Y' 외침 패턴: '~의 마법', '~의 발견', '~의 매력'\n"
-        f"- 정도부사 매우·정말·너무·대단히 남용\n"
-        f"- 번역투: '~을 통해', '~에 대해', '~에 있어서', '~되어진다', '~할 수 있다'(단언 가능 시)\n"
-        f"- 형식명사: '~다는 것이다', '~할 필요가 있다'\n"
-        f"- 의성·의태 과장: 톡!, 폭발!, 귀여움 폭발\n\n"
+        f"{caption_rules}\n\n"
         f"# 원문 캡션\n{raw_caption}\n\n"
         f"위 규칙에 따라 JSON만 출력:"
     )

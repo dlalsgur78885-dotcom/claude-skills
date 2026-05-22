@@ -4,6 +4,7 @@ import { useRef, useEffect, useState, useCallback } from "react";
 import { ToolPanel } from "./ToolPanel";
 import { PropertyPanel } from "./PropertyPanel";
 import { SlideNavigator } from "./SlideNavigator";
+import { CanvasRuler } from "./CanvasRuler";
 import { createCoverSlide, createEmptySlide, createCtaSlide } from "@/lib/canvas-utils";
 import { api, proxiedImageUrl, resolveImageUrl } from "@/lib/api";
 import { getFabric } from "@/lib/fabric";
@@ -220,6 +221,8 @@ export function CanvasEditor({
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const zoomRef = useRef(1);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
+  // Ruler overlay (눈금자) along the page edges — feedback slide 5. Default on.
+  const [rulerVisible, setRulerVisible] = useState(true);
 
   // Inline project-title rename in the top toolbar. Click the title to switch
   // into an input; Enter / blur commits via onRenameTitle, Esc cancels.
@@ -3995,6 +3998,25 @@ export function CanvasEditor({
         <div style={{ width: 1, height: 18, background: "var(--border)" }} />
         <CanvasSizeSelector width={canvasW} height={canvasH} onChange={setCanvasSize} />
 
+        <div style={{ width: 1, height: 18, background: "var(--border)" }} />
+        <button
+          onClick={() => setRulerVisible((v) => !v)}
+          title="눈금자 표시 / 숨김"
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 5,
+            padding: "6px 12px", fontSize: 12, fontWeight: 500,
+            color: rulerVisible ? "white" : "var(--text-secondary)",
+            background: rulerVisible ? "var(--accent)" : "transparent",
+            border: `1px solid ${rulerVisible ? "var(--accent)" : "var(--border)"}`,
+            borderRadius: 6, cursor: "pointer",
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 9h18v6H3z M7 9v3 M11 9v4 M15 9v3 M19 9v4" />
+          </svg>
+          눈금자
+        </button>
+
         {onReapplyTemplate && (
           <>
             <div style={{ width: 1, height: 18, background: "var(--border)" }} />
@@ -4320,6 +4342,15 @@ export function CanvasEditor({
             }}
           >
             <canvas ref={canvasRef} />
+            {rulerVisible && (
+              <CanvasRuler
+                pageW={canvasW}
+                pageH={canvasH}
+                zoom={zoom}
+                pad={PAGE_PAD}
+                scale={DISPLAY_MAX / Math.max(canvasW, canvasH)}
+              />
+            )}
           </div>
 
           {/* Zoom control (bottom-right): −, editable %, +, reset. */}

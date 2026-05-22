@@ -441,8 +441,14 @@ export function CanvasEditor({
   const [canvasH, setCanvasH] = useState(initialH);
   const canvasSizeRef = useRef({ w: initialW, h: initialH });
   canvasSizeRef.current = { w: canvasW, h: canvasH };
-  const [undoStack, setUndoStack] = useState<string[]>([]);
-  const [redoStack, setRedoStack] = useState<string[]>([]);
+  // An undo/redo entry is either a per-slide canvas snapshot, or a whole-
+  // carousel snapshot. The latter backs the "전체 수정" bulk edit, which
+  // changes every slide at once — a single canvas snapshot can't represent it.
+  type UndoEntry =
+    | { kind: "canvas"; data: string }
+    | { kind: "bulk"; slides: SlideData[] };
+  const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
+  const [redoStack, setRedoStack] = useState<UndoEntry[]>([]);
   // Snapshot of the LAST committed canvas state — used to push to undo before each modification.
   const lastSnapshotRef = useRef<string | null>(null);
   // Tracks the current slide's background color so the toolbar swatch + picker
@@ -739,17 +745,30 @@ export function CanvasEditor({
       // ── Snap-to-align while dragging ─────────────────────────────────────
       // On mouse drag, nudge the moving object so its left/center/right (and
       // top/center/bottom) line up with the canvas edges/center or another
-      // object's edges/center when within SNAP_THRESHOLD. Draws thin pink
-      // guide lines at the snap positions and removes them when the drag ends.
+      // object's edges/center. Draws thin pink guide lines at the snap
+      // positions and removes them when the drag ends.
       //
-      // Threshold is in fabric/canvas coordinates (full design space e.g.
-      // 1080×1080) — CSS shrinks the visible canvas to ~540px, so each
-      // canvas-px is ~½ display-px. 16 canvas-px ≈ 8 display-px, a snap window
-      // wide enough to actually "catch" while dragging with a normal hand.
-      const SNAP_THRESHOLD = 16;
+      // Carousel studio feedback #2 (slide 3-4): the old single-threshold snap
+      // jittered ~1px at the boundary. Fixes:
+      //  - hysteresis — a wider snap-OUT than snap-IN window, so a snapped
+      //    object doesn't flicker on/off right at the edge of the window.
+      //  - sticky target — once an axis snaps to a line it holds THAT line
+      //    (same reference edge) until the object leaves the snap-out window;
+      //    no per-frame re-selection between competing lines.
+      //  - zoom-aware — thresholds are display px ÷ live zoom, so the catch
+      //    window feels the same at every zoom level.
+      //  - priority — on a fresh snap, near-ties break canvas-edge > center
+      //    > object.
+      const SNAP_IN_PX = 7;
+      const SNAP_OUT_PX = 12;
       const GUIDE_COLOR = "#FF3B6A";
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const snapGuides: any[] = [];
+      // Sticky snap target per axis for the in-progress drag. lo/mid/hi map to
+      // left/center/right (X) or top/center/bottom (Y). Reset on drag end.
+      type RefKey = "lo" | "mid" | "hi";
+      type Stuck = { target: number; refKey: RefKey } | null;
+      const snapStuck: { x: Stuck; y: Stuck } = { x: null, y: null };
 
       function clearSnapGuides() {
         if (snapGuides.length === 0) return;
@@ -774,6 +793,45 @@ export function CanvasEditor({
         snapGuides.push(line);
       }
 
+      // Resolve one axis. `stuck` is that axis's current sticky target (or
+      // null); `refs` holds the moving object's lo/mid/hi edge coordinates;
+      // `targets` are candidate snap lines tagged kind 0=canvas edge /
+      // 1=canvas center / 2=object. Returns the snap delta + the line to stick
+      // to, or null when nothing snaps. Pure — mutates nothing.
+      function resolveAxis(
+        stuck: Stuck,
+        refs: Record<RefKey, number>,
+        targets: { v: number; kind: number }[],
+        snapIn: number,
+        snapOut: number,
+      ): { delta: number; target: number; refKey: RefKey } | null {
+        // Already snapped: hold this exact line/edge until the object leaves
+        // the wider snap-out window. This is what kills the boundary jitter.
+        if (stuck) {
+          const dist = stuck.target - refs[stuck.refKey];
+          if (Math.abs(dist) <= snapOut) {
+            return { delta: dist, target: stuck.target, refKey: stuck.refKey };
+          }
+        }
+        // Fresh search: nearest reference×target pair inside the snap-in
+        // window. `score` adds a tiny per-kind penalty so a near-tie prefers a
+        // canvas edge over a center over an object, without ever overriding a
+        // genuinely closer line.
+        let best: { delta: number; target: number; refKey: RefKey; score: number } | null = null;
+        for (const tg of targets) {
+          for (const refKey of ["lo", "mid", "hi"] as const) {
+            const dist = tg.v - refs[refKey];
+            const ad = Math.abs(dist);
+            if (ad > snapIn) continue;
+            const score = ad + tg.kind * 0.05;
+            if (best == null || score < best.score) {
+              best = { delta: dist, target: tg.v, refKey, score };
+            }
+          }
+        }
+        return best ? { delta: best.delta, target: best.target, refKey: best.refKey } : null;
+      }
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       canvas.on("object:moving", (e: any) => {
         const obj = e?.target;
@@ -785,57 +843,68 @@ export function CanvasEditor({
 
         clearSnapGuides();
 
+        // All snap math runs in canvas (design-space) coords so mouse / object
+        // / zoom coordinate systems never mix. Thresholds are display px ÷ zoom
+        // so the catch window feels the same at any zoom level.
+        const zoom = canvas.getZoom() || 1;
+        const snapIn = SNAP_IN_PX / zoom;
+        const snapOut = SNAP_OUT_PX / zoom;
+
         // axis-aligned bbox in canvas coords (handles scale/rotation)
         const r = obj.getBoundingRect();
         const cw = canvas.getWidth();
         const ch = canvas.getHeight();
 
-        const movX = { left: r.left, center: r.left + r.width / 2, right: r.left + r.width };
-        const movY = { top: r.top, center: r.top + r.height / 2, bottom: r.top + r.height };
+        const refsX: Record<RefKey, number> = {
+          lo: r.left, mid: r.left + r.width / 2, hi: r.left + r.width,
+        };
+        const refsY: Record<RefKey, number> = {
+          lo: r.top, mid: r.top + r.height / 2, hi: r.top + r.height,
+        };
 
-        // Build target lists from canvas + every other object on the canvas
+        // Build target lists: canvas edges/center + every other object's
+        // edges/center. kind 0 = canvas edge, 1 = canvas center, 2 = object.
         const others = canvas.getObjects().filter(
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (o: any) => o !== obj && !o.__snapGuide && o.visible !== false,
         );
-
-        const targetsX: number[] = [0, cw / 2, cw];
-        const targetsY: number[] = [0, ch / 2, ch];
+        const targetsX: { v: number; kind: number }[] = [
+          { v: 0, kind: 0 }, { v: cw / 2, kind: 1 }, { v: cw, kind: 0 },
+        ];
+        const targetsY: { v: number; kind: number }[] = [
+          { v: 0, kind: 0 }, { v: ch / 2, kind: 1 }, { v: ch, kind: 0 },
+        ];
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         for (const o of others as any[]) {
           const ob = o.getBoundingRect();
-          targetsX.push(ob.left, ob.left + ob.width / 2, ob.left + ob.width);
-          targetsY.push(ob.top, ob.top + ob.height / 2, ob.top + ob.height);
+          targetsX.push(
+            { v: ob.left, kind: 2 },
+            { v: ob.left + ob.width / 2, kind: 2 },
+            { v: ob.left + ob.width, kind: 2 },
+          );
+          targetsY.push(
+            { v: ob.top, kind: 2 },
+            { v: ob.top + ob.height / 2, kind: 2 },
+            { v: ob.top + ob.height, kind: 2 },
+          );
         }
 
-        // Find the smallest snap delta per axis across all (mov ref × target) pairs.
-        type Best = { delta: number; target: number };
-        let bestX: Best | null = null;
-        let bestY: Best | null = null;
-        for (const target of targetsX) {
-          for (const refKey of ["left", "center", "right"] as const) {
-            const dist = target - movX[refKey];
-            if (Math.abs(dist) <= SNAP_THRESHOLD && (bestX == null || Math.abs(dist) < Math.abs(bestX.delta))) {
-              bestX = { delta: dist, target };
-            }
-          }
-        }
-        for (const target of targetsY) {
-          for (const refKey of ["top", "center", "bottom"] as const) {
-            const dist = target - movY[refKey];
-            if (Math.abs(dist) <= SNAP_THRESHOLD && (bestY == null || Math.abs(dist) < Math.abs(bestY.delta))) {
-              bestY = { delta: dist, target };
-            }
-          }
-        }
+        const bestX = resolveAxis(snapStuck.x, refsX, targetsX, snapIn, snapOut);
+        const bestY = resolveAxis(snapStuck.y, refsY, targetsY, snapIn, snapOut);
 
         if (bestX) {
           obj.set({ left: obj.left + bestX.delta });
+          snapStuck.x = { target: bestX.target, refKey: bestX.refKey };
           addGuide(bestX.target, 0, bestX.target, ch);
+        } else {
+          snapStuck.x = null;
         }
         if (bestY) {
           obj.set({ top: obj.top + bestY.delta });
+          snapStuck.y = { target: bestY.target, refKey: bestY.refKey };
           addGuide(0, bestY.target, cw, bestY.target);
+        } else {
+          snapStuck.y = null;
         }
 
         if (bestX || bestY) {
@@ -844,7 +913,12 @@ export function CanvasEditor({
         }
       });
 
-      canvas.on("mouse:up", () => clearSnapGuides());
+      // Drag ended — drop guides and clear sticky snap state for the next drag.
+      canvas.on("mouse:up", () => {
+        clearSnapGuides();
+        snapStuck.x = null;
+        snapStuck.y = null;
+      });
 
       // Track character-level selection inside textboxes so the property panel
       // can apply styles to just the user's drag range. The range is captured to
@@ -1542,10 +1616,11 @@ export function CanvasEditor({
     setCurrentSlideIndex(index);
     loadSlide(index);
     setSelectedObject(null);
-    // Per-slide undo history — clear when switching so Ctrl+Z doesn't pull
-    // changes from a different slide into the current one.
-    setUndoStack([]);
-    setRedoStack([]);
+    // Per-slide canvas undo history is meaningless on another slide — drop it
+    // so Ctrl+Z can't pull a different slide's snapshot into this one. Bulk
+    // ("전체 수정") entries span every slide, so they survive the switch.
+    setUndoStack((u) => u.filter((e) => e.kind === "bulk"));
+    setRedoStack((r) => r.filter((e) => e.kind === "bulk"));
   }
 
   function setCanvasSize(w: number, h: number) {
@@ -2265,7 +2340,7 @@ export function CanvasEditor({
     if (prev !== null) {
       setUndoStack((u) => {
         const trimmed = u.length >= 50 ? u.slice(-49) : u;
-        return [...trimmed, prev];
+        return [...trimmed, { kind: "canvas", data: prev }];
       });
       setRedoStack([]);
     }
@@ -2275,6 +2350,27 @@ export function CanvasEditor({
   /** Manual snapshot — used by toolbar buttons (addText/addRect/...) before they mutate. */
   function pushUndo() {
     commitUndo();
+  }
+
+  /** Deep-cloned snapshot of every slide, with the current slide rebuilt from
+   *  the live canvas (slidesRef can lag behind unsaved current-slide edits).
+   *  Backs the whole-carousel undo entries used by the "전체 수정" bulk edit. */
+  function snapshotAllSlides(): SlideData[] {
+    const canvas = fabricRef.current;
+    const base = slidesRef.current;
+    if (!canvas) return JSON.parse(JSON.stringify(base));
+    const idx = currentSlideIndexRef.current;
+    const { w, h } = canvasSizeRef.current;
+    const json = canvas.toJSON();
+    // Mirror saveCurrentSlide(): the visible background lives on the page
+    // boundary rect, so pull its fill back into the top-level `background`.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pb = (canvas as any).__pageBoundary;
+    const pageFill = typeof pb?.fill === "string" ? pb.fill : (json as { background?: string }).background;
+    const merged = base.map((s, i) =>
+      i === idx ? { ...json, background: pageFill, version: "6.0.0", width: w, height: h } : s
+    );
+    return JSON.parse(JSON.stringify(merged)) as SlideData[];
   }
 
   function applyBgToCurrent(color: string) {
@@ -2293,9 +2389,15 @@ export function CanvasEditor({
   }
 
   function applyBgToAll(color: string) {
-    // Bulk-update bypasses the canvas-snapshot undo stack (which only tracks
-    // the current slide). User confirms once; revert means re-pick the old color.
     if (!confirm(`모든 슬라이드 배경색을 ${color}로 변경하시겠습니까?`)) return;
+    // Snapshot every slide BEFORE the recolor so the whole "전체 적용" reverts
+    // in one Ctrl+Z / 뒤로가기 — same whole-carousel undo entry as 전체 수정.
+    const beforeBulk = snapshotAllSlides();
+    setUndoStack((u) => {
+      const trimmed = u.length >= 50 ? u.slice(-49) : u;
+      return [...trimmed, { kind: "bulk", slides: beforeBulk }];
+    });
+    setRedoStack([]);
     const canvas = fabricRef.current;
     if (canvas) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2313,8 +2415,8 @@ export function CanvasEditor({
   // editing per-page, per-property is tedious — set everything once, apply
   // once). `changes` carries only the properties the user opted into; keys
   // map straight to fabric props (fill / fontFamily / fontSize / lineHeight /
-  // charSpacing). Mirrors applyBgToAll — confirm once, bypass the per-slide
-  // undo stack (revert = re-open the modal).
+  // charSpacing). A whole-carousel snapshot is pushed onto the undo stack
+  // first, so the entire bulk edit reverts in one Ctrl+Z / 뒤로가기.
   function applyTextPropsToAll(changes: Record<string, unknown>) {
     const keys = Object.keys(changes);
     if (keys.length === 0) return;
@@ -2347,6 +2449,16 @@ export function CanvasEditor({
     // Flush the live canvas into `slides` first so the current slide's stored
     // objects carry any unsaved edits before the bulk map runs over them.
     saveCurrentSlide();
+    // Snapshot every slide BEFORE the bulk map so the whole edit is undoable
+    // in one step. snapshotAllSlides() reads the live canvas directly, so it
+    // still sees the pre-edit current slide even though the saveCurrentSlide()
+    // above is only a queued state update.
+    const beforeBulk = snapshotAllSlides();
+    setUndoStack((u) => {
+      const trimmed = u.length >= 50 ? u.slice(-49) : u;
+      return [...trimmed, { kind: "bulk", slides: beforeBulk }];
+    });
+    setRedoStack([]);
     if (canvas) {
       for (const obj of canvas.getObjects()) {
         if (!isText(obj.type)) continue;
@@ -2387,19 +2499,35 @@ export function CanvasEditor({
     );
   }
 
+  // Restore a whole-carousel snapshot (a "전체 수정" bulk-edit undo entry).
+  // Captures the state it replaces FIRST — that becomes the opposite stack's
+  // entry — then swaps in `slides` and reloads the visible slide.
+  function restoreBulk(slides: SlideData[]): UndoEntry {
+    const inverse: UndoEntry = { kind: "bulk", slides: snapshotAllSlides() };
+    setSlides(slides);
+    slidesRef.current = slides;
+    loadSlide(currentSlideIndexRef.current);
+    return inverse;
+  }
+
   function undo() {
     const canvas = fabricRef.current;
     if (!canvas) return;
     setUndoStack((u) => {
       if (u.length === 0) return u;
-      const prev = u[u.length - 1];
-      // Save current state on redo stack before reverting
+      const entry = u[u.length - 1];
+      if (entry.kind === "bulk") {
+        const inverse = restoreBulk(entry.slides);
+        setRedoStack((r) => [...r, inverse]);
+        return u.slice(0, -1);
+      }
+      // Per-slide canvas snapshot — push current state to redo, then revert.
       const current = JSON.stringify(canvas.toJSON());
-      setRedoStack((r) => [...r, current]);
+      setRedoStack((r) => [...r, { kind: "canvas", data: current }]);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (canvas as any).loadFromJSON(JSON.parse(prev)).then(() => {
+      (canvas as any).loadFromJSON(JSON.parse(entry.data)).then(() => {
         canvas.renderAll();
-        lastSnapshotRef.current = prev;
+        lastSnapshotRef.current = entry.data;
         saveCurrentSlide();
       });
       return u.slice(0, -1);
@@ -2411,13 +2539,18 @@ export function CanvasEditor({
     if (!canvas) return;
     setRedoStack((r) => {
       if (r.length === 0) return r;
-      const next = r[r.length - 1];
+      const entry = r[r.length - 1];
+      if (entry.kind === "bulk") {
+        const inverse = restoreBulk(entry.slides);
+        setUndoStack((u) => [...u, inverse]);
+        return r.slice(0, -1);
+      }
       const current = JSON.stringify(canvas.toJSON());
-      setUndoStack((u) => [...u, current]);
+      setUndoStack((u) => [...u, { kind: "canvas", data: current }]);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (canvas as any).loadFromJSON(JSON.parse(next)).then(() => {
+      (canvas as any).loadFromJSON(JSON.parse(entry.data)).then(() => {
         canvas.renderAll();
-        lastSnapshotRef.current = next;
+        lastSnapshotRef.current = entry.data;
         saveCurrentSlide();
       });
       return r.slice(0, -1);

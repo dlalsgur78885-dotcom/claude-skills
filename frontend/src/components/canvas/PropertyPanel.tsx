@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { TransparentToggle, isTransparentValue } from "./TransparentToggle";
+import { ImageDropModal } from "./ImageDropModal";
 import { type UserFont } from "@/lib/fonts";
+import { GradientBarEditor, splitColor, mergeColor, type GradValue } from "@/components/GradientBarEditor";
 
 interface PropertyPanelProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -38,7 +40,8 @@ type TabKey = "basic" | "effects" | "ai";
 
 export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, userFonts, onUploadFont, onChangeLayer, onDelete, onCutout, cutoutBusy, onEnhance, enhanceBusy, onReplaceImage, replaceBusy }: PropertyPanelProps) {
   const [activeTab, setActiveTab] = useState<TabKey>("basic");
-  const replaceInputRef = useRef<HTMLInputElement>(null);
+  // Drag-and-drop modal for "다른 이미지로 교체" (feedback slide 7).
+  const [showReplaceModal, setShowReplaceModal] = useState(false);
   // Single image OR a multi-selection containing at least one image.
   // For activeselection, count how many images so the buttons can show "(N개)".
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -383,7 +386,7 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, use
           <div>
             <label style={labelStyle}>이미지 교체</label>
             <button
-              onClick={() => replaceInputRef.current?.click()}
+              onClick={() => setShowReplaceModal(true)}
               disabled={!!replaceBusy}
               title="선택한 이미지를 업로드한 파일로 교체"
               style={{
@@ -401,17 +404,6 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, use
             >
               {replaceBusy ? "교체 중…" : "🖼️ 다른 이미지로 교체"}
             </button>
-            <input
-              ref={replaceInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              style={{ display: "none" }}
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                e.currentTarget.value = "";
-                if (file) await onReplaceImage(file);
-              }}
-            />
           </div>
         )}
         {/* Image-specific actions */}
@@ -802,6 +794,12 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, use
           </>
         )}
       </div>
+      {showReplaceModal && onReplaceImage && (
+        <ImageDropModal
+          onSelect={(file) => onReplaceImage(file)}
+          onClose={() => setShowReplaceModal(false)}
+        />
+      )}
     </div>
   );
 }
@@ -853,13 +851,17 @@ function GradientFillEditor({
     }
   }
 
-  function updateStop(i: number, patch: Partial<{ offset: number; color: string }>) {
-    const next = stops.map((s, idx) => (idx === i ? { ...s, ...patch } : s));
-    onUpdate("fill", makeGradient(next, dir));
-  }
-
-  function setDir(d: string) {
-    onUpdate("fill", makeGradient(stops, d));
+  // fabric colorStops <-> GradientBarEditor's normalised {color,opacity,position}.
+  const gradValue: GradValue = {
+    direction: dir,
+    stops: stops.map((s) => {
+      const { hex, opacity } = splitColor(s.color);
+      return { color: hex, opacity, position: s.offset };
+    }),
+  };
+  function applyGrad(v: GradValue) {
+    const colorStops = v.stops.map((s) => ({ offset: s.position, color: mergeColor(s.color, s.opacity) }));
+    onUpdate("fill", makeGradient(colorStops, v.direction));
   }
 
   return (
@@ -882,64 +884,8 @@ function GradientFillEditor({
         {isGradient ? "그라데이션 끄기 (단색으로)" : "그라데이션 채우기"}
       </button>
       {isGradient && (
-        <div style={{ marginTop: 6, padding: 6, background: "var(--bg-overlay)", borderRadius: 4 }}>
-          <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
-            {(["vertical", "horizontal", "diagonal"] as const).map((d) => (
-              <button
-                key={d}
-                onClick={() => setDir(d)}
-                style={{
-                  flex: 1,
-                  padding: "3px 0",
-                  fontSize: 10,
-                  borderRadius: 3,
-                  background: dir === d ? "var(--accent)" : "transparent",
-                  color: dir === d ? "white" : "var(--text-secondary)",
-                  border: "1px solid",
-                  borderColor: dir === d ? "var(--accent)" : "var(--border)",
-                  cursor: "pointer",
-                }}
-              >
-                {d === "vertical" ? "↓" : d === "horizontal" ? "→" : "↘"}
-              </button>
-            ))}
-          </div>
-          {stops.map((s, i) => (
-            <div key={i} style={{ display: "flex", gap: 4, marginBottom: 4, alignItems: "center" }}>
-              <input
-                type="color"
-                value={(s.color.match(/^#[0-9a-fA-F]{6}/) || ["#000000"])[0]}
-                onChange={(e) => updateStop(i, { color: e.target.value })}
-                style={{ width: 28, height: 22, padding: 0, border: "1px solid var(--border)", borderRadius: 3, cursor: "pointer" }}
-              />
-              <TransparentToggle
-                size={22}
-                value={s.color}
-                onChange={(next) => updateStop(i, { color: next })}
-              />
-              <input
-                type="number"
-                step={0.05}
-                min={0}
-                max={1}
-                value={s.offset}
-                onChange={(e) => updateStop(i, { offset: Number(e.target.value) })}
-                style={{ flex: 1, padding: "3px 6px", fontSize: 11, background: "var(--bg-base)", border: "1px solid var(--border)", borderRadius: 3, color: "var(--text-primary)" }}
-              />
-              <span style={{ fontSize: 9, color: "var(--text-tertiary)", fontFamily: "monospace", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {s.color}
-              </span>
-            </div>
-          ))}
-          <button
-            onClick={() => {
-              const next = [...stops, { offset: 0.5, color: "rgba(0,0,0,0.5)" }].sort((a, b) => a.offset - b.offset);
-              onUpdate("fill", makeGradient(next, dir));
-            }}
-            style={{ width: "100%", padding: "3px 0", fontSize: 10, marginTop: 2, background: "transparent", color: "var(--text-secondary)", border: "1px dashed var(--border)", borderRadius: 3, cursor: "pointer" }}
-          >
-            + 스톱 추가
-          </button>
+        <div style={{ marginTop: 6 }}>
+          <GradientBarEditor value={gradValue} onChange={applyGrad} />
         </div>
       )}
     </div>

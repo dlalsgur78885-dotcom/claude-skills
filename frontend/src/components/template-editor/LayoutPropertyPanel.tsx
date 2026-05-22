@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { HexColorPicker } from "react-colorful";
 import { getByPath } from "@/lib/template-paths";
 import type { TemplateData, FabricMeta, TextStyle, GridSpec, ShadowSpec, GradientFill, Decoration } from "./types";
+import { GradientBarEditor, splitColor, mergeColor, type GradValue } from "@/components/GradientBarEditor";
 
 interface Props {
   template: TemplateData;
@@ -879,19 +880,20 @@ function GradientFillEditor({
       onChange(`${basePath}.fill`, seed);
     }
   }
-  function setDir(d: GradientFill["direction"]) {
-    if (!grad) return;
-    onChange(`${basePath}.fill`, { ...grad, direction: d });
-  }
-  function updateStop(i: number, patch: Partial<{ offset: number; color: string }>) {
-    if (!grad) return;
-    const next = grad.stops.map((s, idx) => (idx === i ? { ...s, ...patch } : s));
-    onChange(`${basePath}.fill`, { ...grad, stops: next });
-  }
-  function addStop() {
-    if (!grad) return;
-    const next = [...grad.stops, { offset: 0.5, color: "rgba(0,0,0,0.5)" }].sort((a, b) => a.offset - b.offset);
-    onChange(`${basePath}.fill`, { ...grad, stops: next });
+  // GradientFill <-> GradientBarEditor's normalised {color,opacity,position}.
+  const gradValue: GradValue = {
+    direction: dir,
+    stops: stops.map((s) => {
+      const { hex, opacity } = splitColor(s.color);
+      return { color: hex, opacity, position: s.offset };
+    }),
+  };
+  function applyGrad(v: GradValue) {
+    onChange(`${basePath}.fill`, {
+      type: "linear",
+      direction: v.direction,
+      stops: v.stops.map((s) => ({ offset: s.position, color: mergeColor(s.color, s.opacity) })),
+    } as GradientFill);
   }
 
   return (
@@ -910,55 +912,8 @@ function GradientFillEditor({
         {isGradient ? "그라데이션 끄기 (단색으로)" : "그라데이션 채우기"}
       </button>
       {isGradient && grad && (
-        <div style={{ marginTop: 6, padding: 8, background: "var(--bg-overlay)", borderRadius: 4, display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ display: "flex", gap: 4 }}>
-            {(["vertical", "horizontal", "diagonal"] as const).map((d) => {
-              const active = dir === d;
-              return (
-                <button
-                  key={d}
-                  onClick={() => setDir(d)}
-                  style={{
-                    flex: 1, padding: "3px 0", fontSize: 10, borderRadius: 3,
-                    background: active ? "var(--accent)" : "transparent",
-                    color: active ? "white" : "var(--text-secondary)",
-                    border: "1px solid",
-                    borderColor: active ? "var(--accent)" : "var(--border)",
-                    cursor: "pointer",
-                  }}
-                >
-                  {d === "vertical" ? "↓" : d === "horizontal" ? "→" : "↘"}
-                </button>
-              );
-            })}
-          </div>
-          {stops.map((s, i) => (
-            <div key={i} style={{ display: "flex", gap: 4, alignItems: "center" }}>
-              <InlineColorPicker
-                value={(s.color.match(/^#[0-9a-fA-F]{6}/) || ["#000000"])[0]}
-                onChange={(c) => updateStop(i, { color: c })}
-                size={22}
-              />
-              <input
-                type="number"
-                step={0.05}
-                min={0}
-                max={1}
-                value={s.offset}
-                onChange={(e) => updateStop(i, { offset: Number(e.target.value) })}
-                style={{ flex: 1, padding: "3px 6px", fontSize: 11, background: "var(--bg-base)", border: "1px solid var(--border)", borderRadius: 3, color: "var(--text-primary)" }}
-              />
-              <span style={{ fontSize: 9, color: "var(--text-tertiary)", fontFamily: "monospace", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {s.color}
-              </span>
-            </div>
-          ))}
-          <button
-            onClick={addStop}
-            style={{ width: "100%", padding: "3px 0", fontSize: 10, background: "transparent", color: "var(--text-secondary)", border: "1px dashed var(--border)", borderRadius: 3, cursor: "pointer" }}
-          >
-            + 스톱 추가
-          </button>
+        <div style={{ marginTop: 6 }}>
+          <GradientBarEditor value={gradValue} onChange={applyGrad} />
         </div>
       )}
     </div>

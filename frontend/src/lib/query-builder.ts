@@ -67,6 +67,51 @@ export const MODIFIER_LABEL_KO: Record<ImageType, string> = {
   product: "제품",
 };
 
+// Category-specific dish/object descriptors that replace the generic `food`
+// modifier when the LLM's `plan.category` matches one of the keys. Lifts hit
+// rate dramatically on food carousels — `一蘭 道頓堀店 ラーメン` returns the
+// actual ramen photos, `一蘭 道頓堀店 料理` returns generic restaurant noise.
+// Keys are lowercase canonical English strings; the LLM is nudged toward
+// these in /translate-keyword's prompt. Non-matching categories fall back to
+// MODIFIER_WORDS (generic) automatically.
+const CATEGORY_DISH: Record<string, Record<Lang, string>> = {
+  // 일본·아시아 음식점
+  "ramen restaurant":   { ko: "라멘",     ja: "ラーメン",       zh: "拉面",    en: "ramen" },
+  "sushi restaurant":   { ko: "스시",     ja: "寿司",           zh: "寿司",    en: "sushi" },
+  "udon restaurant":    { ko: "우동",     ja: "うどん",         zh: "乌冬",    en: "udon" },
+  "soba restaurant":    { ko: "소바",     ja: "そば",           zh: "荞麦面",  en: "soba" },
+  "curry restaurant":   { ko: "카레",     ja: "カレー",         zh: "咖喱",    en: "curry" },
+  "tempura restaurant": { ko: "텐푸라",   ja: "天ぷら",         zh: "天妇罗",  en: "tempura" },
+  "yakiniku restaurant":{ ko: "야끼니꾸", ja: "焼肉",           zh: "烤肉",    en: "yakiniku" },
+  "izakaya":            { ko: "이자카야", ja: "居酒屋",         zh: "居酒屋",  en: "izakaya" },
+  "korean bbq":         { ko: "고기집",   ja: "韓国焼肉",       zh: "韩式烤肉",en: "korean bbq" },
+  "pho restaurant":     { ko: "쌀국수",   ja: "フォー",         zh: "越南河粉",en: "pho" },
+  // 양식
+  "pizza restaurant":   { ko: "피자",     ja: "ピザ",           zh: "披萨",    en: "pizza" },
+  "burger restaurant":  { ko: "버거",     ja: "バーガー",       zh: "汉堡",    en: "burger" },
+  "pasta restaurant":   { ko: "파스타",   ja: "パスタ",         zh: "意面",    en: "pasta" },
+  "steakhouse":         { ko: "스테이크", ja: "ステーキ",       zh: "牛排",    en: "steak" },
+  "taco restaurant":    { ko: "타코",     ja: "タコス",         zh: "墨西哥卷",en: "taco" },
+  // 카페·디저트
+  "cafe":               { ko: "카페",     ja: "カフェ",         zh: "咖啡馆",  en: "cafe" },
+  "coffee shop":        { ko: "커피",     ja: "コーヒー",       zh: "咖啡",    en: "coffee" },
+  "bakery":             { ko: "베이커리", ja: "パン屋",         zh: "面包店",  en: "bakery" },
+  "ice cream shop":     { ko: "아이스크림", ja: "アイスクリーム", zh: "冰淇淋",  en: "ice cream" },
+  "dessert shop":       { ko: "디저트",   ja: "スイーツ",       zh: "甜品",    en: "dessert" },
+  // 술집
+  "bar":                { ko: "바",       ja: "バー",           zh: "酒吧",    en: "cocktail bar" },
+  "wine bar":           { ko: "와인바",   ja: "ワインバー",     zh: "葡萄酒吧",en: "wine bar" },
+};
+
+function modifierWord(mod: ImageType | "bare", lang: Lang, category?: string): string {
+  // food modifier + 카테고리 매치 → 구체 명사로 치환 (라멘/ラーメン/ramen).
+  if (mod === "food" && category) {
+    const dish = CATEGORY_DISH[category.toLowerCase().trim()];
+    if (dish && dish[lang]) return dish[lang];
+  }
+  return MODIFIER_WORDS[mod][lang];
+}
+
 // Order in which langs go into the result list. Native scripts first (they
 // catch local web best), Korean last as Naver fallback.
 const LANG_ORDER: Lang[] = ["ja", "zh", "en", "ko"];
@@ -119,7 +164,7 @@ export function buildQueries(plan: ItemQueryPlan, opts: BuildOptions = {}): Quer
       if (!langs.includes(lang)) continue;
       const form = forms[lang] as string;
       const anchor = regionOn ? (anchors[lang] || "") : "";
-      const word = MODIFIER_WORDS[mod][lang];
+      const word = modifierWord(mod, lang, plan.category);
       const q = assemble(form, word, anchor, lang);
       if (q) {
         out.push({

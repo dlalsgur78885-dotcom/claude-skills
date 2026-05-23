@@ -388,9 +388,16 @@ class ApiClient {
   }
 
   // Image Search
-  async searchImages(query: string, style: "photo" | "icon" | "cutout" = "photo", limit = 12, country?: string) {
+  async searchImages(
+    query: string,
+    style: "photo" | "icon" | "cutout" = "photo",
+    limit = 12,
+    country?: string,
+    profile?: "default" | "v2",
+  ) {
     const params = new URLSearchParams({ q: query, style, limit: String(limit) });
     if (country) params.set("country", country);
+    if (profile) params.set("profile", profile);
     return this.fetch<{ query: string; style: string; total: number; images: { id: string; url: string; preview_url: string; width: number; height: number; source: string }[] }>(`/images/search?${params}`);
   }
 

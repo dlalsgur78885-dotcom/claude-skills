@@ -350,17 +350,18 @@ async def cutout_image_endpoint(
 async def search_images(
     q: str = Query(..., min_length=1),
     style: str = Query("photo", regex="^(photo|icon|cutout)$"),
-    source: str | None = Query(None, description="bing|naver|wikimedia (style=photo only)"),
+    source: str | None = Query(None, description="bing|naver|wikimedia|pexels|pixabay|unsplash (style=photo only)"),
+    profile: str | None = Query(None, description="default | v2 (제공자 우선순위 묶음; 미지정 = default)"),
     limit: int = Query(12, le=50),
     country: str | None = Query(None, description="ISO-2 country code — routes through that country's proxy"),
     user: User = Depends(get_current_user),
 ):
     """이미지 검색.
 
-    - style=photo: 멀티소스 엔진. source 미지정 시 폴백 체인(bing→naver→wikimedia).
-      Carousel studio feedback #15-16: stock photo provider 3종은 제거 (캐러셀
-      대상이 특정 가게·장소·아이템이라 stock 매칭률이 낮음). bing 잡식 + naver
-      한국어 블로그 + wikimedia 랜드마크 큐레이션이 실용적.
+    - style=photo: 멀티소스 엔진.
+      · `profile` 미지정 → DEFAULT_ORDER (naver→pexels→pixabay→unsplash, 기존 흐름)
+      · `profile=v2`     → [bing, naver, wikimedia] (재검색2 — 피드백 #15-16)
+      · `source` 명시    → 그 출처 단독 (profile 무시)
     - style=icon|cutout: 기존 ImageProcessor (Pixabay illustration / Flaticon).
     """
     if style == "photo":
@@ -371,7 +372,7 @@ async def search_images(
                 raise HTTPException(400, f"unknown source: {source}. choose from {list(PROVIDERS)}")
             results = await PROVIDERS[source].safe_search(q, limit, country=country)
         else:
-            results = await search_all(q, limit=limit, country=country)
+            results = await search_all(q, limit=limit, country=country, profile=profile)
 
         # Map ImageResult → frontend contract (id/url/preview_url)
         images = [

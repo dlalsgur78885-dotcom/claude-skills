@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { api, resolveImageUrl, proxiedImageUrl } from "@/lib/api";
 import type { Post, TemplateSummary } from "@/lib/types";
 import { TemplateThumbnail } from "@/components/template-editor/TemplateThumbnail";
+import { HoverZoomImage } from "@/components/HoverZoomImage";
 import { CellSearchOptions, type CellSearchState } from "./CellSearchOptions";
 import { buildQueries, ALL_IMAGE_TYPES, type ImageType, type ItemQueryPlan } from "@/lib/query-builder";
 
@@ -428,11 +429,10 @@ export default function CreatePage() {
   //
   // ensureCellPlan lazily fetches the structured ItemQueryPlan for a cell via
   // /translate-keyword; result cached in cellPlans. searchCellWithPlan builds
-  // queries from plan+options and hits /images/search round-robin.
-  // scheduleCellResearch debounces toggle-triggered re-searches (500ms).
-  // applyCellOptionsBelow copies one cell's options to every cell after it.
-
-  const cellResearchTimers = useRef<Record<ImageKey, ReturnType<typeof setTimeout>>>({});
+  // queries from plan+options and hits /images/search?profile=v2.
+  // triggerCellResearch is fired explicitly by the "🔄 재검색2" button (or by
+  // applyCellOptionsBelow) — toggling chips/region/custom alone does NOT
+  // re-search. The legacy path (typed keyword + 🔄 재검색) stays untouched.
 
   async function ensureCellPlan(key: ImageKey): Promise<ItemQueryPlan | undefined> {
     const cached = cellPlans[key];
@@ -484,7 +484,7 @@ export default function CreatePage() {
     const perQuery = await Promise.all(
       top.map(async (e) => {
         try {
-          const res = await api.searchImages(e.q, style, 12, country);
+          const res = await api.searchImages(e.q, style, 12, country, "v2");
           return res.images.map((img) => ({ ...img, _query: e.q }));
         } catch {
           return [];
@@ -507,30 +507,26 @@ export default function CreatePage() {
     setSlideImages((prev) => ({ ...prev, [key]: merged.slice(0, 16) }));
   }
 
-  function scheduleCellResearch(key: ImageKey) {
-    const t = cellResearchTimers.current[key];
-    if (t) clearTimeout(t);
-    cellResearchTimers.current[key] = setTimeout(async () => {
-      setCellOptionsLoading((p) => new Set(p).add(key));
-      try {
-        const plan = await ensureCellPlan(key);
-        if (!plan) return;
-        const opts = cellOptions[key] || initialCellOptions(plan);
-        await searchCellWithPlan(key, plan, opts);
-      } finally {
-        setCellOptionsLoading((p) => { const n = new Set(p); n.delete(key); return n; });
-      }
-    }, 500);
+  async function triggerCellResearch(key: ImageKey) {
+    setCellOptionsLoading((p) => new Set(p).add(key));
+    try {
+      const plan = await ensureCellPlan(key);
+      if (!plan) return;
+      const opts = cellOptions[key] || initialCellOptions(plan);
+      await searchCellWithPlan(key, plan, opts);
+    } finally {
+      setCellOptionsLoading((p) => { const n = new Set(p); n.delete(key); return n; });
+    }
   }
 
   function onCellOptionsChange(key: ImageKey, next: CellSearchState) {
+    // State only — user clicks "🔄 재검색2" to actually re-run the v2 search.
+    // (Toggling chips no longer burns a search call.)
     setCellOptions((prev) => ({ ...prev, [key]: next }));
-    scheduleCellResearch(key);
   }
 
-  function applyCellOptionsBelow(currentKey: ImageKey) {
-    const opts = cellOptions[currentKey];
-    if (!opts) return;
+  async function applyCellOptionsBelow(currentKey: ImageKey) {
+    const opts = cellOptions[currentKey] ?? initialCellOptions(cellPlans[currentKey]);
     const allKeys = imageKeywords.map((k) => imageKey(k.slide_index, k.item_index));
     const idx = allKeys.indexOf(currentKey);
     if (idx < 0) return;
@@ -540,7 +536,12 @@ export default function CreatePage() {
       for (const k of below) next[k] = { ...opts };
       return next;
     });
-    for (const k of below) scheduleCellResearch(k);
+    // v2 search for each below cell — batched (concurrency 3) so a long
+    // carousel doesn't trigger 30+ concurrent HTTP fetches.
+    const BATCH = 3;
+    for (let i = 0; i < below.length; i += BATCH) {
+      await Promise.all(below.slice(i, i + BATCH).map(triggerCellResearch));
+    }
   }
 
   // Lazy-load ItemQueryPlan for every cell once image_keywords are ready —
@@ -1082,8 +1083,7 @@ export default function CreatePage() {
                 <div key={p.id} style={{ marginTop: 8 }}>
                   <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
                     {p.images.map((img) => (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
+                      <HoverZoomImage
                         key={img.id}
                         src={imgSrc(img.raw_path)}
                         alt={`슬라이드 ${img.slide_index + 1}`}
@@ -1339,8 +1339,7 @@ export default function CreatePage() {
                   {/* 원본 슬라이드 썸네일 */}
                   <div style={{ flexShrink: 0 }}>
                     {refImg ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
+                      <HoverZoomImage
                         src={imgSrc(refImg.url)}
                         alt={`slide ${slide.index}`}
                         style={{ width: 120, height: 120, borderRadius: 6, objectFit: "cover", background: "var(--bg-overlay)", border: "1px solid var(--border)" }}
@@ -1688,8 +1687,7 @@ export default function CreatePage() {
                   {/* Slide header */}
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: bodyPreview ? 6 : 12 }}>
                     {refImg?.url && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
+                      <HoverZoomImage
                         src={imgSrc(refImg.url)}
                         alt={`벤치 슬라이드 ${slide.index + 1}`}
                         title="벤치마크 원본 슬라이드 — 어떤 위치의 셀인지 참고용"
@@ -1786,8 +1784,7 @@ export default function CreatePage() {
                                 scroll back up to the slide header thumbnail
                                 to figure out the location. */}
                             {refImg?.url && (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
+                              <HoverZoomImage
                                 src={imgSrc(refImg.url)}
                                 alt=""
                                 title={`벤치 슬라이드 ${slide.index + 1}`}
@@ -1927,6 +1924,7 @@ export default function CreatePage() {
                               loading={cellOptionsLoading.has(key)}
                               onChange={(next) => onCellOptionsChange(key, next)}
                               onApplyBelow={hasBelow ? () => applyCellOptionsBelow(key) : undefined}
+                              onResearch={() => triggerCellResearch(key)}
                             />
                           );
                         })()}

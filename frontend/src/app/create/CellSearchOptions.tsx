@@ -33,6 +33,7 @@ interface Props {
   loading?: boolean;               // plan fetch / 재검색 중 표시
   onChange: (next: CellSearchState) => void;
   onApplyBelow?: () => void;       // 없으면 버튼 숨김 (마지막 셀)
+  onResearch?: () => void;         // "🔄 재검색2" — explicit v2-pipeline search
 }
 
 const CHIP_BASE: React.CSSProperties = {
@@ -52,7 +53,7 @@ const CHIP_ON: React.CSSProperties = {
   border: "1px solid var(--accent)",
 };
 
-export function CellSearchOptions({ plan, state, loading, onChange, onApplyBelow }: Props) {
+export function CellSearchOptions({ plan, state, loading, onChange, onApplyBelow, onResearch }: Props) {
   const [customDraft, setCustomDraft] = useState("");
 
   function toggleModifier(m: ImageType) {
@@ -210,7 +211,7 @@ export function CellSearchOptions({ plan, state, loading, onChange, onApplyBelow
             type="button"
             disabled={disabled}
             onClick={onApplyBelow}
-            title="이 셀의 modifier · 지역 설정을 이후 모든 셀에 일괄 적용"
+            title="이 셀의 modifier · 지역 설정을 이후 모든 셀에 일괄 적용 (각 셀 재검색 포함)"
             style={{
               padding: "3px 10px", fontSize: 11,
               color: "var(--text-secondary)",
@@ -221,6 +222,26 @@ export function CellSearchOptions({ plan, state, loading, onChange, onApplyBelow
             }}
           >
             ↓ 이후 셀에 적용
+          </button>
+        )}
+
+        {onResearch && (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={onResearch}
+            title="현재 modifier · 지역 · 사용자 키워드로 새 검색 파이프라인(v2) 실행"
+            style={{
+              padding: "3px 12px", fontSize: 11, fontWeight: 600,
+              color: "white",
+              background: "var(--accent)",
+              border: "1px solid var(--accent)",
+              borderRadius: 6,
+              cursor: disabled ? "default" : "pointer",
+              opacity: disabled ? 0.5 : 1,
+            }}
+          >
+            {loading ? "검색 중…" : "🔄 재검색2"}
           </button>
         )}
       </div>

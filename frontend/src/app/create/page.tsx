@@ -6,6 +6,7 @@ import { api, resolveImageUrl, proxiedImageUrl } from "@/lib/api";
 import type { Post, TemplateSummary } from "@/lib/types";
 import { TemplateThumbnail } from "@/components/template-editor/TemplateThumbnail";
 import { HoverZoomImage } from "@/components/HoverZoomImage";
+import { HoverZoomTemplate } from "@/components/HoverZoomTemplate";
 import { CellSearchOptions, type CellSearchState } from "./CellSearchOptions";
 import { buildQueries, ALL_IMAGE_TYPES, type ImageType, type ItemQueryPlan } from "@/lib/query-builder";
 
@@ -514,6 +515,48 @@ export default function CreatePage() {
       if (!plan) return;
       const opts = cellOptions[key] || initialCellOptions(plan);
       await searchCellWithPlan(key, plan, opts);
+    } finally {
+      setCellOptionsLoading((p) => { const n = new Set(p); n.delete(key); return n; });
+    }
+  }
+
+  // Legacy re-search for one cell — uses the cell's stored multilang keywords
+  // + default provider order (naver/pexels/pixabay/unsplash). Same path as the
+  // initial Step-2 auto-search but scoped to one cell. Paired with the new
+  // "🔄 재검색2" button so the user can A/B the two pipelines side by side.
+  async function triggerLegacyResearch(key: ImageKey) {
+    const kw = imageKeywords.find((k) => imageKey(k.slide_index, k.item_index) === key);
+    if (!kw) return;
+    const queries = (kw.keywords || []).filter(Boolean);
+    if (queries.length === 0) return;
+    setCellOptionsLoading((p) => new Set(p).add(key));
+    try {
+      const country = kw.country;
+      const style = (kw.style as "photo" | "icon" | "cutout") || "photo";
+      const perQuery = await Promise.all(
+        queries.map(async (q) => {
+          try {
+            const res = await api.searchImages(q, style, 12, country); // no profile = default
+            return res.images.map((img) => ({ ...img, _query: q }));
+          } catch {
+            return [];
+          }
+        }),
+      );
+      const merged: (ImageResult & { _query?: string })[] = [];
+      const seen = new Set<string>();
+      const maxLen = Math.max(0, ...perQuery.map((r) => r.length));
+      for (let i = 0; i < maxLen; i++) {
+        for (const list of perQuery) {
+          const img = list[i];
+          if (!img) continue;
+          const dk = img.url || img.preview_url || img.id;
+          if (seen.has(dk)) continue;
+          seen.add(dk);
+          merged.push({ ...img, id: `l${Date.now()}-${merged.length}-${img.source}-${img.url.slice(-12)}` });
+        }
+      }
+      setSlideImages((prev) => ({ ...prev, [key]: merged.slice(0, 16) }));
     } finally {
       setCellOptionsLoading((p) => { const n = new Set(p); n.delete(key); return n; });
     }
@@ -1039,7 +1082,7 @@ export default function CreatePage() {
                                 }}
                               >
                                 <div style={{ background: "var(--bg-overlay)", borderRadius: 4, padding: 3 }}>
-                                  <TemplateThumbnail templateId={t.id} layoutName={layoutName} size={88} />
+                                  <HoverZoomTemplate templateId={t.id} layoutName={layoutName} size={88} />
                                 </div>
                                 <span style={{ fontSize: 9, color: "var(--text-tertiary)", maxWidth: 94, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                   {layoutName}
@@ -1151,7 +1194,7 @@ export default function CreatePage() {
                             style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flexShrink: 0 }}
                           >
                             <div style={{ background: "var(--bg-overlay)", borderRadius: 4, padding: 3 }}>
-                              <TemplateThumbnail templateId={t.id} layoutName={layoutName} size={96} />
+                              <HoverZoomTemplate templateId={t.id} layoutName={layoutName} size={96} />
                             </div>
                             <span style={{ fontSize: 10, color: "var(--text-tertiary)", maxWidth: 102, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {layoutName}
@@ -1924,6 +1967,7 @@ export default function CreatePage() {
                               loading={cellOptionsLoading.has(key)}
                               onChange={(next) => onCellOptionsChange(key, next)}
                               onApplyBelow={hasBelow ? () => applyCellOptionsBelow(key) : undefined}
+                              onResearchLegacy={() => triggerLegacyResearch(key)}
                               onResearch={() => triggerCellResearch(key)}
                             />
                           );

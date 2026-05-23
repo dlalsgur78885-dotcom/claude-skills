@@ -33,7 +33,8 @@ interface Props {
   loading?: boolean;               // plan fetch / 재검색 중 표시
   onChange: (next: CellSearchState) => void;
   onApplyBelow?: () => void;       // 없으면 버튼 숨김 (마지막 셀)
-  onResearch?: () => void;         // "🔄 재검색2" — explicit v2-pipeline search
+  onResearchLegacy?: () => void;   // "🔄 재검색"  — default profile (legacy 출처)
+  onResearch?: () => void;         // "🔄 재검색2" — v2 profile (bing/naver/wikimedia)
 }
 
 const CHIP_BASE: React.CSSProperties = {
@@ -53,7 +54,7 @@ const CHIP_ON: React.CSSProperties = {
   border: "1px solid var(--accent)",
 };
 
-export function CellSearchOptions({ plan, state, loading, onChange, onApplyBelow, onResearch }: Props) {
+export function CellSearchOptions({ plan, state, loading, onChange, onApplyBelow, onResearchLegacy, onResearch }: Props) {
   const [customDraft, setCustomDraft] = useState("");
 
   function toggleModifier(m: ImageType) {
@@ -225,12 +226,32 @@ export function CellSearchOptions({ plan, state, loading, onChange, onApplyBelow
           </button>
         )}
 
+        {onResearchLegacy && (
+          <button
+            type="button"
+            disabled={loading}
+            onClick={onResearchLegacy}
+            title="기본 출처(naver/pexels/pixabay/unsplash)로 셀 키워드 재검색"
+            style={{
+              padding: "3px 12px", fontSize: 11, fontWeight: 500,
+              color: "var(--text-primary)",
+              background: "var(--bg-base)",
+              border: "1px solid var(--border-strong, var(--border))",
+              borderRadius: 6,
+              cursor: loading ? "default" : "pointer",
+              opacity: loading ? 0.5 : 1,
+            }}
+          >
+            🔄 재검색
+          </button>
+        )}
+
         {onResearch && (
           <button
             type="button"
             disabled={disabled}
             onClick={onResearch}
-            title="현재 modifier · 지역 · 사용자 키워드로 새 검색 파이프라인(v2) 실행"
+            title="현재 modifier · 지역 · 사용자 키워드 옵션으로 v2 파이프라인(bing/naver/wikimedia) 검색"
             style={{
               padding: "3px 12px", fontSize: 11, fontWeight: 600,
               color: "white",

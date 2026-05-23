@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { api, resolveImageUrl, proxiedImageUrl } from "@/lib/api";
 import type { Post, TemplateSummary } from "@/lib/types";
 import { TemplateThumbnail } from "@/components/template-editor/TemplateThumbnail";
+import { CellSearchOptions, type CellSearchState } from "./CellSearchOptions";
+import { buildQueries, ALL_IMAGE_TYPES, type ImageType, type ItemQueryPlan } from "@/lib/query-builder";
 
 type Slide = { index: number; type: string; headline: string; body?: string; subtext?: string; cta_text?: string; items?: Array<{ title?: string; subtitle?: string; description?: string; image_path?: string }> };
 type ImageResult = { id: string; url: string; preview_url: string; width: number; height: number; source: string; _query?: string };
@@ -100,6 +102,15 @@ export default function CreatePage() {
   const [slideImages, setSlideImages] = useState<SlideImages>({});
   const [selectedImages, setSelectedImages] = useState<SelectedImages>({});
   const [searching, setSearching] = useState(false);
+
+  // Per-cell search-option state — carousel studio feedback #15-16. Each cell
+  // can override which modifier types its queries are biased toward (음식/외관
+  // /etc.), toggle the region anchor (도쿄/오사카) on/off, and add free-form
+  // custom modifier words. `cellPlans` holds the structured ItemQueryPlan from
+  // /translate-keyword (lazy-fetched on first cell options interaction).
+  const [cellPlans, setCellPlans] = useState<Record<ImageKey, ItemQueryPlan>>({});
+  const [cellOptions, setCellOptions] = useState<Record<ImageKey, CellSearchState>>({});
+  const [cellOptionsLoading, setCellOptionsLoading] = useState<Set<ImageKey>>(new Set());
   const [restyling, setRestyling] = useState<Set<ImageKey>>(new Set());
   // composite key → original src before restyle (so user can revert)
   const [originalSrc, setOriginalSrc] = useState<Record<ImageKey, string>>({});
@@ -412,6 +423,137 @@ export default function CreatePage() {
       });
     }
   }
+
+  // === Cell search options helpers (feedback #15-16) ===
+  //
+  // ensureCellPlan lazily fetches the structured ItemQueryPlan for a cell via
+  // /translate-keyword; result cached in cellPlans. searchCellWithPlan builds
+  // queries from plan+options and hits /images/search round-robin.
+  // scheduleCellResearch debounces toggle-triggered re-searches (500ms).
+  // applyCellOptionsBelow copies one cell's options to every cell after it.
+
+  const cellResearchTimers = useRef<Record<ImageKey, ReturnType<typeof setTimeout>>>({});
+
+  async function ensureCellPlan(key: ImageKey): Promise<ItemQueryPlan | undefined> {
+    const cached = cellPlans[key];
+    if (cached) return cached;
+    const kw = imageKeywords.find((k) => imageKey(k.slide_index, k.item_index) === key);
+    if (!kw) return undefined;
+    const seed = (kw.keywords && kw.keywords[0]) || "";
+    if (!seed) return undefined;
+    try {
+      const res = await api.translateKeyword(seed, topic);
+      const plan: ItemQueryPlan = {
+        forms: (res.forms || {}) as ItemQueryPlan["forms"],
+        region_anchor: (res.region_anchor || {}) as ItemQueryPlan["region_anchor"],
+        desired_image_types: (res.desired_image_types || [])
+          .filter((t): t is ImageType => ALL_IMAGE_TYPES.includes(t as ImageType)),
+        excludes: res.excludes,
+        category: res.category,
+        country: res.country,
+        kind: res.kind,
+      };
+      setCellPlans((prev) => ({ ...prev, [key]: plan }));
+      return plan;
+    } catch {
+      return undefined;
+    }
+  }
+
+  function initialCellOptions(plan: ItemQueryPlan | undefined): CellSearchState {
+    return {
+      modifiers: plan?.desired_image_types ?? [],
+      regionAnchorEnabled: true,
+      customModifiers: [],
+    };
+  }
+
+  async function searchCellWithPlan(key: ImageKey, plan: ItemQueryPlan, opts: CellSearchState) {
+    const kw = imageKeywords.find((k) => imageKey(k.slide_index, k.item_index) === key);
+    const country = kw?.country || plan.country || "kr";
+    const style = (kw?.style as "photo" | "icon" | "cutout") || "photo";
+    const entries = buildQueries(plan, {
+      modifiers: opts.modifiers,
+      regionAnchorEnabled: opts.regionAnchorEnabled,
+      customModifiers: opts.customModifiers,
+    });
+    // Cap to first ~8 priority entries — usually saturates 16-slot grid and
+    // keeps request fan-out reasonable (8 × providers).
+    const top = entries.slice(0, 8);
+    if (top.length === 0) return;
+    const perQuery = await Promise.all(
+      top.map(async (e) => {
+        try {
+          const res = await api.searchImages(e.q, style, 12, country);
+          return res.images.map((img) => ({ ...img, _query: e.q }));
+        } catch {
+          return [];
+        }
+      }),
+    );
+    const merged: (ImageResult & { _query?: string })[] = [];
+    const seen = new Set<string>();
+    const maxLen = Math.max(0, ...perQuery.map((r) => r.length));
+    for (let i = 0; i < maxLen; i++) {
+      for (const list of perQuery) {
+        const img = list[i];
+        if (!img) continue;
+        const dk = img.url || img.preview_url || img.id;
+        if (seen.has(dk)) continue;
+        seen.add(dk);
+        merged.push({ ...img, id: `c${Date.now()}-${merged.length}-${img.source}-${img.url.slice(-12)}` });
+      }
+    }
+    setSlideImages((prev) => ({ ...prev, [key]: merged.slice(0, 16) }));
+  }
+
+  function scheduleCellResearch(key: ImageKey) {
+    const t = cellResearchTimers.current[key];
+    if (t) clearTimeout(t);
+    cellResearchTimers.current[key] = setTimeout(async () => {
+      setCellOptionsLoading((p) => new Set(p).add(key));
+      try {
+        const plan = await ensureCellPlan(key);
+        if (!plan) return;
+        const opts = cellOptions[key] || initialCellOptions(plan);
+        await searchCellWithPlan(key, plan, opts);
+      } finally {
+        setCellOptionsLoading((p) => { const n = new Set(p); n.delete(key); return n; });
+      }
+    }, 500);
+  }
+
+  function onCellOptionsChange(key: ImageKey, next: CellSearchState) {
+    setCellOptions((prev) => ({ ...prev, [key]: next }));
+    scheduleCellResearch(key);
+  }
+
+  function applyCellOptionsBelow(currentKey: ImageKey) {
+    const opts = cellOptions[currentKey];
+    if (!opts) return;
+    const allKeys = imageKeywords.map((k) => imageKey(k.slide_index, k.item_index));
+    const idx = allKeys.indexOf(currentKey);
+    if (idx < 0) return;
+    const below = allKeys.slice(idx + 1);
+    setCellOptions((prev) => {
+      const next = { ...prev };
+      for (const k of below) next[k] = { ...opts };
+      return next;
+    });
+    for (const k of below) scheduleCellResearch(k);
+  }
+
+  // Lazy-load ItemQueryPlan for every cell once image_keywords are ready —
+  // populates default modifier selections + region_anchor for the UI.
+  useEffect(() => {
+    if (imageKeywords.length === 0) return;
+    for (const kw of imageKeywords) {
+      const k = imageKey(kw.slide_index, kw.item_index);
+      if (cellPlans[k]) continue;
+      void ensureCellPlan(k);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageKeywords]);
 
   async function restyleSelected(key: ImageKey) {
     const img = selectedImages[key];
@@ -1769,6 +1911,25 @@ export default function CreatePage() {
                             </div>
                           </div>
                         )}
+
+                        {/* Cell search options — modifier chips + region toggle + custom
+                            input + "↓ 이후 셀에 적용" 버튼 (feedback #15-16). */}
+                        {(() => {
+                          const allKeys = imageKeywords.map((k) => imageKey(k.slide_index, k.item_index));
+                          const here = allKeys.indexOf(key);
+                          const hasBelow = here >= 0 && here < allKeys.length - 1;
+                          const plan = cellPlans[key];
+                          const state = cellOptions[key] || initialCellOptions(plan);
+                          return (
+                            <CellSearchOptions
+                              plan={plan}
+                              state={state}
+                              loading={cellOptionsLoading.has(key)}
+                              onChange={(next) => onCellOptionsChange(key, next)}
+                              onApplyBelow={hasBelow ? () => applyCellOptionsBelow(key) : undefined}
+                            />
+                          );
+                        })()}
 
                         {/* Re-search row — type a different keyword if the auto-results miss. */}
                         {(() => {

@@ -819,26 +819,77 @@ async def translate_keyword_endpoint(
     ctx = (body.context or "").strip()
     ctx_line = f"전체 캐러셀 주제 컨텍스트: {ctx!r}\n\n" if ctx else ""
 
+    # Feedback #15-16: 이미지 검색 정확도 개선을 위한 구조화된 query plan 출력.
+    # 기존 (kind/queries/country)는 백워드 호환으로 유지하고, 새로 다음을 추가:
+    #   forms                 — 언어별 이름 표기 (한국어 + 현지어 + 영문/로마자)
+    #   region_anchor         — 언어별 지역 앵커 (place 계열만, 없으면 빈 객체)
+    #   category              — 세부 카테고리 ("ramen restaurant", "tokyo neighborhood" 등)
+    #   desired_image_types   — 검색에 바이어스 줄 이미지 타입 (food/exterior/scene 등)
+    #   excludes              — 디스카운트 대상 (map/menu_board/logo 등)
+    # `queries`는 forms + region_anchor + default modifier로 코드가 합성 가능하지만
+    # 호환 편의상 LLM이 함께 생성한다.
     prompt = (
-        f"한국어 이미지 검색 키워드를 받아 (1) 장소인지 일반(제품/개념)인지 분류하고 "
-        f"(2) 검색에 쓸 다국어 변형을 생성합니다.\n\n"
+        f"한국어 이미지 검색 키워드를 받아 구조화된 query plan을 생성합니다.\n\n"
         f"{ctx_line}"
-        f"# 분류 규칙\n"
-        f"- **place**: 카페, 식당, 공원, 거리, 호텔, 명소, 동네, 가게, 상점, 시장 등 위치에 묶인 것\n"
-        f"- **general**: 제품, 과자, 화장품, 의류, 책, 가전, 일반 명사 등 어디서나 팔리는 것 / 추상 개념\n\n"
-        f"# 변형 생성 규칙\n"
-        f"- place 인 경우: 반드시 도시명 포함. native(현지 언어 표기) → en(영문) → ko(원문) 순으로 queries 배열\n"
-        f"- general 인 경우: 브랜드/제품명 그대로(번역 X). 도시 제외. ko → en → native 순\n"
-        f"- 브랜드명·고유명사는 어느 언어에서든 원래 표기 유지 (예: KINJI는 모든 언어에서 KINJI)\n"
-        f"- 일본 → native는 漢字·かな, 프랑스 → French, 한국 → 한국어, 영어권 → English\n\n"
+        f"# kind 분류\n"
+        f"- **place**: 카페·식당·공원·거리·호텔·명소·동네·가게·상점·시장 등 위치에 묶인 것\n"
+        f"- **general**: 제품·과자·화장품·의류·책·가전·일반 명사·추상 개념 등 위치 무관\n\n"
+        f"# forms — 언어별 이름 표기 (sparse, 해당 없는 key 생략)\n"
+        f"  ko: 한국어 표기 (거의 항상)\n"
+        f"  ja: 일본어 origin이면 한자/가나 표기\n"
+        f"  zh: 중국어 origin이면 한자 표기\n"
+        f"  en: 영문/로마자 (브랜드, 글로벌 키워드, 비라틴 origin의 로마자)\n"
+        f"  → 한국 origin은 ko + (en 있을 때만), 일본/중국 origin은 ko + 현지어 + en 셋 다\n\n"
+        f"# region_anchor — 언어별 지역 앵커\n"
+        f"  place 계열(restaurant/cafe/landmark/place 등)만 채움, 그 외는 빈 객체 {{}}\n"
+        f"  forms 와 동일한 언어 키를 사용 (ko='도쿄', ja='東京', en='Tokyo')\n"
+        f"  region은 city/metropolitan 수준 (도쿄·오사카·서울·파리). 너무 좁은 동네(도톤보리)는 X\n\n"
+        f"# category — 구체 카테고리\n"
+        f"  예: 'ramen restaurant' · 'tokyo neighborhood' · 'office lunch box' · 'vacuum cleaner'\n\n"
+        f"# desired_image_types — 검색에 어떤 사진을 원하는지 (배열)\n"
+        f"  enum: food | exterior | interior | landmark | scene | ambiance | product\n"
+        f"  카테고리에서 자연스러운 1~3개. 예: restaurant=[food,exterior], landmark=[landmark,scene],\n"
+        f"  neighborhood=[scene,ambiance,exterior], cafe=[interior,exterior,ambiance], product=[product]\n\n"
+        f"# excludes — 디스카운트 대상\n"
+        f"  enum: map | menu_board | logo | coupon | ad | face_centric\n"
+        f"  place류는 기본 [map,menu_board,logo,coupon] 권장\n\n"
+        f"# queries (백워드 호환) — 위 forms + region_anchor 로 만든 검색어 3~5개\n"
+        f"  place: 현지어 → en → ko 순. 각 form에 region_anchor를 자연 어순으로 결합\n"
+        f"  general: ko → en → 현지어 순. 도시 X\n\n"
+        f"# country — ISO2 (kr|jp|fr|us|cn|...)\n\n"
         f"# 출력 (단일 JSON 객체만)\n"
-        f'  {{"kind": "place" | "general", "queries": ["...", "...", "..."], "country": "kr|jp|fr|us|..."}}\n\n'
+        f'{{"kind":"place|general","forms":{{...}},"region_anchor":{{...}},'
+        f'"category":"...","desired_image_types":[...],"excludes":[...],'
+        f'"queries":[...],"country":"..."}}\n\n'
         f"# 예시\n"
-        f'  입력: "도쿄 요요기 공원" → {{"kind":"place","queries":["東京 代々木公園","tokyo yoyogi park","도쿄 요요기 공원"],"country":"jp"}}\n'
-        f'  입력: "하라주쿠 KINJI 빈티지샵" → {{"kind":"place","queries":["原宿 KINJI 古着屋","harajuku KINJI vintage store","하라주쿠 KINJI 빈티지샵"],"country":"jp"}}\n'
-        f'  입력: "메이지 아폴로 초콜릿" → {{"kind":"general","queries":["메이지 아폴로 초콜릿","meiji apollo chocolate","明治 アポロ チョコレート"],"country":"jp"}}\n'
-        f'  입력: "코알라 노마치" → {{"kind":"general","queries":["코알라 노마치","koala no march","コアラのマーチ"],"country":"jp"}}\n'
-        f'  입력: "파리 Café de Flore" → {{"kind":"place","queries":["Paris Café de Flore Saint-Germain","paris cafe de flore","파리 Café de Flore 생제르맹"],"country":"fr"}}\n\n'
+        f'  입력: "도쿄 요요기 공원" →\n'
+        f'    {{"kind":"place",\n'
+        f'     "forms":{{"ko":"요요기 공원","ja":"代々木公園","en":"Yoyogi Park"}},\n'
+        f'     "region_anchor":{{"ko":"도쿄","ja":"東京","en":"Tokyo"}},\n'
+        f'     "category":"tokyo park","desired_image_types":["scene","landmark","ambiance"],\n'
+        f'     "excludes":["map","logo"],\n'
+        f'     "queries":["東京 代々木公園","Yoyogi Park Tokyo","도쿄 요요기 공원"],"country":"jp"}}\n'
+        f'  입력: "하라주쿠 KINJI 빈티지샵" →\n'
+        f'    {{"kind":"place",\n'
+        f'     "forms":{{"ko":"하라주쿠 KINJI 빈티지샵","ja":"原宿 KINJI 古着屋","en":"Harajuku KINJI vintage store"}},\n'
+        f'     "region_anchor":{{"ko":"도쿄","ja":"東京","en":"Tokyo"}},\n'
+        f'     "category":"vintage store","desired_image_types":["exterior","interior"],\n'
+        f'     "excludes":["map","logo","menu_board"],\n'
+        f'     "queries":["東京 原宿 KINJI 古着屋","Harajuku KINJI vintage store Tokyo","도쿄 하라주쿠 KINJI 빈티지샵"],"country":"jp"}}\n'
+        f'  입력: "메이지 아폴로 초콜릿" →\n'
+        f'    {{"kind":"general",\n'
+        f'     "forms":{{"ko":"메이지 아폴로 초콜릿","ja":"明治 アポロ チョコレート","en":"meiji apollo chocolate"}},\n'
+        f'     "region_anchor":{{}},\n'
+        f'     "category":"chocolate product","desired_image_types":["product"],\n'
+        f'     "excludes":[],\n'
+        f'     "queries":["메이지 아폴로 초콜릿","meiji apollo chocolate","明治 アポロ チョコレート"],"country":"jp"}}\n'
+        f'  입력: "기요스미시라카와" (컨텍스트: 도쿄 로컬 동네 카드뉴스) →\n'
+        f'    {{"kind":"place",\n'
+        f'     "forms":{{"ko":"기요스미시라카와","ja":"清澄白河","en":"Kiyosumi-Shirakawa"}},\n'
+        f'     "region_anchor":{{"ko":"도쿄","ja":"東京","en":"Tokyo"}},\n'
+        f'     "category":"tokyo neighborhood","desired_image_types":["scene","ambiance","exterior"],\n'
+        f'     "excludes":["map","logo","menu_board"],\n'
+        f'     "queries":["東京 清澄白河","Kiyosumi-Shirakawa Tokyo","도쿄 기요스미시라카와"],"country":"jp"}}\n\n'
         f'입력: "{q}"\n출력:'
     )
     try:
@@ -869,11 +920,71 @@ async def translate_keyword_endpoint(
         if not queries:
             queries = [q]
         country = (str(data_obj.get("country") or "").strip().lower()) or "kr"
-        return {"kind": kind, "queries": queries, "country": country}
+
+        # Feedback #15-16: structured query plan fields. All optional — frontend
+        # falls back gracefully if missing. Validate shapes so a malformed LLM
+        # response doesn't poison the cell state downstream.
+        def _str_dict(v: object) -> dict[str, str]:
+            if not isinstance(v, dict):
+                return {}
+            out: dict[str, str] = {}
+            for k, val in v.items():
+                ks = str(k or "").strip().lower()
+                vs = str(val or "").strip()
+                if ks and vs:
+                    out[ks] = vs
+            return out
+
+        def _str_list(v: object, allowed: set[str] | None = None) -> list[str]:
+            if not isinstance(v, list):
+                return []
+            out: list[str] = []
+            for item in v:
+                s = str(item or "").strip().lower()
+                if not s:
+                    continue
+                if allowed is not None and s not in allowed:
+                    continue
+                if s not in out:
+                    out.append(s)
+            return out
+
+        forms = _str_dict(data_obj.get("forms"))
+        region_anchor = _str_dict(data_obj.get("region_anchor"))
+        category = str(data_obj.get("category") or "").strip()
+        desired_image_types = _str_list(
+            data_obj.get("desired_image_types"),
+            allowed={"food", "exterior", "interior", "landmark", "scene", "ambiance", "product"},
+        )
+        excludes = _str_list(
+            data_obj.get("excludes"),
+            allowed={"map", "menu_board", "logo", "coupon", "ad", "face_centric"},
+        )
+
+        return {
+            "kind": kind,
+            "queries": queries,
+            "country": country,
+            "forms": forms,
+            "region_anchor": region_anchor,
+            "category": category,
+            "desired_image_types": desired_image_types,
+            "excludes": excludes,
+        }
     except Exception as e:
         logger.exception("translate-keyword failed")
         # Defensive fallback — keep the original Korean as the single query.
-        return {"kind": "general", "queries": [q], "country": "kr", "fallback_reason": str(e)[:120]}
+        return {
+            "kind": "general",
+            "queries": [q],
+            "country": "kr",
+            "forms": {"ko": q},
+            "region_anchor": {},
+            "category": "",
+            "desired_image_types": [],
+            "excludes": [],
+            "fallback_reason": str(e)[:120],
+        }
 
 
 class ParaphraseRequest(BaseModel):

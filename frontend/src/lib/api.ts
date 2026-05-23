@@ -351,6 +351,25 @@ class ApiClient {
     return this.fetch(`/users/${id}`, { method: "DELETE" });
   }
 
+  // Login event audit log (admin-only) — backs the "로그인 기록" admin tab.
+  async listLoginEvents(params?: { user_id?: number; limit?: number; days?: number }) {
+    const qs = new URLSearchParams();
+    if (params?.user_id !== undefined) qs.set("user_id", String(params.user_id));
+    if (params?.limit !== undefined) qs.set("limit", String(params.limit));
+    if (params?.days !== undefined) qs.set("days", String(params.days));
+    const tail = qs.toString();
+    return this.fetch<{
+      events: {
+        id: number;
+        user_id: number;
+        username: string;
+        ip: string;
+        user_agent: string;
+        occurred_at: string;
+      }[];
+    }>(`/auth/login-events${tail ? `?${tail}` : ""}`);
+  }
+
   // App settings (admin only)
   async getSettings() {
     return this.fetch<{
@@ -431,8 +450,22 @@ class ApiClient {
     });
   }
 
+  // /translate-keyword returns an ItemQueryPlan: structured keyword data the
+  // image-picker uses to build cell-specific search queries. Feedback #15-16.
+  // `kind` / `queries` / `country` stay for backward compat; `forms` /
+  // `region_anchor` / `category` / `desired_image_types` / `excludes` drive the
+  // new per-cell modifier UI.
   async translateKeyword(query: string, context = "") {
-    return this.fetch<{ kind: "place" | "general"; queries: string[]; country: string }>("/carousels/translate-keyword", {
+    return this.fetch<{
+      kind: "place" | "general";
+      queries: string[];
+      country: string;
+      forms?: Partial<Record<"ko" | "ja" | "zh" | "en", string>>;
+      region_anchor?: Partial<Record<"ko" | "ja" | "zh" | "en", string>>;
+      category?: string;
+      desired_image_types?: string[];
+      excludes?: string[];
+    }>("/carousels/translate-keyword", {
       method: "POST",
       body: JSON.stringify({ query, context }),
     });

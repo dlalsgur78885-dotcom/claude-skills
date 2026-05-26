@@ -220,23 +220,57 @@ export function GradientBarEditor({
             cursor: "copy", touchAction: "none",
           }}
         >
-          {stops.map((s, i) => (
-            <div
-              key={i}
-              onPointerDown={(e) => startDrag(i, e)}
-              title={`${Math.round(s.position * 100)}%`}
-              style={{
-                position: "absolute", left: `${s.position * 100}%`, top: "50%",
-                width: 16, height: 16, borderRadius: "50%",
-                background: mergeColor(s.color, s.opacity),
-                border: `2px solid ${i === selIdx ? "var(--accent)" : "#fff"}`,
-                boxShadow: "0 0 0 1px rgba(0,0,0,0.4)",
-                transform: `translate(-50%,-50%) scale(${i === selIdx ? 1.18 : 1})`,
-                zIndex: i === selIdx ? 2 : 1,
-                cursor: "grab", touchAction: "none",
-              }}
-            />
-          ))}
+          {stops.map((s, i) => {
+            const isSel = i === selIdx;
+            const canDelete = stops.length > 2;
+            return (
+              <div
+                key={i}
+                onPointerDown={(e) => startDrag(i, e)}
+                title={`${Math.round(s.position * 100)}%`}
+                style={{
+                  position: "absolute", left: `${s.position * 100}%`, top: "50%",
+                  width: 16, height: 16, borderRadius: "50%",
+                  background: mergeColor(s.color, s.opacity),
+                  border: `2px solid ${isSel ? "var(--accent)" : "#fff"}`,
+                  boxShadow: "0 0 0 1px rgba(0,0,0,0.4)",
+                  transform: `translate(-50%,-50%) scale(${isSel ? 1.18 : 1})`,
+                  zIndex: isSel ? 2 : 1,
+                  cursor: "grab", touchAction: "none",
+                }}
+              >
+                {isSel && canDelete && (
+                  <button
+                    type="button"
+                    aria-label="스톱 삭제"
+                    title="스톱 삭제"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeSel();
+                    }}
+                    style={{
+                      position: "absolute",
+                      left: "50%",
+                      bottom: "calc(100% + 4px)",
+                      transform: "translateX(-50%) scale(0.847)",
+                      width: 16, height: 16, padding: 0,
+                      borderRadius: "50%",
+                      background: "#1a1a1a",
+                      color: "#fff",
+                      border: "1px solid #fff",
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.5)",
+                      fontSize: 11, lineHeight: 1,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      cursor: "pointer",
+                    }}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 

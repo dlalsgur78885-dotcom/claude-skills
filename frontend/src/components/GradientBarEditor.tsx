@@ -291,7 +291,9 @@ export function GradientBarEditor({
           onPointerDown={addAt}
           style={{
             position: "relative", height: 22, borderRadius: 5,
-            background: `linear-gradient(to right, ${cssBar})`,
+            // Preview bar reflects the live angle so the user can see what the
+            // shape will actually look like — req #7/#9 in 피드백 #10 slide 1.
+            background: `linear-gradient(${angle}deg, ${cssBar})`,
             cursor: "copy", touchAction: "none",
           }}
         >

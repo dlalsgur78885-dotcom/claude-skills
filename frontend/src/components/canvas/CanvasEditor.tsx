@@ -5,6 +5,7 @@ import { ToolPanel } from "./ToolPanel";
 import { PropertyPanel } from "./PropertyPanel";
 import { SlideNavigator } from "./SlideNavigator";
 import { CanvasRuler } from "./CanvasRuler";
+import { createGuideObject, isGuide, guidePosition, reapplyGuideConfig, GUIDE_KIND, GUIDE_COLOR, SNAP_IN_PX as GUIDE_SNAP_IN } from "./guides";
 import { createCoverSlide, createEmptySlide, createCtaSlide } from "@/lib/canvas-utils";
 import { api, proxiedImageUrl, resolveImageUrl } from "@/lib/api";
 import { getFabric } from "@/lib/fabric";
@@ -223,6 +224,17 @@ export function CanvasEditor({
   const canvasViewportRef = useRef<HTMLDivElement>(null);
   // Ruler overlay (눈금자) along the page edges — feedback slide 5. Default on.
   const [rulerVisible, setRulerVisible] = useState(true);
+  // User-drawn guides (안내선) — feedback PPT #8 slide 4. Visibility is a UI-only
+  // toggle (objects stay in fabric, just hidden); lock disables interaction so
+  // the user can't accidentally move them while still seeing alignment hints.
+  const [guidesVisible, setGuidesVisible] = useState(true);
+  const [guidesLocked, setGuidesLocked] = useState(false);
+  // Tooltip rendered next to the ruler when the user hovers/drags a guide —
+  // shows the live px position. null when no guide is being interacted with.
+  const [guideTooltip, setGuideTooltip] = useState<
+    | { axis: "x" | "y"; value: number }
+    | null
+  >(null);
   // Viewport size in screen px — fed to <CanvasRuler> so the rulers can pin to
   // the workspace edges (slide 3 feedback) while still numbering ticks against
   // canvas-local coords. Updated by a ResizeObserver below.
@@ -856,6 +868,10 @@ export function CanvasEditor({
         // want to wrestle with; skip snapping in that case.
         const t = (obj.type || "").toLowerCase();
         if (t === "activeselection" || t === "group") return;
+        // User guides drag along their own axis with their own snap-to-page
+        // edges logic below. Don't run the object→object snap on them — they
+        // should slide freely.
+        if (isGuide(obj)) return;
 
         clearSnapGuides();
 
@@ -1125,6 +1141,10 @@ export function CanvasEditor({
         const fabric = await getFabric();
         ensurePageBoundary(canvas, fabric, pageW, pageH, bgFill);
         markBackdropObjects(canvas);
+        // User-drawn guides survive the toJSON round-trip via their `data`
+        // tag, but the lockMovement* / hasControls flags don't — restamp.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const o of canvas.getObjects() as any[]) if (isGuide(o)) reapplyGuideConfig(o);
         canvas.renderAll();
         lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
         if (myToken === loadTokenRef.current) loadingRef.current = false;
@@ -2173,6 +2193,231 @@ export function CanvasEditor({
     saveCurrentSlide();
   }
 
+  // ─── User guides (안내선) — feedback PPT #8 slide 4 ───
+  //
+  // Each guide is a fabric.Line tagged with data.kind === GUIDE_KIND. Storage,
+  // selection, undo all reuse the existing object pipeline. Guide-specific
+  // behaviors that the generic pipeline doesn't give us for free:
+  //  • create-from-ruler — pointer drag from the top/left strip
+  //  • drag-off-page → delete (mirrors how Figma releases guides)
+  //  • live px tooltip during hover/drag
+  //  • snap moving objects to guide positions (within 8px)
+  //  • visibility + lock toggles applied to every guide at once
+
+  /** Apply the current visibility / lock state to every guide on the canvas. */
+  const applyGuideState = useCallback(() => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    for (const o of canvas.getObjects()) {
+      if (!isGuide(o)) continue;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const g = o as any;
+      g.visible = guidesVisible;
+      // When hidden OR locked, dial down interactivity. Hidden guides
+      // shouldn't grab clicks; locked guides stay visible but un-draggable.
+      g.selectable = guidesVisible && !guidesLocked;
+      g.evented = guidesVisible && !guidesLocked;
+    }
+    canvas.requestRenderAll();
+  }, [guidesVisible, guidesLocked]);
+
+  useEffect(() => { applyGuideState(); }, [applyGuideState]);
+
+  // Convert a window-space pointer position into design-space coords using
+  // the current pan/zoom/viewport. Mirrors the origin math in CanvasRuler.
+  function viewportToDesign(clientX: number, clientY: number): { dx: number; dy: number } | null {
+    const viewportEl = canvasViewportRef.current;
+    if (!viewportEl) return null;
+    const vRect = viewportEl.getBoundingClientRect();
+    const vx = clientX - vRect.left;
+    const vy = clientY - vRect.top;
+    const scale = DISPLAY_MAX / Math.max(canvasW, canvasH);
+    const wrapperW = (canvasW + 2 * PAGE_PAD) * scale;
+    const wrapperH = (canvasH + 2 * PAGE_PAD) * scale;
+    const originX = viewportSize.w / 2 - wrapperW / 2 + PAGE_PAD * scale + pan.x;
+    const originY = viewportSize.h / 2 - wrapperH / 2 + PAGE_PAD * scale + pan.y;
+    const pxPerUnit = zoom * scale;
+    return { dx: (vx - originX) / pxPerUnit, dy: (vy - originY) / pxPerUnit };
+  }
+
+  /** Pointer-down on a ruler strip starts a drag-to-create flow. A DOM ghost
+   *  line follows the cursor; on release inside the page area we materialise a
+   *  fabric guide at the dropped design coordinate. Cancel = drop outside. */
+  function handleGuideDragStart(axis: "x" | "y", e: React.PointerEvent) {
+    const canvas = fabricRef.current;
+    const viewportEl = canvasViewportRef.current;
+    if (!canvas || !viewportEl) return;
+    if (guidesLocked) return; // creating from a locked state would surprise the user
+    e.preventDefault();
+
+    // Ghost line: a 1px DOM div that snaps to the cursor's perpendicular axis.
+    // Created lazily so we don't litter the DOM if the user clicks without
+    // dragging. Lives inside the viewport so it shares its coordinate frame.
+    const ghost = document.createElement("div");
+    ghost.style.cssText = [
+      "position: absolute",
+      `background: ${GUIDE_COLOR}`,
+      "pointer-events: none",
+      "z-index: 100",
+      "opacity: 0.85",
+      axis === "x"
+        ? "width: 1px; top: 0; bottom: 0"
+        : "height: 1px; left: 0; right: 0",
+    ].join(";");
+    viewportEl.appendChild(ghost);
+
+    function update(clientX: number, clientY: number) {
+      const vRect = viewportEl!.getBoundingClientRect();
+      const vx = clientX - vRect.left;
+      const vy = clientY - vRect.top;
+      if (axis === "x") ghost.style.left = `${vx}px`;
+      else ghost.style.top = `${vy}px`;
+      const d = viewportToDesign(clientX, clientY);
+      if (d) setGuideTooltip({ axis, value: Math.round(axis === "x" ? d.dx : d.dy) });
+    }
+
+    function move(ev: PointerEvent) { update(ev.clientX, ev.clientY); }
+    function up(ev: PointerEvent) {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      viewportEl!.removeChild(ghost);
+      setGuideTooltip(null);
+      const d = viewportToDesign(ev.clientX, ev.clientY);
+      if (!d) return;
+      const pos = axis === "x" ? d.dx : d.dy;
+      const limit = axis === "x" ? canvasW : canvasH;
+      if (pos < 0 || pos > limit) return; // dropped outside the page → cancel
+      getFabric().then((fabric) => {
+        const guide = createGuideObject(fabric, axis, Math.round(pos), canvasW, canvasH);
+        guide.visible = guidesVisible;
+        guide.selectable = guidesVisible && !guidesLocked;
+        guide.evented = guidesVisible && !guidesLocked;
+        pushUndo();
+        canvas.add(guide);
+        canvas.bringObjectToFront(guide);
+        canvas.requestRenderAll();
+        saveCurrentSlide();
+      });
+    }
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    update(e.clientX, e.clientY);
+  }
+
+  // Guide-specific canvas event wiring: live snap to guides while dragging
+  // other objects, off-page drag → delete on release, and the hover/drag
+  // tooltip that surfaces the guide's current px position.
+  useEffect(() => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    function onMoving(e: any) {
+      const obj = e.target;
+      if (!obj) return;
+      if (isGuide(obj)) {
+        // Update tooltip live while the user drags the guide. Constrain to
+        // the page (avoids the line escaping the visible canvas mid-drag).
+        const axis: "x" | "y" = obj.data?.axis === "y" ? "y" : "x";
+        if (axis === "x") {
+          obj.set("left", Math.max(-50, Math.min(canvasW + 50, obj.left || 0)));
+        } else {
+          obj.set("top", Math.max(-50, Math.min(canvasH + 50, obj.top || 0)));
+        }
+        setGuideTooltip({ axis, value: guidePosition(obj) });
+        return;
+      }
+      // Non-guide object — snap each of its edges/center to the closest guide
+      // within SNAP_IN_PX (design coords). The existing object↔object snap
+      // (above) already adds guides to `others`, but its bbox-based math is
+      // imprecise for 1px line objects; this loop is the authoritative one.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const guides = (canvas.getObjects() as any[]).filter(isGuide).filter((g) => g.visible !== false);
+      if (guides.length === 0) return;
+      const r = obj.getBoundingRect();
+      const xRefs = [r.left, r.left + r.width / 2, r.left + r.width];
+      const yRefs = [r.top, r.top + r.height / 2, r.top + r.height];
+      let bestDx: number | null = null;
+      let bestDy: number | null = null;
+      for (const g of guides) {
+        const p = guidePosition(g);
+        const refs = g.data.axis === "x" ? xRefs : yRefs;
+        for (const ref of refs) {
+          const d = p - ref;
+          if (Math.abs(d) <= GUIDE_SNAP_IN) {
+            if (g.data.axis === "x") {
+              if (bestDx === null || Math.abs(d) < Math.abs(bestDx)) bestDx = d;
+            } else {
+              if (bestDy === null || Math.abs(d) < Math.abs(bestDy)) bestDy = d;
+            }
+          }
+        }
+      }
+      if (bestDx !== null) obj.set("left", (obj.left || 0) + bestDx);
+      if (bestDy !== null) obj.set("top", (obj.top || 0) + bestDy);
+      if (bestDx !== null || bestDy !== null) {
+        obj.setCoords();
+        canvas.requestRenderAll();
+      }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    function onModified(e: any) {
+      const obj = e.target;
+      if (!isGuide(obj)) return;
+      const axis: "x" | "y" = obj.data?.axis === "y" ? "y" : "x";
+      const pos = guidePosition(obj);
+      const limit = axis === "x" ? canvasW : canvasH;
+      if (pos < 0 || pos > limit) {
+        canvas.remove(obj);
+        canvas.requestRenderAll();
+      }
+      setGuideTooltip(null);
+      saveCurrentSlide();
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    function onOver(e: any) {
+      const obj = e.target;
+      if (!isGuide(obj)) return;
+      setGuideTooltip({ axis: obj.data.axis, value: guidePosition(obj) });
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    function onOut(e: any) {
+      const obj = e.target;
+      if (!isGuide(obj)) return;
+      // Don't drop the tooltip while a drag is still mid-flight.
+      if (canvas.getActiveObject() === obj) return;
+      setGuideTooltip(null);
+    }
+
+    canvas.on("object:moving", onMoving);
+    canvas.on("object:modified", onModified);
+    canvas.on("mouse:over", onOver);
+    canvas.on("mouse:out", onOut);
+    return () => {
+      canvas.off("object:moving", onMoving);
+      canvas.off("object:modified", onModified);
+      canvas.off("mouse:over", onOver);
+      canvas.off("mouse:out", onOut);
+    };
+  }, [canvasW, canvasH, saveCurrentSlide]);
+
+  /** Remove every guide at once — feedback req #12. */
+  function deleteAllGuides() {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const all = (canvas.getObjects() as any[]).filter(isGuide);
+    if (all.length === 0) return;
+    pushUndo();
+    for (const g of all) canvas.remove(g);
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+    saveCurrentSlide();
+  }
+
   // ─── Cutout (rembg background removal) ───
   // Track which fabric image is currently being processed so the panel can
   // disable the button + show a spinner state.
@@ -2614,6 +2859,12 @@ export function CanvasEditor({
         if (key === "0") {
           e.preventDefault();
           resetZoomPan();
+          return;
+        }
+        // Ctrl+; — toggle guide visibility (feedback slide 4 req #6)
+        if (key === ";" || e.code === "Semicolon") {
+          e.preventDefault();
+          setGuidesVisible((v) => !v);
           return;
         }
       }
@@ -4041,6 +4292,60 @@ export function CanvasEditor({
           눈금자
         </button>
 
+        {/* 안내선 group — visibility, lock, delete-all. Creation is via
+            drag-from-ruler; these three controls cover the rest of the
+            feedback (slide 4 req #6/#7/#12). */}
+        <div style={{ display: "inline-flex", alignItems: "stretch", border: `1px solid var(--border)`, borderRadius: 6, overflow: "hidden" }}>
+          <button
+            onClick={() => setGuidesVisible((v) => !v)}
+            title={`안내선 ${guidesVisible ? "숨김" : "표시"} (Ctrl+;)`}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 5,
+              padding: "6px 10px", fontSize: 12, fontWeight: 500,
+              color: guidesVisible ? "white" : "var(--text-secondary)",
+              background: guidesVisible ? "var(--accent)" : "transparent",
+              border: "none", cursor: "pointer",
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 8h16M4 16h16" strokeDasharray="3 2" />
+            </svg>
+            안내선
+          </button>
+          <button
+            onClick={() => setGuidesLocked((l) => !l)}
+            title={guidesLocked ? "안내선 잠금 해제" : "안내선 잠금"}
+            style={{
+              padding: "6px 8px", fontSize: 12,
+              color: guidesLocked ? "white" : "var(--text-secondary)",
+              background: guidesLocked ? "var(--accent)" : "transparent",
+              border: "none", borderLeft: "1px solid var(--border)", cursor: "pointer",
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              {guidesLocked ? (
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 11h14v10H5zM8 11V7a4 4 0 018 0v4" />
+              ) : (
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 11h14v10H5zM8 11V7a4 4 0 017.5-2" />
+              )}
+            </svg>
+          </button>
+          <button
+            onClick={deleteAllGuides}
+            title="모든 안내선 삭제"
+            style={{
+              padding: "6px 8px", fontSize: 12,
+              color: "var(--text-secondary)",
+              background: "transparent",
+              border: "none", borderLeft: "1px solid var(--border)", cursor: "pointer",
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m1 0v14a2 2 0 01-2 2H9a2 2 0 01-2-2V6" />
+            </svg>
+          </button>
+        </div>
+
         {onReapplyTemplate && (
           <>
             <div style={{ width: 1, height: 18, background: "var(--border)" }} />
@@ -4378,8 +4683,47 @@ export function CanvasEditor({
               panY={pan.y}
               viewportW={viewportSize.w}
               viewportH={viewportSize.h}
+              onGuideDragStart={handleGuideDragStart}
             />
           )}
+
+          {/* Guide position tooltip (hover/drag). Placed in viewport coords so
+              it tracks the cursor's design position even while the canvas is
+              zoomed or panned. Mirrors the ruler placement — `x` axis (vertical
+              guide) → tooltip near top ruler; `y` axis → near left ruler. */}
+          {rulerVisible && guideTooltip && (() => {
+            const scale = DISPLAY_MAX / Math.max(canvasW, canvasH);
+            const wrapperW = (canvasW + 2 * PAGE_PAD) * scale;
+            const wrapperH = (canvasH + 2 * PAGE_PAD) * scale;
+            const originX = viewportSize.w / 2 - wrapperW / 2 + PAGE_PAD * scale + pan.x;
+            const originY = viewportSize.h / 2 - wrapperH / 2 + PAGE_PAD * scale + pan.y;
+            const pxPerUnit = zoom * scale;
+            const left = guideTooltip.axis === "x"
+              ? Math.max(24, Math.min(viewportSize.w - 60, originX + guideTooltip.value * pxPerUnit + 4))
+              : 24;
+            const top = guideTooltip.axis === "x"
+              ? 2
+              : Math.max(24, Math.min(viewportSize.h - 24, originY + guideTooltip.value * pxPerUnit + 4));
+            return (
+              <div
+                style={{
+                  position: "absolute",
+                  left, top,
+                  padding: "2px 6px",
+                  fontSize: 10,
+                  fontFamily: "monospace",
+                  background: "var(--accent)",
+                  color: "white",
+                  borderRadius: 3,
+                  pointerEvents: "none",
+                  zIndex: 10,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {guideTooltip.axis}: {guideTooltip.value}px
+              </div>
+            );
+          })()}
 
           {/* Zoom control (bottom-right): −, editable %, +, reset. */}
           <div

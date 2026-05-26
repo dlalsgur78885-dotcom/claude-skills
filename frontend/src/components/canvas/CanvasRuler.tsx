@@ -46,6 +46,7 @@ export const CanvasRuler = memo(function CanvasRuler({
   panY,
   viewportW,
   viewportH,
+  onGuideDragStart,
 }: {
   pageW: number;
   pageH: number;
@@ -56,6 +57,10 @@ export const CanvasRuler = memo(function CanvasRuler({
   panY: number;
   viewportW: number;
   viewportH: number;
+  // Called when the user starts dragging from a ruler strip. Axis "x" = top
+  // ruler (creates a vertical guide), "y" = left ruler (horizontal guide).
+  // CanvasEditor tracks the drag and commits the guide on pointerup.
+  onGuideDragStart?: (axis: "x" | "y", e: React.PointerEvent) => void;
 }) {
   const pxPerUnit = zoom * scale; // screen px per design unit
   const major = niceInterval(pxPerUnit);
@@ -85,10 +90,15 @@ export const CanvasRuler = memo(function CanvasRuler({
   const strip: React.CSSProperties = {
     position: "absolute",
     background: BG,
-    pointerEvents: "none",
+    // Strips themselves catch pointer events so the user can drag a guide out
+    // of them; the inner SVG keeps pointer-events:none so ticks don't swallow
+    // the drag. The original strip was pointer-transparent to let canvas
+    // selection through — now only the SVG is.
+    pointerEvents: "auto",
     overflow: "hidden",
     zIndex: 3,
   };
+  const svgStyle: React.CSSProperties = { display: "block", pointerEvents: "none" };
 
   return (
     <>
@@ -107,6 +117,8 @@ export const CanvasRuler = memo(function CanvasRuler({
 
       {/* top ruler — pinned to workspace top, spans the full width */}
       <div
+        onPointerDown={(e) => onGuideDragStart?.("x", e)}
+        title="드래그하여 세로 안내선 추가"
         style={{
           ...strip,
           left: THICKNESS,
@@ -114,9 +126,10 @@ export const CanvasRuler = memo(function CanvasRuler({
           width: Math.max(0, viewportW - THICKNESS),
           height: THICKNESS,
           borderBottom: `1px solid ${LINE}`,
+          cursor: "ns-resize",
         }}
       >
-        <svg width={Math.max(viewportW - THICKNESS, 1)} height={THICKNESS} style={{ display: "block" }}>
+        <svg width={Math.max(viewportW - THICKNESS, 1)} height={THICKNESS} style={svgStyle}>
           {topTicks.map((t, i) => {
             // x is in strip-local coords — strip is offset by THICKNESS in
             // viewport, so subtract that from the viewport-space origin.
@@ -139,6 +152,8 @@ export const CanvasRuler = memo(function CanvasRuler({
 
       {/* left ruler — pinned to workspace left, spans the full height */}
       <div
+        onPointerDown={(e) => onGuideDragStart?.("y", e)}
+        title="드래그하여 가로 안내선 추가"
         style={{
           ...strip,
           left: 0,
@@ -146,9 +161,10 @@ export const CanvasRuler = memo(function CanvasRuler({
           width: THICKNESS,
           height: Math.max(0, viewportH - THICKNESS),
           borderRight: `1px solid ${LINE}`,
+          cursor: "ew-resize",
         }}
       >
-        <svg width={THICKNESS} height={Math.max(viewportH - THICKNESS, 1)} style={{ display: "block" }}>
+        <svg width={THICKNESS} height={Math.max(viewportH - THICKNESS, 1)} style={svgStyle}>
           {leftTicks.map((t, i) => {
             const y = originY - THICKNESS + t.u * pxPerUnit;
             if (y < -2 || y > viewportH - THICKNESS + 2) return null;

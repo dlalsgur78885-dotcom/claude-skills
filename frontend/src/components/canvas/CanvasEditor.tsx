@@ -3560,6 +3560,10 @@ export function CanvasEditor({
     // the dict into a fabric.Gradient so the canvas renders the gradient now,
     // and saveCurrentSlide() round-trips through fabric.toJSON cleanly.
     if (prop === "fill" && value && typeof value === "object" && (value.type === "linear" || Array.isArray(value.colorStops))) {
+      // The snapshot update at the end of this function runs synchronously, so
+      // it would capture the *previous* fill before the gradient applies. Snap
+      // inside the .then() instead — and bail out of the trailing default snap
+      // to avoid clobbering it.
       getFabric().then((fabric) => {
         const grad = new fabric.Gradient({
           type: "linear",
@@ -3570,7 +3574,14 @@ export function CanvasEditor({
         target.dirty = true;
         canvas.requestRenderAll();
         saveCurrentSlide();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const snap: any = { ...target };
+        snap.type = target.type;
+        snap.fill = target.fill;
+        snap.__fabricRef = target;
+        setSelectedObject(snap);
       });
+      return;
     } else if (prop === "strokeWidth" && !isTextbox && target.type !== "i-text") {
       // Outline-thickness change on a shape or image: keep the *visible*
       // center fixed by measuring the bounding rect before vs. after the

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { TransparentToggle, isTransparentValue } from "./TransparentToggle";
 import { ImageDropModal } from "./ImageDropModal";
 import { type UserFont } from "@/lib/fonts";
-import { GradientBarEditor, splitColor, mergeColor, type GradValue } from "@/components/GradientBarEditor";
+import { GradientBarEditor, splitColor, mergeColor, angleToCoords, coordsToAngle, type GradValue } from "@/components/GradientBarEditor";
 
 interface PropertyPanelProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -819,22 +819,12 @@ function GradientFillEditor({
   const stops: { offset: number; color: string }[] = isGradient
     ? (fill.colorStops || []).map((s: { offset: number; color: string }) => ({ offset: s.offset, color: s.color }))
     : [];
-  const dir: "vertical" | "horizontal" | "diagonal" = (() => {
-    if (!isGradient) return "vertical";
-    const c = fill.coords || {};
-    if ((c.x1 || 0) !== (c.x2 || 0) && (c.y1 || 0) !== (c.y2 || 0)) return "diagonal";
-    if ((c.x1 || 0) !== (c.x2 || 0)) return "horizontal";
-    return "vertical";
-  })();
+  const angle: number = isGradient ? coordsToAngle(fill.coords || {}) : 180;
 
-  function makeGradient(stopsIn: { offset: number; color: string }[], direction: string) {
+  function makeGradient(stopsIn: { offset: number; color: string }[], angleDeg: number) {
     const w = (selectedObject.width || 200) * (selectedObject.scaleX || 1);
     const h = (selectedObject.height || 200) * (selectedObject.scaleY || 1);
-    const coords =
-      direction === "horizontal" ? { x1: 0, y1: 0, x2: w, y2: 0 }
-      : direction === "diagonal" ? { x1: 0, y1: 0, x2: w, y2: h }
-      : { x1: 0, y1: 0, x2: 0, y2: h };
-    return { type: "linear", coords, colorStops: stopsIn };
+    return { type: "linear", coords: angleToCoords(angleDeg, w, h), colorStops: stopsIn };
   }
 
   function toggleGradient() {
@@ -846,14 +836,14 @@ function GradientFillEditor({
           { offset: 0, color: typeof fill === "string" ? fill : "#000000" },
           { offset: 1, color: "rgba(0,0,0,0)" },
         ],
-        "vertical",
+        180,
       ));
     }
   }
 
   // fabric colorStops <-> GradientBarEditor's normalised {color,opacity,position}.
   const gradValue: GradValue = {
-    direction: dir,
+    angle,
     stops: stops.map((s) => {
       const { hex, opacity } = splitColor(s.color);
       return { color: hex, opacity, position: s.offset };
@@ -861,7 +851,7 @@ function GradientFillEditor({
   };
   function applyGrad(v: GradValue) {
     const colorStops = v.stops.map((s) => ({ offset: s.position, color: mergeColor(s.color, s.opacity) }));
-    onUpdate("fill", makeGradient(colorStops, v.direction));
+    onUpdate("fill", makeGradient(colorStops, v.angle));
   }
 
   return (

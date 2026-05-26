@@ -43,10 +43,14 @@ export interface Background {
   direction?: "vertical" | "horizontal" | "diagonal" | null;
 }
 
-/** Linear-gradient fill (shape decorations only — image/text ignore). */
+/** Linear-gradient fill (shape decorations only — image/text ignore).
+ *  `angle` is the source-of-truth CSS-style angle (0°=up, 90°=right, etc.).
+ *  `direction` is kept for backward compat with templates authored before the
+ *  360° rotation control — renderer falls back to it when angle is absent. */
 export interface GradientFill {
   type: "linear";
-  direction: "vertical" | "horizontal" | "diagonal";
+  angle?: number;
+  direction?: "vertical" | "horizontal" | "diagonal";
   stops: { offset: number; color: string }[];
 }
 

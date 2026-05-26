@@ -6,6 +6,10 @@
 
 import { getFabric } from "@/lib/fabric";
 import type { LayoutSpec, BrandStyle, FabricMeta, ShadowSpec, TextStyle, Decoration, GradientFill } from "./types";
+import { angleToCoords } from "@/components/GradientBarEditor";
+
+// Direction enum → CSS angle for legacy templates without `angle`.
+const DIR_TO_ANGLE = { vertical: 180, horizontal: 90, diagonal: 135 } as const;
 
 const PLACEHOLDER_TITLE = "Title";
 const PLACEHOLDER_SUB = "subtitle";
@@ -81,13 +85,10 @@ function applyTextEffects(
 /** Build a fabric Gradient for shape decorations. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function buildGradient(fabric: any, spec: GradientFill, w: number, h: number) {
-  const coords =
-    spec.direction === "horizontal" ? { x1: 0, y1: 0, x2: w, y2: 0 }
-    : spec.direction === "diagonal" ? { x1: 0, y1: 0, x2: w, y2: h }
-    : { x1: 0, y1: 0, x2: 0, y2: h };
+  const angle = spec.angle ?? DIR_TO_ANGLE[spec.direction ?? "vertical"];
   return new fabric.Gradient({
     type: "linear",
-    coords,
+    coords: angleToCoords(angle, w, h),
     colorStops: spec.stops.map((s) => ({ offset: s.offset, color: s.color })),
   });
 }

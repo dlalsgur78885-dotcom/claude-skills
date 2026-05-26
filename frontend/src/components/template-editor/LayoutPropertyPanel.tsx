@@ -862,7 +862,9 @@ function GradientFillEditor({
   const isGradient = !!(fill && typeof fill === "object" && fill.type === "linear");
   const grad: GradientFill | null = isGradient ? (fill as GradientFill) : null;
   const stops = grad?.stops || [];
-  const dir = grad?.direction || "vertical";
+  // Read angle from the explicit field; fall back to the legacy direction enum
+  // so older templates (vertical/horizontal/diagonal) keep rendering correctly.
+  const angle = grad?.angle ?? ({ vertical: 180, horizontal: 90, diagonal: 135 }[grad?.direction ?? "vertical"]);
 
   function toggle() {
     if (isGradient) {
@@ -871,7 +873,7 @@ function GradientFillEditor({
     } else {
       const seed: GradientFill = {
         type: "linear",
-        direction: "vertical",
+        angle: 180,
         stops: [
           { offset: 0, color: typeof fill === "string" ? fill : "#000000" },
           { offset: 1, color: "rgba(0,0,0,0)" },
@@ -882,7 +884,7 @@ function GradientFillEditor({
   }
   // GradientFill <-> GradientBarEditor's normalised {color,opacity,position}.
   const gradValue: GradValue = {
-    direction: dir,
+    angle,
     stops: stops.map((s) => {
       const { hex, opacity } = splitColor(s.color);
       return { color: hex, opacity, position: s.offset };
@@ -891,7 +893,7 @@ function GradientFillEditor({
   function applyGrad(v: GradValue) {
     onChange(`${basePath}.fill`, {
       type: "linear",
-      direction: v.direction,
+      angle: v.angle,
       stops: v.stops.map((s) => ({ offset: s.position, color: mergeColor(s.color, s.opacity) })),
     } as GradientFill);
   }

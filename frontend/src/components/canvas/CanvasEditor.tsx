@@ -223,6 +223,19 @@ export function CanvasEditor({
   const canvasViewportRef = useRef<HTMLDivElement>(null);
   // Ruler overlay (눈금자) along the page edges — feedback slide 5. Default on.
   const [rulerVisible, setRulerVisible] = useState(true);
+  // Viewport size in screen px — fed to <CanvasRuler> so the rulers can pin to
+  // the workspace edges (slide 3 feedback) while still numbering ticks against
+  // canvas-local coords. Updated by a ResizeObserver below.
+  const [viewportSize, setViewportSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = canvasViewportRef.current;
+    if (!el) return;
+    const apply = () => setViewportSize({ w: el.clientWidth, h: el.clientHeight });
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Inline project-title rename in the top toolbar. Click the title to switch
   // into an input; Enter / blur commits via onRenameTitle, Esc cancels.
@@ -4353,16 +4366,20 @@ export function CanvasEditor({
             }}
           >
             <canvas ref={canvasRef} />
-            {rulerVisible && (
-              <CanvasRuler
-                pageW={canvasW}
-                pageH={canvasH}
-                zoom={zoom}
-                pad={PAGE_PAD}
-                scale={DISPLAY_MAX / Math.max(canvasW, canvasH)}
-              />
-            )}
           </div>
+          {rulerVisible && (
+            <CanvasRuler
+              pageW={canvasW}
+              pageH={canvasH}
+              zoom={zoom}
+              pad={PAGE_PAD}
+              scale={DISPLAY_MAX / Math.max(canvasW, canvasH)}
+              panX={pan.x}
+              panY={pan.y}
+              viewportW={viewportSize.w}
+              viewportH={viewportSize.h}
+            />
+          )}
 
           {/* Zoom control (bottom-right): −, editable %, +, reset. */}
           <div

@@ -239,6 +239,9 @@ export function CanvasEditor({
   // the workspace edges (slide 3 feedback) while still numbering ticks against
   // canvas-local coords. Updated by a ResizeObserver below.
   const [viewportSize, setViewportSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  // Flips true after the fabric canvas is constructed; dependent effects
+  // (guide event wiring) gate on this since fabricRef can't trigger re-runs.
+  const [fabricReady, setFabricReady] = useState(false);
   useEffect(() => {
     const el = canvasViewportRef.current;
     if (!el) return;
@@ -637,6 +640,10 @@ export function CanvasEditor({
       }
 
       fabricRef.current = canvas;
+      // Trigger dependent effects (guide event wiring, etc.) that need to wait
+      // for the fabric canvas to actually exist. fabricRef itself can't be in
+      // useEffect deps (refs don't trigger re-runs).
+      setFabricReady(true);
       // Expose the fabric canvas globally for E2E tests / debugging. Cheap,
       // harmless, and there's only ever one editor canvas on screen at a time.
       if (typeof window !== "undefined") {
@@ -2402,7 +2409,9 @@ export function CanvasEditor({
       canvas.off("mouse:over", onOver);
       canvas.off("mouse:out", onOut);
     };
-  }, [canvasW, canvasH, saveCurrentSlide]);
+    // fabricReady gates so the effect re-runs once the canvas is constructed
+    // (fabricRef.current can't trigger a re-run on its own).
+  }, [canvasW, canvasH, saveCurrentSlide, fabricReady]);
 
   /** Remove every guide at once — feedback req #12. */
   function deleteAllGuides() {

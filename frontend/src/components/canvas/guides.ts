@@ -32,7 +32,7 @@ export function createGuideObject(
       : [0, position, pageW, position]; // horizontal line, drag along Y
   const line = new fabric.Line(coords, {
     stroke: GUIDE_COLOR,
-    strokeWidth: 1,
+    strokeWidth: 3,
     strokeDashArray: undefined,
     // Movement axis: vertical guides slide horizontally, horizontal slide vertically.
     lockMovementX: axis === "y",
@@ -81,7 +81,7 @@ export function reapplyGuideConfig(line: any) {
   const axis: GuideAxis = line.data?.axis === "y" ? "y" : "x";
   line.set({
     stroke: GUIDE_COLOR,
-    strokeWidth: 1,
+    strokeWidth: 3,
     lockMovementX: axis === "y",
     lockMovementY: axis === "x",
     lockRotation: true,

@@ -9,7 +9,7 @@ import type { LayoutSpec, BrandStyle, FabricMeta, ShadowSpec, TextStyle, Decorat
 import { angleToCoords } from "@/components/GradientBarEditor";
 
 // Direction enum → CSS angle for legacy templates without `angle`.
-const DIR_TO_ANGLE = { vertical: 180, horizontal: 90, diagonal: 135 } as const;
+const DIR_TO_ANGLE: Record<string, number> = { vertical: 180, horizontal: 90, diagonal: 135 };
 
 const PLACEHOLDER_TITLE = "Title";
 const PLACEHOLDER_SUB = "subtitle";
@@ -153,16 +153,10 @@ export async function renderLayoutToCanvas(
     // Render as a linear gradient rect covering the canvas.
     const a = bg.color_a || "#FFFFFF";
     const b = bg.color_b || "#000000";
-    const dir = bg.direction || "vertical";
-    const coords =
-      dir === "horizontal"
-        ? { x1: 0, y1: 0, x2: canvasW * scale, y2: 0 }
-        : dir === "diagonal"
-        ? { x1: 0, y1: 0, x2: canvasW * scale, y2: canvasH * scale }
-        : { x1: 0, y1: 0, x2: 0, y2: canvasH * scale };
+    const angle = bg.angle ?? DIR_TO_ANGLE[bg.direction ?? "vertical"];
     const gradient = new fabric.Gradient({
       type: "linear",
-      coords,
+      coords: angleToCoords(angle, canvasW * scale, canvasH * scale),
       colorStops: [
         { offset: 0, color: a },
         { offset: 1, color: b },
@@ -232,11 +226,8 @@ export async function renderLayoutToCanvas(
 
   // 2. Background overlay — solid OR gradient
   if (bg?.overlay_kind === "gradient" && Array.isArray(bg.overlay_gradient_stops) && bg.overlay_gradient_stops.length >= 2) {
-    const dir = bg.overlay_gradient_direction || "vertical";
-    const coords =
-      dir === "horizontal" ? { x1: 0, y1: 0, x2: canvasW * scale, y2: 0 }
-      : dir === "diagonal" ? { x1: 0, y1: 0, x2: canvasW * scale, y2: canvasH * scale }
-      : { x1: 0, y1: 0, x2: 0, y2: canvasH * scale };
+    const angle = bg.overlay_gradient_angle ?? DIR_TO_ANGLE[bg.overlay_gradient_direction ?? "vertical"];
+    const coords = angleToCoords(angle, canvasW * scale, canvasH * scale);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const colorStops = bg.overlay_gradient_stops.map((s: any) => {
       const hex = (s.color || "#000000").replace("#", "");

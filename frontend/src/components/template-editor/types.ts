@@ -40,7 +40,16 @@ export interface Background {
   // Background-gradient fill — read by renderer.ts when type === "gradient".
   color_a?: string | null;
   color_b?: string | null;
+  // CSS-style angle (0=up, 90=right, 180=down, 270=left). Replaces the legacy
+  // direction enum — renderer reads angle if present, else maps direction.
+  angle?: number;
   direction?: "vertical" | "horizontal" | "diagonal" | null;
+  // Overlay layer drawn over the base background (color/image/gradient).
+  overlay_kind?: "solid" | "gradient" | null;
+  overlay_gradient_angle?: number;
+  overlay_gradient_direction?: "vertical" | "horizontal" | "diagonal" | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  overlay_gradient_stops?: any[] | null;
 }
 
 /** Linear-gradient fill (shape decorations only — image/text ignore).

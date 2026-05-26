@@ -40,6 +40,68 @@ const INPUT_STYLE: React.CSSProperties = {
   borderRadius: 5,
   outline: "none",
 };
+
+/** Compact 0~360° angle picker — rotary indicator + slider + number.
+ *  Used for background and overlay gradient direction (피드백 #10 slide 1).
+ *  Legacy `direction` enum is translated upstream via DIR_TO_ANGLE. */
+function AngleRow({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  const setNorm = (a: number) => onChange(((Math.round(a) % 360) + 360) % 360);
+  return (
+    <div>
+      <label style={LABEL_STYLE}>{label}</label>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div
+          title="드래그로 각도 조절"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            const el = e.currentTarget;
+            const compute = (ev: PointerEvent | React.PointerEvent) => {
+              const r = el.getBoundingClientRect();
+              const dx = ev.clientX - (r.left + r.width / 2);
+              const dy = ev.clientY - (r.top + r.height / 2);
+              setNorm((Math.atan2(dx, -dy) * 180) / Math.PI);
+            };
+            compute(e);
+            const move = (ev: PointerEvent) => compute(ev);
+            const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+            window.addEventListener("pointermove", move);
+            window.addEventListener("pointerup", up);
+          }}
+          style={{
+            width: 26, height: 26, borderRadius: "50%",
+            border: "1px solid var(--border)", background: "var(--bg-base)",
+            position: "relative", flexShrink: 0, cursor: "grab", touchAction: "none",
+          }}
+        >
+          <div style={{
+            position: "absolute", left: "50%", top: "50%",
+            width: 2, height: 11, background: "var(--accent)",
+            transformOrigin: "50% 100%",
+            transform: `translate(-50%, -100%) rotate(${value}deg)`,
+            borderRadius: 1,
+          }} />
+        </div>
+        <input
+          type="range" min={0} max={360} step={1}
+          value={value}
+          onChange={(e) => setNorm(Number(e.target.value))}
+          style={{ flex: 1, minWidth: 0 }}
+        />
+        <input
+          type="number" min={0} max={360} step={1}
+          value={value}
+          onChange={(e) => setNorm(Number(e.target.value))}
+          style={{ ...INPUT_STYLE, width: 50, padding: "4px 6px", textAlign: "right" }}
+        />
+        <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>°</span>
+      </div>
+    </div>
+  );
+}
+
+// Legacy direction enum → CSS angle (matches GradientBarEditor's mapping).
+const DIR_TO_ANGLE_BG = { vertical: 180, horizontal: 90, diagonal: 135 } as const;
+type LegacyDir = keyof typeof DIR_TO_ANGLE_BG;
 const SECTION_STYLE: React.CSSProperties = {
   padding: "12px 14px",
   borderBottom: "1px solid var(--border)",
@@ -796,18 +858,11 @@ export function LayoutPropertyPanel({ template, layoutName, selected, onChange, 
                     value={layout.background.color_b || "#000000"}
                     onChange={(v) => onChange(`${layoutPath}.background.color_b`, v)}
                   />
-                  <div>
-                    <label style={LABEL_STYLE}>방향</label>
-                    <select
-                      value={layout.background.direction || "vertical"}
-                      onChange={(e) => onChange(`${layoutPath}.background.direction`, e.target.value)}
-                      style={INPUT_STYLE}
-                    >
-                      <option value="vertical">세로 ↓</option>
-                      <option value="horizontal">가로 →</option>
-                      <option value="diagonal">대각선 ↘</option>
-                    </select>
-                  </div>
+                  <AngleRow
+                    label="방향"
+                    value={layout.background.angle ?? DIR_TO_ANGLE_BG[(layout.background.direction as LegacyDir) || "vertical"]}
+                    onChange={(v) => onChange(`${layoutPath}.background.angle`, v)}
+                  />
                 </>
               )}
               <OverlayEditor
@@ -1551,32 +1606,11 @@ function OverlayEditor({ layoutPath, bg, onChange }: OverlayEditorProps) {
           </button>
           {gradientOpen && (
             <>
-              <div>
-                <label style={LABEL_STYLE}>방향</label>
-                <div style={{ display: "flex", gap: 4 }}>
-                  {(["vertical", "horizontal", "diagonal"] as const).map((d) => {
-                    const active = bg.overlay_gradient_direction === d;
-                    return (
-                      <button
-                        key={d}
-                        onClick={() => onChange(`${layoutPath}.background.overlay_gradient_direction`, d)}
-                        style={{
-                          flex: 1, padding: "5px 0",
-                          fontSize: 14,
-                          borderRadius: 4,
-                          background: active ? "var(--accent)" : "var(--bg-overlay)",
-                          color: active ? "white" : "var(--text-secondary)",
-                          border: "1px solid",
-                          borderColor: active ? "var(--accent)" : "var(--border)",
-                          cursor: "pointer",
-                        }}
-                      >
-                        {d === "vertical" ? "↓" : d === "horizontal" ? "→" : "↘"}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              <AngleRow
+                label="방향"
+                value={bg.overlay_gradient_angle ?? DIR_TO_ANGLE_BG[(bg.overlay_gradient_direction as LegacyDir) || "vertical"]}
+                onChange={(v) => onChange(`${layoutPath}.background.overlay_gradient_angle`, v)}
+              />
               {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
               {stops.map((stop: any, i: number) => (
                 <StopEditor

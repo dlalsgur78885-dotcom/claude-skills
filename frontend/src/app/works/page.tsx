@@ -70,6 +70,7 @@ export default function WorksPage() {
   const params = useSearchParams();
   const router = useRouter();
   const scrollKey = `works-scroll:${params.toString() || "all"}`;
+  const lockedScrollKey = `${scrollKey}:locked`;
   const didRestoreScrollRef = useRef(false);
   const navigatingAwayRef = useRef(false);
   const lastScrollYRef = useRef(0);
@@ -148,7 +149,7 @@ export default function WorksPage() {
   useEffect(() => {
     if (loading || didRestoreScrollRef.current) return;
     didRestoreScrollRef.current = true;
-    const raw = sessionStorage.getItem(scrollKey);
+    const raw = sessionStorage.getItem(lockedScrollKey) || sessionStorage.getItem(scrollKey);
     const y = raw ? Number(raw) : 0;
     if (!Number.isFinite(y) || y <= 0) return;
 
@@ -164,6 +165,7 @@ export default function WorksPage() {
     lastScrollYRef.current = window.scrollY || 0;
     try {
       sessionStorage.setItem(scrollKey, String(lastScrollYRef.current));
+      sessionStorage.setItem(lockedScrollKey, String(lastScrollYRef.current));
     } catch {
       /* ignore */
     }
@@ -446,7 +448,13 @@ export default function WorksPage() {
                     </svg>
                   )}
                 </label>
-                <Link href={`/editor/${c.id}`} onClick={saveCurrentScroll} style={{ display: "block", background: "var(--bg-overlay)" }}>
+                <Link
+                  href={`/editor/${c.id}`}
+                  onPointerDown={saveCurrentScroll}
+                  onMouseDown={saveCurrentScroll}
+                  onClick={saveCurrentScroll}
+                  style={{ display: "block", background: "var(--bg-overlay)" }}
+                >
                   <CarouselThumb c={c} />
                 </Link>
                 <div style={{ padding: 12 }}>
@@ -504,6 +512,8 @@ export default function WorksPage() {
                   <div style={{ display: "flex", gap: 6 }}>
                     <Link
                       href={`/editor/${c.id}`}
+                      onPointerDown={saveCurrentScroll}
+                      onMouseDown={saveCurrentScroll}
                       onClick={saveCurrentScroll}
                       style={{
                         flex: 1, padding: "5px 10px", fontSize: 11, fontWeight: 500,

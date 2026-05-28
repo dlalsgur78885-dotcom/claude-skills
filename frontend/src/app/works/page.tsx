@@ -71,6 +71,8 @@ export default function WorksPage() {
   const router = useRouter();
   const scrollKey = `works-scroll:${params.toString() || "all"}`;
   const didRestoreScrollRef = useRef(false);
+  const navigatingAwayRef = useRef(false);
+  const lastScrollYRef = useRef(0);
   const initialTab: Tab = (() => {
     const t = params.get("tab");
     return VALID_TABS.includes(t as Tab) ? (t as Tab) : "all";
@@ -125,8 +127,10 @@ export default function WorksPage() {
     didRestoreScrollRef.current = false;
 
     function saveScroll() {
+      if (navigatingAwayRef.current) return;
+      lastScrollYRef.current = window.scrollY || 0;
       try {
-        sessionStorage.setItem(scrollKey, String(window.scrollY || 0));
+        sessionStorage.setItem(scrollKey, String(lastScrollYRef.current));
       } catch {
         /* ignore */
       }
@@ -135,7 +139,7 @@ export default function WorksPage() {
     window.addEventListener("scroll", saveScroll, { passive: true });
     window.addEventListener("beforeunload", saveScroll);
     return () => {
-      saveScroll();
+      if (!navigatingAwayRef.current) saveScroll();
       window.removeEventListener("scroll", saveScroll);
       window.removeEventListener("beforeunload", saveScroll);
     };
@@ -156,8 +160,10 @@ export default function WorksPage() {
   }, [loading, items.length, scrollKey]);
 
   function saveCurrentScroll() {
+    navigatingAwayRef.current = true;
+    lastScrollYRef.current = window.scrollY || 0;
     try {
-      sessionStorage.setItem(scrollKey, String(window.scrollY || 0));
+      sessionStorage.setItem(scrollKey, String(lastScrollYRef.current));
     } catch {
       /* ignore */
     }

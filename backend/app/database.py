@@ -20,119 +20,16 @@ async def get_db():
 
 
 async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await _add_missing_columns(conn)
+    """Schema bootstrap via Alembic.
+
+    Past idempotent ALTER TABLE catch-ups (paraphrase_prompt, share_code,
+    expired_at, etc.) are now folded into the baseline migration. Existing
+    DBs that already had them applied get stamped to head on first boot
+    after this rollout; future schema changes go through `alembic revision`.
+    """
+    from app.db_migrations import bootstrap_schema
+    await bootstrap_schema()
     await _seed_system_templates()
-
-
-async def _add_missing_columns(conn) -> None:
-    """Idempotent SQLite column adds for tables created in earlier deploys."""
-    from sqlalchemy import text
-
-    result = await conn.execute(text("PRAGMA table_info(element_image_pool)"))
-    cols = {row[1] for row in result.fetchall()}
-    if "quality_score" not in cols:
-        await conn.execute(text(
-            "ALTER TABLE element_image_pool ADD COLUMN quality_score REAL NOT NULL DEFAULT 0.0"
-        ))
-
-    result = await conn.execute(text("PRAGMA table_info(extracted_elements)"))
-    cols = {row[1] for row in result.fetchall()}
-    if "selected" not in cols:
-        await conn.execute(text(
-            "ALTER TABLE extracted_elements ADD COLUMN selected INTEGER NOT NULL DEFAULT 1"
-        ))
-
-    # benchmark_channels: brand identity + default template
-    result = await conn.execute(text("PRAGMA table_info(benchmark_channels)"))
-    cols = {row[1] for row in result.fetchall()}
-    if "brand_primary_color" not in cols:
-        await conn.execute(text(
-            "ALTER TABLE benchmark_channels ADD COLUMN brand_primary_color VARCHAR(20)"
-        ))
-    if "brand_logo_path" not in cols:
-        await conn.execute(text(
-            "ALTER TABLE benchmark_channels ADD COLUMN brand_logo_path VARCHAR(500)"
-        ))
-    if "default_template_id" not in cols:
-        await conn.execute(text(
-            "ALTER TABLE benchmark_channels ADD COLUMN default_template_id INTEGER REFERENCES carousel_templates(id)"
-        ))
-
-    # carousel_templates: sharing fields (added in 템플릿 공유 feature)
-    result = await conn.execute(text("PRAGMA table_info(carousel_templates)"))
-    cols = {row[1] for row in result.fetchall()}
-    if "share_code" not in cols:
-        await conn.execute(text(
-            "ALTER TABLE carousel_templates ADD COLUMN share_code VARCHAR(32)"
-        ))
-        # Unique partial index — only enforce uniqueness when share_code is set.
-        await conn.execute(text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS ix_carousel_templates_share_code "
-            "ON carousel_templates(share_code) WHERE share_code IS NOT NULL"
-        ))
-    if "is_public" not in cols:
-        await conn.execute(text(
-            "ALTER TABLE carousel_templates ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0"
-        ))
-
-    # collected_posts: expired_at marks rows whose body+children were purged by
-    # the 5-day TTL job. saved_at moves a post into "내 소재" (TTL-immune,
-    # hidden from /posts). Row stays so instagram_post_id keeps channel dedupe.
-    result = await conn.execute(text("PRAGMA table_info(collected_posts)"))
-    cols = {row[1] for row in result.fetchall()}
-    if "expired_at" not in cols:
-        await conn.execute(text(
-            "ALTER TABLE collected_posts ADD COLUMN expired_at DATETIME"
-        ))
-        await conn.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_collected_posts_expired_at "
-            "ON collected_posts(expired_at)"
-        ))
-    if "saved_at" not in cols:
-        await conn.execute(text(
-            "ALTER TABLE collected_posts ADD COLUMN saved_at DATETIME"
-        ))
-        await conn.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_collected_posts_saved_at "
-            "ON collected_posts(saved_at)"
-        ))
-
-    # users: per-account override for the /paraphrase prompt so each user can
-    # tune the rewrite voice without touching server code or affecting others.
-    result = await conn.execute(text("PRAGMA table_info(users)"))
-    cols = {row[1] for row in result.fetchall()}
-    if "paraphrase_prompt" not in cols:
-        await conn.execute(text(
-            "ALTER TABLE users ADD COLUMN paraphrase_prompt TEXT"
-        ))
-    # users: separate 제목/캡션 치환 프롬프트 (feedback #11-13).
-    if "title_paraphrase_prompt" not in cols:
-        await conn.execute(text(
-            "ALTER TABLE users ADD COLUMN title_paraphrase_prompt TEXT"
-        ))
-    if "caption_paraphrase_prompt" not in cols:
-        await conn.execute(text(
-            "ALTER TABLE users ADD COLUMN caption_paraphrase_prompt TEXT"
-        ))
-
-    # post_images: source_url stores the original Instagram CDN URL so the UI
-    # has a fallback once the local /api/images/raw/... cache is cleaned up
-    # by the 3-hour TTL job.
-    result = await conn.execute(text("PRAGMA table_info(post_images)"))
-    cols = {row[1] for row in result.fetchall()}
-    if "source_url" not in cols:
-        await conn.execute(text(
-            "ALTER TABLE post_images ADD COLUMN source_url VARCHAR(1000) NOT NULL DEFAULT ''"
-        ))
-        # Backfill: rows whose raw_path is still a remote http URL (i.e. the
-        # post was ingested but never went through use_post) — copy that into
-        # source_url so future fallbacks have something.
-        await conn.execute(text(
-            "UPDATE post_images SET source_url = raw_path "
-            "WHERE source_url = '' AND raw_path LIKE 'http%'"
-        ))
 
 
 async def _seed_system_templates() -> None:

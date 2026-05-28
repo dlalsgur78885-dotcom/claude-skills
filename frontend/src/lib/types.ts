@@ -132,6 +132,19 @@ export interface Carousel {
   updated_at: string;
 }
 
+export interface CarouselListItem {
+  id: number;
+  user_id: number;
+  source_post_id: number | null;
+  title: string;
+  template_id: string;
+  status: "draft" | "editing" | "finalized";
+  created_at: string;
+  updated_at: string;
+  slide_count: number;
+  thumbnail_url: string | null;
+}
+
 export interface SlideData {
   version: string;
   width: number;

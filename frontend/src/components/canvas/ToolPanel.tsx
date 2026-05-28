@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { api } from "@/lib/api";
+import { api, resolveImageUrl } from "@/lib/api";
 import { TransparentToggle } from "./TransparentToggle";
 import { type UserFont } from "@/lib/fonts";
 
@@ -489,7 +489,7 @@ export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOver
           </p>
           <button
             type="button"
-            onClick={() => setCtaOpen((o) => !o)}
+            onClick={() => setCtaOpen(true)}
             title="캐러셀 맨 뒷장에 넣을 CTA 이미지를 등록하고 추가합니다"
             style={{ ...btnStyle, fontSize: 12 }}
             onMouseEnter={(e) => {
@@ -505,69 +505,126 @@ export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOver
               <path strokeLinecap="round" strokeLinejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" />
             </svg>
             <span style={{ flex: 1 }}>CTA 등록&추가</span>
-            <svg
-              width="12" height="12" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor"
-              style={{ transform: ctaOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }}
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
-            </svg>
           </button>
-          {ctaOpen && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
-              <label
-                style={{ ...btnStyle, fontSize: 12 }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-overlay)";
-                  e.currentTarget.style.borderColor = "var(--border-strong)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "transparent";
-                  e.currentTarget.style.borderColor = "var(--border)";
-                }}
-              >
-                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
-                </svg>
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ display: "block", color: "var(--text-primary)" }}>PNG 파일 등록하기</span>
-                  <span style={{ display: "block", fontSize: 10, color: ctaUrl ? "var(--green)" : "var(--text-tertiary)" }}>
-                    {ctaBusy ? "업로드 중…" : ctaUrl ? "등록됨 ✓" : "등록된 파일 없음"}
-                  </span>
-                </span>
-                <input
-                  type="file"
-                  accept="image/png,.png"
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) handleRegisterCta(f);
-                    e.target.value = "";
-                  }}
-                />
-              </label>
+        </div>
+      )}
+
+      {onAddCta && ctaOpen && (
+        <div
+          onClick={() => setCtaOpen(false)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 10000,
+            background: "rgba(0,0,0,0.55)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(360px, 92vw)",
+              maxHeight: "86vh", overflowY: "auto",
+              background: "var(--bg-elevated)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              boxShadow: "0 18px 48px rgba(0,0,0,0.45)",
+              padding: 20,
+              display: "flex", flexDirection: "column", gap: 14,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <strong style={{ fontSize: 14 }}>CTA 이미지</strong>
               <button
                 type="button"
-                onClick={() => { if (ctaUrl) onAddCta(ctaUrl); }}
-                disabled={!ctaUrl}
-                title={ctaUrl ? "등록한 CTA 이미지를 맨 뒤 새 슬라이드로 추가" : "먼저 PNG 파일을 등록하세요"}
-                style={{ ...btnStyle, fontSize: 12, opacity: ctaUrl ? 1 : 0.5, cursor: ctaUrl ? "pointer" : "default" }}
-                onMouseEnter={(e) => {
-                  if (!ctaUrl) return;
-                  e.currentTarget.style.background = "var(--bg-overlay)";
-                  e.currentTarget.style.borderColor = "var(--border-strong)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "transparent";
-                  e.currentTarget.style.borderColor = "var(--border)";
+                onClick={() => setCtaOpen(false)}
+                aria-label="닫기"
+                style={{
+                  width: 26, height: 26, borderRadius: 6,
+                  border: "1px solid var(--border)", background: "transparent",
+                  cursor: "pointer", color: "var(--text-secondary)",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
                 }}
               >
-                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                <svg width="12" height="12" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
                 </svg>
-                <span style={{ flex: 1 }}>CTA 추가</span>
               </button>
             </div>
-          )}
+            <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: 0, lineHeight: 1.5 }}>
+              PNG 파일을 한 번 등록하면 계정에 저장되어, 다음에도 바로 추가할 수 있습니다.
+            </p>
+
+            {/* 등록된 CTA 미리보기 */}
+            {ctaUrl ? (
+              <img
+                src={resolveImageUrl(ctaUrl)}
+                alt="등록된 CTA"
+                style={{
+                  width: "100%", borderRadius: 6,
+                  border: "1px solid var(--border)",
+                  background: "var(--bg-overlay)",
+                }}
+              />
+            ) : (
+              <div style={{
+                width: "100%", padding: "32px 0",
+                borderRadius: 6, border: "1px dashed var(--border)",
+                background: "var(--bg-overlay)",
+                fontSize: 12, color: "var(--text-tertiary)", textAlign: "center",
+              }}>
+                등록된 CTA 이미지가 없습니다
+              </div>
+            )}
+
+            {/* PNG 등록 / 교체 */}
+            <label
+              style={{ ...btnStyle, fontSize: 12 }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "var(--bg-overlay)";
+                e.currentTarget.style.borderColor = "var(--border-strong)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.borderColor = "var(--border)";
+              }}
+            >
+              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+              </svg>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: "block", color: "var(--text-primary)" }}>
+                  {ctaUrl ? "PNG 파일 교체하기" : "PNG 파일 등록하기"}
+                </span>
+                <span style={{ display: "block", fontSize: 10, color: ctaUrl ? "var(--green)" : "var(--text-tertiary)" }}>
+                  {ctaBusy ? "업로드 중…" : ctaUrl ? "등록됨 ✓" : "등록된 파일 없음"}
+                </span>
+              </span>
+              <input
+                type="file"
+                accept="image/png,.png"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleRegisterCta(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+              <button type="button" onClick={() => setCtaOpen(false)}
+                style={{ padding: "7px 14px", fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-overlay)", border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer" }}>
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={() => { if (ctaUrl) { onAddCta(ctaUrl); setCtaOpen(false); } }}
+                disabled={!ctaUrl}
+                title={ctaUrl ? "등록한 CTA 이미지를 현재 슬라이드에 추가" : "먼저 PNG 파일을 등록하세요"}
+                style={{ padding: "7px 14px", fontSize: 12, fontWeight: 500, color: "white", background: "var(--accent)", border: "none", borderRadius: 6, cursor: ctaUrl ? "pointer" : "default", opacity: ctaUrl ? 1 : 0.5 }}>
+                CTA 추가
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

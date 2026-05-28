@@ -1092,7 +1092,7 @@ interface ShadowSpec {
 // Defaults tuned to be visible immediately on a 1080×1350 design at typical
 // editor display sizes. Too-subtle defaults made users think the feature
 // wasn't applied at all.
-const DEFAULT_SHADOW: ShadowSpec = { color: "#000000", opacity: 70, angle: 135, distance: 24, blur: 24 };
+const DEFAULT_SHADOW: ShadowSpec = { color: "#000000", opacity: 70, angle: 90, distance: 5, blur: 15 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function parseShadowFromObject(sh: any): ShadowSpec | null {

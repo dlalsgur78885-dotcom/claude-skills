@@ -15,6 +15,7 @@ from app.models.carousel import GeneratedCarousel, CarouselStatus
 from app.models.post import CollectedPost
 from app.schemas.carousel import (
     CarouselCreate,
+    CarouselListItem,
     CarouselUpdate,
     CarouselResponse,
     OrchestratorRequest,
@@ -45,7 +46,37 @@ async def _hydrate_source_url(carousel: GeneratedCarousel, db: AsyncSession) -> 
 router = APIRouter(prefix="/carousels", tags=["carousels"])
 
 
-@router.get("/", response_model=list[CarouselResponse])
+def _carousel_list_item(carousel: GeneratedCarousel) -> CarouselListItem:
+    canvas_data = carousel.canvas_data or {}
+    slides = canvas_data.get("canvas_slides") if isinstance(canvas_data, dict) else None
+    thumbnail_url: str | None = None
+    if isinstance(slides, list) and slides:
+        first = slides[0]
+        objects = first.get("objects") if isinstance(first, dict) else None
+        if isinstance(objects, list):
+            for obj in objects:
+                if not isinstance(obj, dict):
+                    continue
+                obj_type = str(obj.get("type") or "").lower()
+                if obj_type in {"image", "fabricimage"} and obj.get("src"):
+                    thumbnail_url = str(obj["src"])
+                    break
+
+    return CarouselListItem(
+        id=carousel.id,
+        user_id=carousel.user_id,
+        source_post_id=carousel.source_post_id,
+        title=carousel.title,
+        template_id=carousel.template_id,
+        status=str(getattr(carousel.status, "value", carousel.status)),
+        created_at=carousel.created_at,
+        updated_at=carousel.updated_at,
+        slide_count=len(slides) if isinstance(slides, list) else 0,
+        thumbnail_url=thumbnail_url,
+    )
+
+
+@router.get("/", response_model=list[CarouselListItem])
 async def list_carousels(
     limit: int = Query(20, le=100),
     offset: int = Query(0),
@@ -64,7 +95,7 @@ async def list_carousels(
         # SQLAlchemy Enum column stores the string value; filter by exact match.
         stmt = stmt.where(GeneratedCarousel.status == status)
     result = await db.execute(stmt)
-    return result.scalars().all()
+    return [_carousel_list_item(carousel) for carousel in result.scalars().all()]
 
 
 @router.post("/", response_model=CarouselResponse, status_code=201)
@@ -192,6 +223,7 @@ async def analyze_post(
     db: AsyncSession = Depends(get_db),
 ):
     """포스트의 모든 이미지 OCR + 캡션 분석."""
+    import asyncio
     from app.models.post import CollectedPost
     from sqlalchemy.orm import selectinload
     from pathlib import Path
@@ -213,30 +245,44 @@ async def analyze_post(
     if not post:
         raise HTTPException(status_code=404, detail="포스트를 찾을 수 없습니다")
 
-    # OCR 실행
-    reader = easyocr.Reader(["ko", "en"], gpu=False, verbose=False)
-    slides_analysis = []
-
-    for img in sorted(post.images, key=lambda x: x.slide_index):
-        # 로컬 경로 해석
+    # Build (slide_index, local_path) work list first so the heavy OCR batch
+    # can be offloaded to a worker thread in one shot — keeps the event loop
+    # free for other requests during the multi-second easyocr work.
+    sorted_imgs = sorted(post.images, key=lambda x: x.slide_index)
+    work: list[tuple[int, str, Path | None]] = []
+    for img in sorted_imgs:
         raw_path = img.raw_path
         if raw_path.startswith("/api/images/raw/"):
             parts = raw_path.replace("/api/images/raw/", "").split("/")
             local_path = Path("data/images/raw") / parts[0] / parts[1]
         else:
             local_path = Path(raw_path)
+        work.append((img.slide_index, raw_path, local_path if local_path.exists() else None))
 
-        ocr_texts = []
-        if local_path.exists():
+    def _ocr_batch(items: list[tuple[int, str, Path | None]]) -> list[list[str]]:
+        # easyocr.Reader is not documented thread-safe — run sequentially
+        # inside this single worker thread. Model load is one-time per Reader.
+        reader = easyocr.Reader(["ko", "en"], gpu=False, verbose=False)
+        out: list[list[str]] = []
+        for _idx, _rp, lp in items:
+            if lp is None:
+                out.append([])
+                continue
             try:
-                results = reader.readtext(str(local_path))
-                ocr_texts = [text for _, text, conf in results if conf > 0.3]
+                results = reader.readtext(str(lp))
+                out.append([text for _, text, conf in results if conf > 0.3])
             except Exception as e:
-                logger.warning(f"OCR failed for {local_path}: {e}")
+                logger.warning(f"OCR failed for {lp}: {e}")
+                out.append([])
+        return out
 
+    ocr_results = await asyncio.to_thread(_ocr_batch, work)
+
+    slides_analysis = []
+    for (slide_index, raw_path, _lp), ocr_texts in zip(work, ocr_results):
         slides_analysis.append({
-            "slide_index": img.slide_index,
-            "image_path": img.raw_path,
+            "slide_index": slide_index,
+            "image_path": raw_path,
             "ocr_texts": ocr_texts,
             "ocr_full": " ".join(ocr_texts),
         })
@@ -794,6 +840,22 @@ class TranslateKeywordRequest(BaseModel):
     context: str = ""
 
 
+# Per-process LRU cache for the LLM-classified query plan. Same (query, ctx)
+# yields the same structured output every time, but each carousel touches
+# the same keyword across multiple cells — without this cache, generate-content
+# fires the same Gemini call N times in a single user flow. 500 slots covers
+# a healthy session; oldest evicted when full.
+from collections import OrderedDict as _OrderedDict
+
+_TRANSLATE_CACHE: "_OrderedDict[tuple[str, str], dict]" = _OrderedDict()
+_TRANSLATE_CACHE_MAX = 500
+
+
+def _translate_cache_key(query: str, ctx: str) -> tuple[str, str]:
+    # Collapse whitespace + casefold so cosmetic differences hit the same slot.
+    return (" ".join(query.split()).casefold(), " ".join(ctx.split()).casefold())
+
+
 @router.post("/translate-keyword")
 async def translate_keyword_endpoint(
     body: TranslateKeywordRequest,
@@ -818,6 +880,12 @@ async def translate_keyword_endpoint(
         raise HTTPException(status_code=400, detail="query 비어 있음")
     ctx = (body.context or "").strip()
     ctx_line = f"전체 캐러셀 주제 컨텍스트: {ctx!r}\n\n" if ctx else ""
+
+    cache_key = _translate_cache_key(q, ctx)
+    cached = _TRANSLATE_CACHE.get(cache_key)
+    if cached is not None:
+        _TRANSLATE_CACHE.move_to_end(cache_key)
+        return cached
 
     # Feedback #15-16: 이미지 검색 정확도 개선을 위한 구조화된 query plan 출력.
     # 기존 (kind/queries/country)는 백워드 호환으로 유지하고, 새로 다음을 추가:
@@ -969,7 +1037,7 @@ async def translate_keyword_endpoint(
             allowed={"map", "menu_board", "logo", "coupon", "ad", "face_centric"},
         )
 
-        return {
+        result = {
             "kind": kind,
             "queries": queries,
             "country": country,
@@ -979,6 +1047,12 @@ async def translate_keyword_endpoint(
             "desired_image_types": desired_image_types,
             "excludes": excludes,
         }
+        # Cache successful runs only — never cache the fallback below.
+        _TRANSLATE_CACHE[cache_key] = result
+        _TRANSLATE_CACHE.move_to_end(cache_key)
+        while len(_TRANSLATE_CACHE) > _TRANSLATE_CACHE_MAX:
+            _TRANSLATE_CACHE.popitem(last=False)
+        return result
     except Exception as e:
         logger.exception("translate-keyword failed")
         # Defensive fallback — keep the original Korean as the single query.

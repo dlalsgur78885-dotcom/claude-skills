@@ -16,6 +16,19 @@ export function resolveImageUrl(url: string): string {
   return url;
 }
 
+/** Same as resolveImageUrl, but appends `?w=<width>` so the backend can serve
+ *  a downscaled, disk-cached thumbnail instead of the multi-MB original.
+ *  No-op for remote (http) URLs — only our `/api/images/*` routes know `w=`. */
+export function thumbnailUrl(url: string, width: number): string {
+  if (!url) return "";
+  if (url.startsWith("http")) return url;
+  if (url.startsWith("/")) {
+    const sep = url.includes("?") ? "&" : "?";
+    return `${API_ORIGIN}${url}${sep}w=${width}`;
+  }
+  return url;
+}
+
 /** Route an external image URL through the backend proxy so canvas exports stay CORS-clean.
  *  Same-origin / relative URLs are returned unchanged. */
 export function proxiedImageUrl(url: string): string {
@@ -260,7 +273,7 @@ class ApiClient {
   async getCarousels(limit = 20, offset = 0, status?: "draft" | "editing" | "finalized") {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (status) params.set("status", status);
-    return this.fetch<import("./types").Carousel[]>(`/carousels/?${params}`);
+    return this.fetch<import("./types").CarouselListItem[]>(`/carousels/?${params}`);
   }
 
   async createCarousel(data: Record<string, unknown>) {

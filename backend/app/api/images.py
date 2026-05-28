@@ -1,5 +1,6 @@
 """Image serving & search endpoints."""
 
+import asyncio
 import hashlib
 import ipaddress
 import logging
@@ -31,6 +32,49 @@ _PROXY_MAX_BYTES = 20 * 1024 * 1024  # 20MB hard cap
 # the cached copy keeps it alive forever.
 _PROXY_CACHE_DIR = settings.DATA_DIR / "images" / "proxy_cache"
 _PROXY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+# Thumbnail cache for `?w=` resizing. Keyed by sha1(path:mtime:width) so any
+# regenerated original auto-invalidates. Cheap on disk — gets swept by the
+# 7-day long-lived cleanup if accessed regularly.
+_THUMB_CACHE_DIR = settings.DATA_DIR / "images" / "thumb_cache"
+_THUMB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _make_thumbnail(src: Path, w: int) -> Path:
+    """Resize `src` to width `w` (height auto) and cache on disk. Sync —
+    call via asyncio.to_thread so it doesn't block the event loop."""
+    from PIL import Image
+    stat = src.stat()
+    key = hashlib.sha1(f"{src}:{stat.st_mtime_ns}:{w}".encode()).hexdigest()
+    # Preserve transparency where the source had it; otherwise JPEG for size.
+    use_png = src.suffix.lower() in (".png", ".webp")
+    suffix = ".png" if use_png else ".jpg"
+    cached = _THUMB_CACHE_DIR / f"{key}{suffix}"
+    if cached.exists():
+        return cached
+    with Image.open(src) as im:
+        # `thumbnail` shrinks only — never enlarges past original.
+        im.thumbnail((w, w * 8), Image.LANCZOS)
+        save_kw: dict = {"optimize": True}
+        if not use_png:
+            if im.mode in ("RGBA", "LA", "P"):
+                im = im.convert("RGB")
+            save_kw["quality"] = 80
+        im.save(cached, **save_kw)
+    return cached
+
+
+async def _serve(path: Path, w: int | None) -> FileResponse:
+    """Serve `path`, optionally downscaled to width `w` with on-disk cache.
+    Caller is responsible for 404 + path-traversal checks before calling."""
+    if not w or w <= 0 or w >= 4000:
+        return FileResponse(path)
+    try:
+        cached = await asyncio.to_thread(_make_thumbnail, path, w)
+        return FileResponse(cached)
+    except Exception as e:
+        logger.warning(f"[thumb] resize failed for {path} (w={w}): {e}")
+        return FileResponse(path)
 
 
 def _check_host(host: str) -> tuple[bool, str]:
@@ -147,87 +191,87 @@ async def proxy_external_image(url: str = Query(..., min_length=8)):
 
 
 @router.get("/raw/{post_id}/{filename}")
-async def serve_raw_image(post_id: int, filename: str):
+async def serve_raw_image(post_id: int, filename: str, w: int | None = Query(None, ge=16, le=4000)):
     path = settings.DATA_DIR / "images" / "raw" / str(post_id) / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
-    return FileResponse(path)
+    return await _serve(path, w)
 
 
 @router.get("/processed/{post_id}/{filename}")
-async def serve_processed_image(post_id: int, filename: str):
+async def serve_processed_image(post_id: int, filename: str, w: int | None = Query(None, ge=16, le=4000)):
     path = settings.DATA_DIR / "images" / "processed" / str(post_id) / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
-    return FileResponse(path)
+    return await _serve(path, w)
 
 
 @router.get("/output/{carousel_id}/{filename}")
-async def serve_output_image(carousel_id: int, filename: str):
+async def serve_output_image(carousel_id: int, filename: str, w: int | None = Query(None, ge=16, le=4000)):
     path = settings.DATA_DIR / "images" / "output" / str(carousel_id) / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
-    return FileResponse(path)
+    return await _serve(path, w)
 
 
 @router.get("/pool/{post_id}/{element_dir}/{filename}")
-async def serve_pool_image(post_id: int, element_dir: str, filename: str):
+async def serve_pool_image(post_id: int, element_dir: str, filename: str, w: int | None = Query(None, ge=16, le=4000)):
     path = settings.DATA_DIR / "images" / "pool" / str(post_id) / element_dir / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
-    return FileResponse(path)
+    return await _serve(path, w)
 
 
 @router.get("/restyled/{filename}")
-async def serve_restyled_image(filename: str):
+async def serve_restyled_image(filename: str, w: int | None = Query(None, ge=16, le=4000)):
     path = settings.DATA_DIR / "images" / "restyled" / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
-    return FileResponse(path)
+    return await _serve(path, w)
 
 
 @router.get("/cutouts/{filename}")
-async def serve_cutout_image(filename: str):
+async def serve_cutout_image(filename: str, w: int | None = Query(None, ge=16, le=4000)):
     if "/" in filename or "\\" in filename or ".." in filename:
         raise HTTPException(status_code=400, detail="bad path")
     path = settings.DATA_DIR / "images" / "cutouts" / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
-    return FileResponse(path)
+    return await _serve(path, w)
 
 
 @router.get("/enhanced/{filename}")
-async def serve_enhanced_image(filename: str):
+async def serve_enhanced_image(filename: str, w: int | None = Query(None, ge=16, le=4000)):
     """Serve an AI-upscaled image produced by /api/images/enhance."""
     if "/" in filename or "\\" in filename or ".." in filename:
         raise HTTPException(status_code=400, detail="bad path")
     path = settings.DATA_DIR / "images" / "enhanced" / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
-    return FileResponse(path)
+    return await _serve(path, w)
 
 
 @router.get("/logos/{filename}")
-async def serve_logo(filename: str):
+async def serve_logo(filename: str, w: int | None = Query(None, ge=16, le=4000)):
     path = settings.DATA_DIR / "images" / "logos" / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="로고를 찾을 수 없습니다")
-    return FileResponse(path)
+    return await _serve(path, w)
 
 
 @router.get("/cta/{user_id}/{filename}")
-async def serve_cta_image(user_id: str, filename: str):
+async def serve_cta_image(user_id: str, filename: str, w: int | None = Query(None, ge=16, le=4000)):
     """Serve a user's registered CTA image (uploaded via /api/cta/upload)."""
     if not user_id.isdigit() or "/" in filename or "\\" in filename or ".." in filename:
         raise HTTPException(status_code=400, detail="bad path")
     path = settings.DATA_DIR / "images" / "cta" / user_id / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="CTA 이미지를 찾을 수 없습니다")
-    return FileResponse(path)
+    return await _serve(path, w)
 
 
 @router.get("/template-source/{slug}/{filename}")
-async def serve_template_source_slide(slug: str, filename: str):
+async def serve_template_source_slide(slug: str, filename: str, w: int | None = Query(None, ge=16, le=4000)):
     """Serve cached source-post slide image used during template generation."""
     # path traversal guard
     if "/" in slug or "\\" in slug or "/" in filename or "\\" in filename or ".." in slug or ".." in filename:
@@ -235,11 +279,11 @@ async def serve_template_source_slide(slug: str, filename: str):
     path = settings.DATA_DIR / "template_studio_cache" / slug / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="원본 슬라이드를 찾을 수 없습니다")
-    return FileResponse(path)
+    return await _serve(path, w)
 
 
 @router.get("/template-assets/{user_id}/{filename}")
-async def serve_template_asset(user_id: str, filename: str):
+async def serve_template_asset(user_id: str, filename: str, w: int | None = Query(None, ge=16, le=4000)):
     """Serve a decoration asset uploaded via /templates/upload-asset.
 
     Read-only: anyone with the URL can fetch it (the final-render pipeline
@@ -251,7 +295,7 @@ async def serve_template_asset(user_id: str, filename: str):
     path = settings.DATA_DIR / "images" / "template_assets" / user_id / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="에셋을 찾을 수 없습니다")
-    return FileResponse(path)
+    return await _serve(path, w)
 
 
 class RestyleRequest(BaseModel):
@@ -366,6 +410,7 @@ async def search_images(
     """
     if style == "photo":
         from app.services.image_search import PROVIDERS, search_all
+        from app.services.image_search.tier1_filter import filter_bad_formats, rerank
 
         if source:
             if source not in PROVIDERS:
@@ -374,7 +419,11 @@ async def search_images(
         else:
             results = await search_all(q, limit=limit, country=country, profile=profile)
 
-        # Map ImageResult → frontend contract (id/url/preview_url)
+        # Tier-1 metadata pipeline:
+        #  1) Hard-drop formats that are never a real photo (svg/gif/transparent png)
+        #  2) Score-rerank the rest by source/title/dims/noise-tokens
+        results = filter_bad_formats(results)
+        ranked = rerank(results, q)
         images = [
             {
                 "id": f"{r.source}-{i}",
@@ -385,8 +434,9 @@ async def search_images(
                 "height": r.height,
                 "title": r.title,
                 "has_transparency": r.has_transparency,
+                "tier1_score": score,
             }
-            for i, r in enumerate(results)
+            for i, (r, score) in enumerate(ranked)
         ]
         return {
             "query": q,

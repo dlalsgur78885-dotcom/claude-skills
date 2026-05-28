@@ -36,6 +36,19 @@ class CarouselResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CarouselListItem(BaseModel):
+    id: int
+    user_id: int
+    source_post_id: int | None
+    title: str
+    template_id: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    slide_count: int = 0
+    thumbnail_url: str | None = None
+
+
 class OrchestratorRequest(BaseModel):
     """Request to the agent orchestrator."""
     request: str

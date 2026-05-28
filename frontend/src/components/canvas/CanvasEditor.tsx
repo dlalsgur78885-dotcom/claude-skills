@@ -1202,6 +1202,7 @@ export function CanvasEditor({
             fill: obj.fill || "#000000",
             textAlign: (obj.textAlign as "left" | "center" | "right" | "justify") || "left",
             lineHeight: (obj.lineHeight as number) || 1.4,
+            angle: Number(obj.angle) || 0,
             originX: "left",
             originY: "top",
           });
@@ -1237,6 +1238,7 @@ export function CanvasEditor({
             fill,
             rx: 0,
             ry: 0,
+            angle: Number(obj.angle) || 0,
             originX: "left",
             originY: "top",
             selectable: obj.selectable !== false,
@@ -1249,6 +1251,9 @@ export function CanvasEditor({
             top: (obj.top || 0) * scale,
             radius: ((obj.width || 200) / 2) * scale,
             fill: obj.fill || "#E0E0E0",
+            angle: Number(obj.angle) || 0,
+            originX: "left",
+            originY: "top",
           });
           canvas.add(circle);
         } else if (obj.type === "image" && typeof obj.src === "string") {
@@ -1301,6 +1306,7 @@ export function CanvasEditor({
               top: offsetT,
               scaleX: coverScale,
               scaleY: coverScale,
+              angle: Number(obj.angle) || 0,
               opacity: typeof obj.opacity === "number" ? obj.opacity : 1,
             });
             // Propagate the backend-supplied marker (e.g. {kind:"user_image"})
@@ -3373,6 +3379,35 @@ export function CanvasEditor({
     ]);
     const t = target.type;
     const isActiveSel = t === "activeselection" || t === "ActiveSelection";
+
+    // Keep programmatic rotation anchored to the object's visual center.
+    // Rectangles rotate around the intersection of their diagonals; circles
+    // rotate around their center. The same center-preserving logic is harmless
+    // for text/images and matches Fabric's expected transform control behavior.
+    function setAngleAroundCenter(obj: any, angle: number) {
+      const center = typeof obj.getCenterPoint === "function" ? obj.getCenterPoint() : null;
+      obj.set("angle", angle);
+      if (center && typeof obj.setPositionByOrigin === "function") {
+        obj.setPositionByOrigin(center, "center", "center");
+      }
+      if (typeof obj.setCoords === "function") obj.setCoords();
+      obj.dirty = true;
+    }
+
+    if (prop === "angle") {
+      const nextAngle = Number(value) || 0;
+      pushUndo();
+      setAngleAroundCenter(target, nextAngle);
+      canvas.requestRenderAll();
+      saveCurrentSlide();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const snap: any = { ...target };
+      snap.type = target.type;
+      snap.angle = target.angle;
+      snap.__fabricRef = target;
+      setSelectedObject(snap);
+      return;
+    }
 
     // Image adjustments — 6 named sliders (밝기·대비·채도·컬러톤·온도·선명/흐림)
     // surface as separate __-prefixed prop keys so the PropertyPanel doesn't

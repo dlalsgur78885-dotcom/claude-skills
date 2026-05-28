@@ -326,6 +326,35 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, use
             />
             <span style={{ fontSize: 12, color: "var(--text-tertiary)", width: 16 }}>°</span>
           </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginTop: 6 }}>
+            {[90, 180, 270].map((deg) => (
+              <button
+                key={deg}
+                type="button"
+                onClick={() => onUpdate("angle", deg)}
+                style={{
+                  height: 28,
+                  borderRadius: 4,
+                  border: "1px solid var(--border)",
+                  background: "var(--bg-overlay)",
+                  color: "var(--text-secondary)",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = "var(--accent)";
+                  e.currentTarget.style.color = "var(--text-primary)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = "var(--border)";
+                  e.currentTarget.style.color = "var(--text-secondary)";
+                }}
+              >
+                {deg}°
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Color */}

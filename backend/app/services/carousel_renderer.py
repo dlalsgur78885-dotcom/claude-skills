@@ -42,6 +42,17 @@ _LAYOUT_PREFERENCE = {
 }
 
 
+def _as_list(value: Any) -> list:
+    """Accept legacy single-object layout fields as one-item lists."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        return [value]
+    return []
+
+
 def _pick_layout(slide: dict, layouts: dict) -> tuple[str, dict] | None:
     """Choose a layout name+spec from the template that fits this slide."""
     items = slide.get("items") or []
@@ -339,7 +350,7 @@ async def render_slide_to_canvas(
     bg_is_light = _looks_light(background_color)
 
     # 3. Decorations (logos / shapes / accent boxes)
-    for dec in (layout.get("decorations") or []):
+    for dec in _as_list(layout.get("decorations")):
         kind = dec.get("kind")
         pos = dec.get("position") or {}
         size = dec.get("size") or {}
@@ -365,7 +376,7 @@ async def render_slide_to_canvas(
 
     # 4. Text slots (slide-level headline/subheadline/...)
     default_font = brand.get("font_family") or "Pretendard"
-    for slot in (layout.get("text_slots") or []):
+    for slot in _as_list(layout.get("text_slots")):
         role = slot.get("role", "headline")
         # Per-cell roles (cell_title_r0c1 etc.) are rendered by the freeform
         # cell pass below — skip here so we don't try to read a slide-level
@@ -504,7 +515,7 @@ async def render_slide_to_canvas(
     # uses the i-th `kind: image` decoration as that cell's image area.
     if not grid and items:
         cell_slots: dict[tuple[int, int], dict] = {}
-        for slot in (layout.get("text_slots") or []):
+        for slot in _as_list(layout.get("text_slots")):
             m = _CELL_ROLE_RE.match(slot.get("role") or "")
             if not m:
                 continue
@@ -518,7 +529,7 @@ async def render_slide_to_canvas(
             # same order the editor placed them. src is usually empty (the
             # decoration just reserves the box); the user-picked photo from
             # step 2 replaces it via item.image_url, just like a grid cell.
-            image_decos = [d for d in (layout.get("decorations") or []) if d.get("kind") == "image"]
+            image_decos = [d for d in _as_list(layout.get("decorations")) if d.get("kind") == "image"]
             for idx, item in enumerate(items[: len(sorted_cells)]):
                 cell = sorted_cells[idx]
                 img_src = item.get("image_path") or item.get("image_url")

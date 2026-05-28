@@ -31,6 +31,21 @@ const isBoldWeight = (w: unknown) => {
   return s === "bold" || s === "700" || s === "800" || s === "900";
 };
 
+const normalizeAngle = (value: unknown) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  if (n >= 0 && n <= 360) return n;
+  const normalized = n % 360;
+  return normalized < 0 ? normalized + 360 : normalized;
+};
+
+const clampAngleInput = (value: string) => {
+  if (value.trim() === "") return 0;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(360, n));
+};
+
 // `TransparentToggle` lives in ./TransparentToggle.tsx — shared with ToolPanel
 // and the channel templates modal so every color picker app-wide can opt into
 // transparency via the same swatch button. User feedback (carousel studio
@@ -291,6 +306,25 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, use
                 />
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* Rotation */}
+        <div>
+          <label style={labelStyle}>회전</label>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="number"
+              min={0}
+              max={360}
+              step={1}
+              value={Math.round(normalizeAngle(selectedObject.angle || 0))}
+              onChange={(e) => onUpdate("angle", clampAngleInput(e.target.value))}
+              style={{ ...inputStyle, flex: 1 }}
+              onFocus={(e) => e.currentTarget.select()}
+              onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+            />
+            <span style={{ fontSize: 12, color: "var(--text-tertiary)", width: 16 }}>°</span>
           </div>
         </div>
 

@@ -6,7 +6,7 @@ import type { TemplateData, FabricMeta, LayoutSpec, TextSlot, Decoration } from 
 import { renderLayoutToCanvas } from "./renderer";
 import { setByPath, getByPath, removeArrayItem } from "@/lib/template-paths";
 import { getFabric } from "@/lib/fabric";
-import { api } from "@/lib/api";
+import { api, resolveImageUrl } from "@/lib/api";
 import { LayoutPropertyPanel } from "./LayoutPropertyPanel";
 import { LayoutMiniPreview } from "./LayoutMiniPreview";
 import { CanvasSizeSelector } from "@/components/CanvasSizeSelector";
@@ -688,7 +688,7 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
           const img = new window.Image();
           img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
           img.onerror = reject;
-          img.src = path;
+          img.src = resolveImageUrl(path);
         });
         if (dims.w > 0 && dims.h > 0) {
           // Cap the longer side so a huge upload doesn't fill the slide.

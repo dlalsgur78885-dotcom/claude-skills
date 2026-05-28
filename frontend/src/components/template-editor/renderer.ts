@@ -5,6 +5,7 @@
  */
 
 import { getFabric } from "@/lib/fabric";
+import { resolveImageUrl } from "@/lib/api";
 import type { LayoutSpec, BrandStyle, FabricMeta, ShadowSpec, TextStyle, Decoration, GradientFill } from "./types";
 import { angleToCoords } from "@/components/GradientBarEditor";
 
@@ -278,7 +279,7 @@ export async function renderLayoutToCanvas(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const ImageCtor = (fabric as any).FabricImage || (fabric as any).Image;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const img: any = await ImageCtor.fromURL(d.src, { crossOrigin: "anonymous" });
+        const img: any = await ImageCtor.fromURL(resolveImageUrl(d.src), { crossOrigin: "anonymous" });
         img.set({
           left: dx * scale,
           top: dy * scale,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { api, proxiedImageUrl, thumbnailUrl } from "@/lib/api";
@@ -69,6 +69,8 @@ function toListItem(c: Carousel): CarouselListItem {
 export default function WorksPage() {
   const params = useSearchParams();
   const router = useRouter();
+  const scrollKey = `works-scroll:${params.toString() || "all"}`;
+  const didRestoreScrollRef = useRef(false);
   const initialTab: Tab = (() => {
     const t = params.get("tab");
     return VALID_TABS.includes(t as Tab) ? (t as Tab) : "all";
@@ -118,6 +120,48 @@ export default function WorksPage() {
   }, [tab]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    didRestoreScrollRef.current = false;
+
+    function saveScroll() {
+      try {
+        sessionStorage.setItem(scrollKey, String(window.scrollY || 0));
+      } catch {
+        /* ignore */
+      }
+    }
+
+    window.addEventListener("scroll", saveScroll, { passive: true });
+    window.addEventListener("beforeunload", saveScroll);
+    return () => {
+      saveScroll();
+      window.removeEventListener("scroll", saveScroll);
+      window.removeEventListener("beforeunload", saveScroll);
+    };
+  }, [scrollKey]);
+
+  useEffect(() => {
+    if (loading || didRestoreScrollRef.current) return;
+    didRestoreScrollRef.current = true;
+    const raw = sessionStorage.getItem(scrollKey);
+    const y = raw ? Number(raw) : 0;
+    if (!Number.isFinite(y) || y <= 0) return;
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: y, left: 0, behavior: "auto" });
+      });
+    });
+  }, [loading, items.length, scrollKey]);
+
+  function saveCurrentScroll() {
+    try {
+      sessionStorage.setItem(scrollKey, String(window.scrollY || 0));
+    } catch {
+      /* ignore */
+    }
+  }
 
   function keepInCurrentTab(status: CarouselListItem["status"]) {
     return tab === "all" || (tab === "finalized" ? status === "finalized" : status === "draft");
@@ -396,7 +440,7 @@ export default function WorksPage() {
                     </svg>
                   )}
                 </label>
-                <Link href={`/editor/${c.id}`} style={{ display: "block", background: "var(--bg-overlay)" }}>
+                <Link href={`/editor/${c.id}`} onClick={saveCurrentScroll} style={{ display: "block", background: "var(--bg-overlay)" }}>
                   <CarouselThumb c={c} />
                 </Link>
                 <div style={{ padding: 12 }}>
@@ -454,6 +498,7 @@ export default function WorksPage() {
                   <div style={{ display: "flex", gap: 6 }}>
                     <Link
                       href={`/editor/${c.id}`}
+                      onClick={saveCurrentScroll}
                       style={{
                         flex: 1, padding: "5px 10px", fontSize: 11, fontWeight: 500,
                         color: "var(--accent-text)", background: "var(--accent-muted)",

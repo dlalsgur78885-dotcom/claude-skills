@@ -1326,6 +1326,24 @@ export function CanvasEditor({
               angle: Number(obj.angle) || 0,
               opacity: typeof obj.opacity === "number" ? obj.opacity : 1,
             });
+            if (Array.isArray(obj.filters) && obj.filters.length > 0) {
+              const restoredFilters = obj.filters.map((f: any) => {
+                const type = String(f?.type || "").toLowerCase();
+                if (type === "blendcolor") {
+                  const Blend = (fabric as any).filters?.BlendColor || (fabric as any).BlendColor;
+                  return Blend ? new Blend({
+                    color: f.color || "#000000",
+                    mode: f.mode || "tint",
+                    alpha: Number(f.alpha) || 0,
+                  }) : null;
+                }
+                return f;
+              }).filter(Boolean);
+              if (restoredFilters.length > 0) {
+                img.filters = restoredFilters;
+                if (typeof img.applyFilters === "function") img.applyFilters();
+              }
+            }
             // Propagate the backend-supplied marker (e.g. {kind:"user_image"})
             // so the auto-lock pass below and downstream UI can recognize photos
             // the user picked in step 2 and let them be edited.

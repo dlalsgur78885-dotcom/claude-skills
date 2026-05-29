@@ -201,6 +201,7 @@ def _make_image(
     width: int,
     height: int,
     opacity: float = 1.0,
+    filters: list[dict] | None = None,
     data: dict | None = None,
 ) -> dict:
     # `data` round-trips through Fabric as `obj.data` so the editor can recognize
@@ -218,7 +219,7 @@ def _make_image(
     merged_data.setdefault("_slotT", int(top))
     merged_data.setdefault("_slotW", int(width))
     merged_data.setdefault("_slotH", int(height))
-    return {
+    obj = {
         "type": "image",
         "src": src,
         "left": int(left),
@@ -228,6 +229,23 @@ def _make_image(
         "opacity": float(opacity),
         "data": merged_data,
     }
+    if filters:
+        obj["filters"] = filters
+    return obj
+
+
+def _blend_color_filter(spec: dict | None) -> list[dict] | None:
+    if not isinstance(spec, dict):
+        return None
+    intensity = float(spec.get("intensity") or 0)
+    if intensity <= 0:
+        return None
+    return [{
+        "type": "BlendColor",
+        "color": spec.get("color") or "#000000",
+        "mode": "tint",
+        "alpha": max(0.0, min(1.0, intensity / 100.0)),
+    }]
 
 
 async def render_slide_to_canvas(
@@ -372,6 +390,8 @@ async def render_slide_to_canvas(
                 dec["src"],
                 left=int(pos.get("x", 0)), top=int(pos.get("y", 0)),
                 width=int(size.get("width", 100)), height=int(size.get("height", 100)),
+                opacity=float(dec.get("opacity") if dec.get("opacity") is not None else 1.0),
+                filters=_blend_color_filter(dec.get("color_fill")),
             ))
 
     # 4. Text slots (slide-level headline/subheadline/...)

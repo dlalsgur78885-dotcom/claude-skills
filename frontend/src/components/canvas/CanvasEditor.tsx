@@ -62,22 +62,39 @@ const PAGE_BOUNDARY_KIND = "page_boundary";
 const CLIPBOARD_STORAGE_KEY = "canvas.objectClipboard";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const objectClipboardSlot: { value: any } = { value: null };
+const objectClipboardMetaSlot: { sourceSlideIndex: number | null } = { sourceSlideIndex: null };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function persistClipboard(obj: any) {
+function persistClipboard(obj: any, sourceSlideIndex: number) {
   try {
     if (typeof localStorage === "undefined") return;
     // toObject() serializes core props; image needs `src` included explicitly.
-    const data = obj.toObject?.(["src"]);
-    if (data) localStorage.setItem(CLIPBOARD_STORAGE_KEY, JSON.stringify(data));
+    const data = obj.toObject?.(["src", "data"]);
+    if (data) {
+      localStorage.setItem(CLIPBOARD_STORAGE_KEY, JSON.stringify({
+        object: data,
+        sourceSlideIndex,
+      }));
+    }
   } catch (e) {
     console.warn("[clipboard] persist failed", e);
   }
 }
-function readPersistedClipboard(): unknown | null {
+function readPersistedClipboard(): { object: unknown; sourceSlideIndex: number | null } | null {
   try {
     if (typeof localStorage === "undefined") return null;
     const raw = localStorage.getItem(CLIPBOARD_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && "object" in parsed) {
+      const sourceSlideIndex = Number((parsed as { sourceSlideIndex?: unknown }).sourceSlideIndex);
+      return {
+        object: (parsed as { object: unknown }).object,
+        sourceSlideIndex: Number.isFinite(sourceSlideIndex) ? sourceSlideIndex : null,
+      };
+    }
+    // Backward-compatible read for older clipboard snapshots that stored the
+    // fabric object directly without metadata.
+    return { object: parsed, sourceSlideIndex: null };
   } catch {
     return null;
   }
@@ -4010,7 +4027,8 @@ export function CanvasEditor({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         Promise.resolve((active as any).clone()).then((cloned) => {
           objectClipboardSlot.value = cloned;
-          persistClipboard(active);
+          objectClipboardMetaSlot.sourceSlideIndex = currentSlideIndexRef.current;
+          persistClipboard(active, currentSlideIndexRef.current);
         }).catch((err) => console.warn("[copy] clone failed", err));
         return;
       }
@@ -4021,7 +4039,8 @@ export function CanvasEditor({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         Promise.resolve((active as any).clone()).then((cloned) => {
           objectClipboardSlot.value = cloned;
-          persistClipboard(active);
+          objectClipboardMetaSlot.sourceSlideIndex = currentSlideIndexRef.current;
+          persistClipboard(active, currentSlideIndexRef.current);
           deleteSelected();
         }).catch((err) => console.warn("[cut] clone failed", err));
         return;
@@ -4097,18 +4116,21 @@ export function CanvasEditor({
           let cloned: any;
           let baseLeft: number;
           let baseTop: number;
+          let sourceSlideIndex: number | null;
 
           if (objectClipboardSlot.value) {
             // Fast path: clone the live fabric reference.
             cloned = await Promise.resolve(objectClipboardSlot.value.clone());
             baseLeft = objectClipboardSlot.value.left || 0;
             baseTop = objectClipboardSlot.value.top || 0;
+            sourceSlideIndex = objectClipboardMetaSlot.sourceSlideIndex;
           } else {
+            if (!persisted) throw new Error("No persisted clipboard");
             // Reload path: re-hydrate from the JSON snapshot in localStorage.
             // fabric.util.enlivenObjects fetches any image src async and returns
             // a fully-constructed fabric object ready to add to a canvas.
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const data = persisted as any;
+            const data = persisted.object as any;
             const enlivened: unknown = await new Promise((resolve, reject) => {
               try {
                 const ret = fabric.util?.enlivenObjects?.([data]);
@@ -4121,11 +4143,14 @@ export function CanvasEditor({
             if (!cloned) throw new Error("enlivenObjects returned nothing");
             baseLeft = (data?.left as number) || 0;
             baseTop = (data?.top as number) || 0;
+            sourceSlideIndex = persisted.sourceSlideIndex;
           }
 
+          const sameSlide = sourceSlideIndex === currentSlideIndexRef.current;
+          const offset = sameSlide ? 24 : 0;
           cloned.set({
-            left: baseLeft + 24,
-            top: baseTop + 24,
+            left: baseLeft + offset,
+            top: baseTop + offset,
             originX: "left",
             originY: "top",
           });
@@ -4136,7 +4161,8 @@ export function CanvasEditor({
           saveCurrentSlide();
           // Refresh both layers so consecutive Ctrl+V keeps cascading.
           objectClipboardSlot.value = cloned;
-          persistClipboard(cloned);
+          objectClipboardMetaSlot.sourceSlideIndex = currentSlideIndexRef.current;
+          persistClipboard(cloned, currentSlideIndexRef.current);
         } catch (err) {
           console.warn("[paste] object paste failed", err);
         }

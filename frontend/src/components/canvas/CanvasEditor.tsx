@@ -2620,9 +2620,15 @@ export function CanvasEditor({
     const results = await Promise.all(
       imageMembers.map(async (img) => {
         try {
+          // Prefer the original element's src — equal to getSrc() for normal
+          // images, so this is just defensive. The "URL too long" 누끼/enhance
+          // failure was actually caused by images whose src IS a data: URL
+          // (uploaded photos, composites, AI edits): the backend's httpx.get
+          // rejected the long data URI. The real fix is server-side — the
+          // backend now decodes data: URLs directly (see image_cutout.py).
           const currentSrc =
-            (typeof img.getSrc === "function" ? img.getSrc() : null) ||
             img._originalElement?.src ||
+            (typeof img.getSrc === "function" ? img.getSrc() : null) ||
             img.src ||
             null;
           const originUrl = _resolveOriginalSrc(currentSrc);
@@ -2670,9 +2676,15 @@ export function CanvasEditor({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       imageMembers.map(async (img: any) => {
         try {
+          // Prefer the original element's src — equal to getSrc() for normal
+          // images, so this is just defensive. The "URL too long" 누끼/enhance
+          // failure was actually caused by images whose src IS a data: URL
+          // (uploaded photos, composites, AI edits): the backend's httpx.get
+          // rejected the long data URI. The real fix is server-side — the
+          // backend now decodes data: URLs directly (see image_cutout.py).
           const currentSrc =
-            (typeof img.getSrc === "function" ? img.getSrc() : null) ||
             img._originalElement?.src ||
+            (typeof img.getSrc === "function" ? img.getSrc() : null) ||
             img.src ||
             null;
           const originUrl = _resolveOriginalSrc(currentSrc);
@@ -3389,6 +3401,17 @@ export function CanvasEditor({
         pb.set({ stroke: null, strokeWidth: 0 });
         canvas!.renderAll();
       }
+      // Hide user-drawn guides (안내선) for the export. They're editor-only
+      // alignment aids that must NOT appear in the downloaded PNG (feedback
+      // slide 2). Guides aren't excludeFromExport (they persist via toJSON),
+      // and toDataURL renders by `visible`, not excludeFromExport — so hide
+      // them around the capture and restore after. Only the currently-shown
+      // guides are flipped, so the guidesVisible toggle is preserved.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const exportHiddenGuides = (canvas!.getObjects() as any[]).filter(
+        (o) => isGuide(o) && o.visible !== false,
+      );
+      for (const g of exportHiddenGuides) g.visible = false;
       const { w: pageW, h: pageH } = canvasSizeRef.current;
       const dataUrl = canvas!.toDataURL({
         format: "png",
@@ -3401,6 +3424,7 @@ export function CanvasEditor({
       if (pb) {
         pb.set({ stroke: savedStroke, strokeWidth: savedStrokeWidth });
       }
+      for (const g of exportHiddenGuides) g.visible = true;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (canvas as any).__suppressPageOutline = false;
       if (savedVT) canvas!.setViewportTransform(savedVT);

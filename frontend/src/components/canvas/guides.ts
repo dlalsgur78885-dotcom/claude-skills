@@ -46,8 +46,12 @@ export function createGuideObject(
     hasBorders: false,
     hoverCursor: axis === "x" ? "ew-resize" : "ns-resize",
     moveCursor: axis === "x" ? "ew-resize" : "ns-resize",
-    perPixelTargetFind: true,
-    targetFindTolerance: 6,
+    // Widen the mouse hit area without thickening the line (feedback slide 3).
+    // perPixelTargetFind makes a thin 3px line almost un-clickable and bumping
+    // targetFindTolerance doesn't help; disabling it and using padding makes
+    // the clickable band ~padding px on each side of the stroke instead.
+    perPixelTargetFind: false,
+    padding: 25,
     selectable: true,
     evented: true,
     // Don't export to PNG/render output — exclude on flatten by checking
@@ -93,7 +97,11 @@ export function reapplyGuideConfig(line: any) {
     hasBorders: false,
     hoverCursor: axis === "x" ? "ew-resize" : "ns-resize",
     moveCursor: axis === "x" ? "ew-resize" : "ns-resize",
-    perPixelTargetFind: true,
-    targetFindTolerance: 6,
+    // Widen the mouse hit area without thickening the line (feedback slide 3).
+    // perPixelTargetFind makes a thin 3px line almost un-clickable and bumping
+    // targetFindTolerance doesn't help; disabling it and using padding makes
+    // the clickable band ~padding px on each side of the stroke instead.
+    perPixelTargetFind: false,
+    padding: 25,
   });
 }

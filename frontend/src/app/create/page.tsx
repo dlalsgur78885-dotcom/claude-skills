@@ -32,6 +32,28 @@ function imgSrc(raw?: string | null): string {
   return raw;
 }
 
+function extractInstagramPostUrls(text: string): string[] {
+  const matches = text.match(/https?:\/\/(?:www\.|m\.)?instagram\.com\/[^\s,]+/gi) || [];
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const raw of matches) {
+    const cleaned = raw.replace(/[)\].,，。]+$/g, "");
+    let ok = false;
+    try {
+      const url = new URL(cleaned);
+      ok = /(^|\.)instagram\.com$/i.test(url.hostname)
+        && /\/(?:p|reel|reels|tv|share)(?:\/|$)/i.test(url.pathname);
+    } catch {
+      ok = false;
+    }
+    if (ok && !seen.has(cleaned)) {
+      seen.add(cleaned);
+      urls.push(cleaned);
+    }
+  }
+  return urls;
+}
+
 // Mirrors backend `carousel_renderer._LAYOUT_PREFERENCE` + `_pick_layout` so
 // the frontend can show the user EXACTLY which layout each slide will receive
 // at render time. Keep this in sync with the backend (search for the same
@@ -235,10 +257,7 @@ export default function CreatePage() {
 
   async function handleGenerate(refs?: number[]) {
     const ids = refs || refIds;
-    const postUrls = postUrlsText
-      .split(/[\n,]+/)
-      .map((s) => s.trim())
-      .filter((s) => /instagram\.com\/(p|reel|reels)\//i.test(s));
+    const postUrls = extractInstagramPostUrls(postUrlsText);
     if (!topic.trim() && ids.length === 0 && postUrls.length === 0) return;
     setGenerating(true);
     try {
@@ -1234,10 +1253,7 @@ export default function CreatePage() {
 
       {/* Step 0: 경쟁사 URL 입력 (레퍼런스 없을 때) */}
       {step === 0 && !generating && refIds.length === 0 && (() => {
-        const validUrls = postUrlsText
-          .split(/[\n,]+/)
-          .map((s) => s.trim())
-          .filter((s) => /instagram\.com\/(p|reel|reels)\//i.test(s));
+        const validUrls = extractInstagramPostUrls(postUrlsText);
         const canSubmit = refIds.length > 0 || validUrls.length > 0 || topic.trim().length > 0;
         return (
         <div>

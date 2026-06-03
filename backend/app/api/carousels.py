@@ -624,7 +624,7 @@ async def generate_content(
                         + "\n".join(desc_lines)
                     )
                     raw = await _call_api(
-                        "gemini/gemini-2.0-flash",
+                        "gemini/gemini-2.5-flash",
                         [{"role": "user", "content": prompt}],
                         json_mode=True,
                         max_tokens=2048,
@@ -970,12 +970,22 @@ async def translate_keyword_endpoint(
     )
     try:
         raw = await _call_api(
-            "gemini/gemini-2.0-flash",
+            "gemini/gemini-2.5-flash",
             [{"role": "user", "content": prompt}],
             json_mode=True,
             max_tokens=512,
         )
-        data_obj = _json.loads(raw) if isinstance(raw, str) else raw
+        if isinstance(raw, str):
+            raw_text = raw.strip()
+            if raw_text.startswith("```"):
+                parts = raw_text.split("```")
+                if len(parts) >= 3:
+                    raw_text = parts[1].strip()
+                    if raw_text.lower().startswith("json"):
+                        raw_text = raw_text[4:].strip()
+            data_obj = _json.loads(raw_text)
+        else:
+            data_obj = raw
         if isinstance(data_obj, list) and len(data_obj) == 1 and isinstance(data_obj[0], dict):
             data_obj = data_obj[0]
         if not isinstance(data_obj, dict):
@@ -1073,6 +1083,17 @@ class ParaphraseRequest(BaseModel):
     texts: list[str]
     tone: str = "marketing"  # "marketing" | "casual" | "punchy"
     kind: str = "body"  # "body" (카드뉴스 속지) | "title" (제목)
+
+
+def _strip_json_fence(raw: str) -> str:
+    text = raw.strip()
+    if text.startswith("```"):
+        parts = text.split("```")
+        if len(parts) >= 3:
+            text = parts[1].strip()
+            if text.lower().startswith("json"):
+                text = text[4:].strip()
+    return text
 
 
 def default_paraphrase_body(n: int, tone: str = "marketing") -> str:
@@ -1192,6 +1213,7 @@ async def paraphrase_endpoint(
     batch — much cheaper than per-cell round trips.
     """
     import json as _json
+    from json import JSONDecodeError
     from app.agents.llm_client import _call_api
 
     texts = [t for t in (body.texts or []) if isinstance(t, str)]
@@ -1213,23 +1235,48 @@ async def paraphrase_endpoint(
     prompt = (
         f"{body_text}\n\n"
         f"입력:\n{numbered}\n\n"
-        f"출력: 위 {len(texts)}개에 대응하는 JSON 배열만. 예: [\"새 표현1\", \"새 표현2\", ...]"
+        f"출력: 위 {len(texts)}개에 대응하는 JSON 배열만. 예: [\"새 표현1\", \"새 표현2\", ...]\n"
+        f"문자열 안 줄바꿈은 반드시 \\\\n으로 escape하고, 실제 줄바꿈을 넣지 마세요."
     )
     try:
+        max_tokens = max(2048, min(8192, sum(len(t) for t in texts) * 3 + 768))
         raw = await _call_api(
-            "gemini/gemini-2.0-flash",
+            "gemini/gemini-2.5-flash",
             [{"role": "user", "content": prompt}],
             json_mode=True,
-            max_tokens=2048,
+            max_tokens=max_tokens,
+            temperature=0.3,
         )
-        data_obj = _json.loads(raw) if isinstance(raw, str) else raw
+        try:
+            data_obj = _json.loads(_strip_json_fence(raw)) if isinstance(raw, str) else raw
+        except JSONDecodeError as first_err:
+            logger.warning(f"paraphrase JSON parse failed; retrying once: {first_err}")
+            retry_prompt = (
+                "다음 입력을 같은 순서의 JSON 문자열 배열로만 다시 써주세요.\n"
+                "마크다운 금지, 설명 금지, 객체 금지. 반드시 유효한 JSON 배열만 출력하세요.\n"
+                "문자열 안 따옴표와 줄바꿈은 JSON 규칙에 맞게 escape하세요.\n\n"
+                f"입력 JSON 배열:\n{_json.dumps(texts, ensure_ascii=False)}"
+            )
+            try:
+                raw = await _call_api(
+                    "gemini/gemini-2.5-flash",
+                    [{"role": "user", "content": retry_prompt}],
+                    json_mode=True,
+                    max_tokens=max_tokens,
+                    temperature=0.2,
+                )
+                data_obj = _json.loads(_strip_json_fence(raw)) if isinstance(raw, str) else raw
+            except Exception as retry_err:
+                logger.exception(f"paraphrase retry failed; returning originals: {retry_err}")
+                return {"paraphrased": texts, "fallback": True}
         if isinstance(data_obj, dict):
             for key in ("paraphrased", "results", "data", "items"):
                 if isinstance(data_obj.get(key), list):
                     data_obj = data_obj[key]
                     break
         if not isinstance(data_obj, list):
-            raise ValueError(f"non-list response: {str(data_obj)[:120]}")
+            logger.warning(f"paraphrase returned non-list; returning originals: {str(data_obj)[:120]}")
+            return {"paraphrased": texts, "fallback": True}
         out: list[str] = []
         for i, item in enumerate(data_obj):
             if isinstance(item, str):
@@ -1245,7 +1292,7 @@ async def paraphrase_endpoint(
         return {"paraphrased": out}
     except Exception as e:
         logger.exception("paraphrase failed")
-        raise HTTPException(status_code=502, detail=f"문구 치환 실패: {e}")
+        return {"paraphrased": texts, "fallback": True}
 
 
 class CaptionParaphraseRequest(BaseModel):
@@ -1298,7 +1345,8 @@ async def paraphrase_caption_endpoint(
     fresh wording. Same anti-AI-tell rules as /paraphrase.
     """
     import json as _json
-    from app.agents.llm_client import _call_api
+    from json import JSONDecodeError
+    from app.agents.llm_client import _call_api, llm_call
 
     raw_caption = (body.caption or "").strip()
     if not raw_caption:
@@ -1319,23 +1367,69 @@ async def paraphrase_caption_endpoint(
         f"# 출력 형식\n"
         f"단일 JSON 객체(배열 X, 마크다운 X)만 출력:\n"
         f'  {{"hook": "한국어 한 줄", "body": "한국어 본문"}}\n\n'
+        f"문자열 안 줄바꿈은 반드시 \\\\n으로 escape하고, 실제 줄바꿈을 넣지 마세요.\n\n"
         f"{caption_rules}\n\n"
         f"# 원문 캡션\n{raw_caption}\n\n"
         f"위 규칙에 따라 JSON만 출력:"
     )
     try:
-        raw = await _call_api(
-            "gemini/gemini-2.0-flash",
-            [{"role": "user", "content": prompt}],
-            json_mode=True,
-            max_tokens=2048,
-        )
-        data_obj = _json.loads(raw) if isinstance(raw, str) else raw
+        messages = [{"role": "user", "content": prompt}]
+        max_tokens = max(2048, min(8192, len(raw_caption) * 2 + 768))
+        try:
+            raw = await _call_api(
+                "gemini/gemini-2.5-flash",
+                messages,
+                json_mode=True,
+                max_tokens=max_tokens,
+                temperature=0.3,
+            )
+        except Exception as gemini_err:
+            msg = str(gemini_err)
+            is_quota = (
+                "429" in msg
+                or "RateLimit" in msg
+                or "RESOURCE_EXHAUSTED" in msg
+                or "monthly spending cap" in msg
+            )
+            if not is_quota:
+                raise
+            logger.warning("caption paraphrase Gemini quota hit; falling back to Claude Haiku")
+            raw = await llm_call(
+                "haiku",
+                messages,
+                json_mode=True,
+                max_tokens=max_tokens,
+            )
+        try:
+            data_obj = _json.loads(_strip_json_fence(raw)) if isinstance(raw, str) else raw
+        except JSONDecodeError as first_err:
+            logger.warning(f"caption paraphrase JSON parse failed; retrying once: {first_err}")
+            retry_prompt = (
+                "다음 인스타그램 캡션을 다시 쓰고, 유효한 단일 JSON 객체만 출력하세요.\n"
+                "마크다운 금지, 설명 금지. 키는 hook, body 두 개만 사용하세요.\n"
+                "문자열 안 따옴표와 줄바꿈은 JSON 규칙에 맞게 escape하세요.\n"
+                f"주제: {topic or ''}\n\n"
+                f"원문 캡션:\n{raw_caption}\n\n"
+                '출력 예: {"hook":"한국어 한 줄","body":"한국어 본문"}'
+            )
+            try:
+                raw = await _call_api(
+                    "gemini/gemini-2.5-flash",
+                    [{"role": "user", "content": retry_prompt}],
+                    json_mode=True,
+                    max_tokens=max_tokens,
+                    temperature=0.2,
+                )
+                data_obj = _json.loads(_strip_json_fence(raw)) if isinstance(raw, str) else raw
+            except Exception as retry_err:
+                logger.exception(f"caption paraphrase retry failed; returning original: {retry_err}")
+                return {"paraphrased": raw_caption, "hook": "", "body": raw_caption, "fallback": True}
         # LLM occasionally wraps the object in a 1-element array. Unwrap.
         if isinstance(data_obj, list) and len(data_obj) == 1 and isinstance(data_obj[0], dict):
             data_obj = data_obj[0]
         if not isinstance(data_obj, dict):
-            raise ValueError(f"non-dict response: {str(data_obj)[:120]}")
+            logger.warning(f"caption paraphrase returned non-dict; returning original: {str(data_obj)[:120]}")
+            return {"paraphrased": raw_caption, "hook": "", "body": raw_caption, "fallback": True}
         hook = str(data_obj.get("hook") or "").strip()
         body_text = str(data_obj.get("body") or "").strip()
         # Defensive cleanup — the model occasionally ignores prompt constraints.
@@ -1356,7 +1450,7 @@ async def paraphrase_caption_endpoint(
         return {"paraphrased": full, "hook": hook, "body": body_text}
     except Exception as e:
         logger.exception("caption paraphrase failed")
-        raise HTTPException(status_code=502, detail=f"캡션 치환 실패: {e}")
+        return {"paraphrased": raw_caption, "hook": "", "body": raw_caption, "fallback": True}
 
 
 @router.post("/orchestrate", response_model=OrchestratorResponse)

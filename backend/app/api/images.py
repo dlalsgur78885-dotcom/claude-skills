@@ -157,13 +157,41 @@ async def proxy_external_image(url: str = Query(..., min_length=8)):
         # Many CDNs (naver, live-japan) hotlink-block missing/foreign referers.
         "Referer": _referer_for(host),
     }
-    try:
-        async with httpx.AsyncClient(timeout=15, headers=headers, follow_redirects=True) as c:
-            r = await c.get(url)
-        r.raise_for_status()
-    except httpx.HTTPError as e:
-        logger.warning(f"[proxy] fetch failed for {url}: {e}")
-        raise HTTPException(status_code=502, detail=f"이미지 가져오기 실패: {e}")
+    # Retry transient failures. The most common cause of a lost editor slide was
+    # naver/CDN origins intermittently throttling the prod (AWS) IP: a single
+    # timeout / connection reset / 5xx here returns 502, the canvas image fails
+    # to load, and the slide blanks. Origins usually recover within a beat, so a
+    # couple of backoff retries fetch the image and let it land in the disk cache
+    # (after which it loads forever). 4xx (404 gone, 403 hotlink-block) is
+    # permanent — never retried, it would only waste time.
+    last_err: Exception | None = None
+    r = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=15, headers=headers, follow_redirects=True) as c:
+                r = await c.get(url)
+            r.raise_for_status()
+            break  # success
+        except httpx.HTTPStatusError as e:
+            last_err = e
+            status = e.response.status_code if e.response is not None else 0
+            if 400 <= status < 500:
+                logger.warning(f"[proxy] fetch failed ({status}, permanent) for {url}: {e}")
+                raise HTTPException(status_code=502, detail=f"이미지 가져오기 실패: {e}")
+            # 5xx — transient origin error, fall through to retry.
+        except httpx.TransportError as e:
+            # Timeout / connection reset / DNS — transient, fall through to retry.
+            last_err = e
+        except httpx.HTTPError as e:
+            # Anything else httpx can raise (bad URL, too many redirects, decode
+            # error) is not transient — match the original 502 and stop.
+            logger.warning(f"[proxy] fetch failed (non-retryable) for {url}: {e}")
+            raise HTTPException(status_code=502, detail=f"이미지 가져오기 실패: {e}")
+        if attempt < 2:
+            await asyncio.sleep(0.6 * (attempt + 1))
+    else:
+        logger.warning(f"[proxy] fetch failed after retries for {url}: {last_err}")
+        raise HTTPException(status_code=502, detail=f"이미지 가져오기 실패: {last_err}")
 
     if len(r.content) > _PROXY_MAX_BYTES:
         raise HTTPException(status_code=413, detail="이미지가 너무 큽니다 (>20MB)")

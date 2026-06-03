@@ -185,6 +185,56 @@ function rgbaFromPsd(c: any): string | null {
   return a < 1 ? `rgba(${r},${g},${b},${a})` : `#${[r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
 }
 
+// 1×1 transparent PNG. Stands in for an image whose src is currently
+// unreachable so fabric's all-or-nothing loadFromJSON doesn't reject (and blank)
+// the entire slide over one dead photo. The object keeps its serialized
+// width/height — fabric's _setWidthHeight prefers the passed size over the
+// element's natural 1×1 — so the slot geometry is preserved; the original src
+// is stashed on data._brokenSrc and restored on save.
+const TRANSPARENT_PX =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+/** Resolve true if `src` loads as an image, false on a definitive load error.
+ *  Optimistic on timeout (resolves true) so a slow-but-valid image is never
+ *  falsely replaced — the loadFailedRef guard still protects data if a load it
+ *  let through ultimately fails. */
+function imageReachable(src: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!src) { resolve(false); return; }
+    let done = false;
+    const finish = (v: boolean) => { if (!done) { done = true; resolve(v); } };
+    const im = new Image();
+    im.onload = () => finish(true);
+    im.onerror = () => finish(false);
+    try { im.crossOrigin = "anonymous"; } catch { /* ignore */ }
+    im.src = src;
+    setTimeout(() => finish(true), 12000);
+  });
+}
+
+/** Swap every unreachable image src in a fabric slide JSON for a transparent
+ *  placeholder, stashing the original on data._brokenSrc. Mutates `data` in
+ *  place. Reachable images (the common case — served from the proxy's disk
+ *  cache) are left untouched. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function sanitizeUnreachableImages(data: any): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const objs: any[] = data?.objects || [];
+  await Promise.all(
+    objs.map(async (o) => {
+      const t = String(o?.type || "").toLowerCase();
+      if (t !== "image" && t !== "fabricimage") return;
+      if (typeof o.src !== "string" || !o.src) return;
+      if (o?.data?._brokenSrc) return; // already sanitized in a prior pass
+      const ok = await imageReachable(o.src);
+      if (!ok) {
+        o.data = { ...(o.data || {}), _brokenSrc: o.src };
+        o.src = TRANSPARENT_PX;
+      }
+    }),
+  );
+}
+
 interface CanvasEditorProps {
   initialSlides?: SlideData[];
   onSave?: (slides: SlideData[]) => void;
@@ -383,6 +433,15 @@ export function CanvasEditor({
   // canvas back onto the slide.
   const loadTokenRef = useRef(0);
   const loadingRef = useRef(false);
+  // Set true when a slide load does NOT complete successfully — most commonly
+  // when fabric's all-or-nothing loadFromJSON rejects because one image's src
+  // is unreachable (e.g. an expired source-CDN link), which leaves the canvas
+  // blank after the canvas.clear() that every load starts with. While true,
+  // saveCurrentSlide MUST NOT serialize the (blank) canvas back over the slide:
+  // doing so would wipe the slide's real content, and the 1s debounced autosave
+  // would then persist that empty slide to the DB — permanent data loss. Reset
+  // at the start of every load attempt; only a failed load leaves it true.
+  const loadFailedRef = useRef(false);
 
   // ─── Auto-save ─────────────────────────────────────────────────────────
   // Watch the slides array; whenever the user mutates something the editor
@@ -1082,8 +1141,26 @@ export function CanvasEditor({
     // A slide load is mid-flight — the canvas is half-built. Serializing it
     // now would overwrite the slide with partial or empty content.
     if (loadingRef.current) return;
+    // The last load FAILED (e.g. an unreachable image made loadFromJSON reject),
+    // so the canvas is blank but the slide's stored content is still intact.
+    // Serializing this empty canvas would overwrite that content and the
+    // autosave would persist the loss to the DB. Skip until a load succeeds —
+    // this is what keeps a dead-image slide from being silently wiped.
+    if (loadFailedRef.current) return;
 
     const json = canvas.toJSON();
+    // Restore any placeholder'd image src: a dead-image object carries the
+    // transparent stand-in on the live canvas (see sanitizeUnreachableImages),
+    // but the DB must keep the ORIGINAL src so a transiently-dead image (expired
+    // CDN link, proxy hiccup) isn't permanently dropped from the saved slide.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const o of (((json as any).objects || []) as any[])) {
+      const orig = o?.data?._brokenSrc;
+      if (typeof orig === "string" && orig) {
+        o.src = orig;
+        delete o.data._brokenSrc;
+      }
+    }
     const { w, h } = canvasSizeRef.current;
     // The user-visible slide background lives on the page-boundary rect now
     // (canvas.backgroundColor paints the gutter). Pull its fill back into the
@@ -1122,6 +1199,9 @@ export function CanvasEditor({
     // saveCurrentSlide skips while this load is in flight.
     const myToken = ++loadTokenRef.current;
     loadingRef.current = true;
+    // Fresh attempt — clear any failure left by a previous load of another
+    // slide so a successful load here re-enables saving.
+    loadFailedRef.current = false;
 
     const slideData = currentSlides[index];
 
@@ -1145,9 +1225,31 @@ export function CanvasEditor({
       // sub-rectangle of the page, hiding most of the content. Strip it.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const cleanData = { ...(slideData as any), clipPath: null };
-      // Fabric round-trip path
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (canvas as any).loadFromJSON(cleanData).then(async () => {
+      // Fabric round-trip path. fabric's loadFromJSON is all-or-nothing — one
+      // image whose src is unreachable makes enlivenObjects reject and the whole
+      // slide blanks. Sanitize first (swap dead srcs for a transparent
+      // placeholder) so the user's text/layout always renders; saveCurrentSlide
+      // restores the original src so a (usually only transiently) dead image is
+      // never dropped from the stored data.
+      (async () => {
+        const fabric = await getFabric();
+        if (myToken !== loadTokenRef.current) return;
+        await sanitizeUnreachableImages(cleanData);
+        if (myToken !== loadTokenRef.current) return;
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (canvas as any).loadFromJSON(cleanData);
+        } catch {
+          // Still failed after sanitizing (a non-image object, or an image that
+          // errors only inside fabric). The canvas was cleared at the top and
+          // never repopulated, so it's blank — flag it so saveCurrentSlide won't
+          // serialize this blank canvas over the slide's intact stored content.
+          if (myToken === loadTokenRef.current) {
+            loadFailedRef.current = true;
+            loadingRef.current = false;
+          }
+          return;
+        }
         if (myToken !== loadTokenRef.current) return;
         // loadFromJSON reapplies the dimensions / backgroundColor / viewport
         // transform that were baked into the saved JSON — i.e. page-sized
@@ -1162,7 +1264,6 @@ export function CanvasEditor({
         // resolve, null it again so the editor view stays unclipped.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (canvas as any).clipPath = null;
-        const fabric = await getFabric();
         ensurePageBoundary(canvas, fabric, pageW, pageH, bgFill);
         markBackdropObjects(canvas);
         // User-drawn guides survive the toJSON round-trip via their `data`
@@ -1172,9 +1273,7 @@ export function CanvasEditor({
         canvas.renderAll();
         lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
         if (myToken === loadTokenRef.current) loadingRef.current = false;
-      }).catch(() => {
-        if (myToken === loadTokenRef.current) loadingRef.current = false;
-      });
+      })();
       return;
     }
 
@@ -1436,7 +1535,13 @@ export function CanvasEditor({
       lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
       if (myToken === loadTokenRef.current) loadingRef.current = false;
     })().catch(() => {
-      if (myToken === loadTokenRef.current) loadingRef.current = false;
+      // Reconstruction threw before finishing — the canvas may hold only part
+      // of the slide. Flag it so saveCurrentSlide won't persist that partial
+      // state over the slide's intact stored content.
+      if (myToken === loadTokenRef.current) {
+        loadFailedRef.current = true;
+        loadingRef.current = false;
+      }
     });
   }
 

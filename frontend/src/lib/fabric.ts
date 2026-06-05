@@ -64,6 +64,29 @@ export async function getFabric(): Promise<any> {
       (proto as { __dataPatched?: boolean }).__dataPatched = true;
     }
   }
+
+  // ─── Preserve original src for placeholdered (unreachable) images ────
+  // The canvas editor swaps an unreachable image's src for a transparent 1×1
+  // placeholder so one dead photo can't blank the whole slide, and stashes the
+  // real URL on `obj.__originalSrc`. Patch FabricImage.toObject so EVERY
+  // serialization (toJSON / autosave / undo snapshot / resize) re-emits that
+  // original URL instead of the placeholder — the placeholder is display-only
+  // and must never reach the DB. No-op for normal images (no __originalSrc).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ImageClass = (fabric as any).FabricImage || (fabric as any).Image;
+  if (ImageClass?.prototype && !(ImageClass.prototype as { __originalSrcPatched?: boolean }).__originalSrcPatched) {
+    const baseImageToObject = ImageClass.prototype.toObject;
+    if (typeof baseImageToObject === "function") {
+      ImageClass.prototype.toObject = function (propertiesToInclude?: string[]) {
+        const obj = baseImageToObject.call(this, propertiesToInclude);
+        const orig = (this as { __originalSrc?: unknown }).__originalSrc;
+        if (typeof orig === "string" && orig) obj.src = orig;
+        return obj;
+      };
+      (ImageClass.prototype as { __originalSrcPatched?: boolean }).__originalSrcPatched = true;
+    }
+  }
+
   cached = fabric;
   // Expose for E2E tests / debugging. Lets headless scripts build an
   // ActiveSelection without bundling fabric themselves. No effect at runtime

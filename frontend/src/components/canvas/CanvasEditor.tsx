@@ -188,9 +188,10 @@ function rgbaFromPsd(c: any): string | null {
 // 1×1 transparent PNG. Stands in for an image whose src is currently
 // unreachable so fabric's all-or-nothing loadFromJSON doesn't reject (and blank)
 // the entire slide over one dead photo. The object keeps its serialized
-// width/height — fabric's _setWidthHeight prefers the passed size over the
-// element's natural 1×1 — so the slot geometry is preserved; the original src
-// is stashed on data._brokenSrc and restored on save.
+// width/height (fabric's _setWidthHeight prefers the passed size over the
+// element's natural 1×1), so the slot geometry is preserved. The original src
+// is reattached as `__originalSrc` after load and re-emitted by the patched
+// image toObject (see fabric.ts) — so the placeholder NEVER reaches the DB.
 const TRANSPARENT_PX =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
@@ -212,27 +213,32 @@ function imageReachable(src: string): Promise<boolean> {
   });
 }
 
-/** Swap every unreachable image src in a fabric slide JSON for a transparent
- *  placeholder, stashing the original on data._brokenSrc. Mutates `data` in
- *  place. Reachable images (the common case — served from the proxy's disk
+/** Replace every unreachable image src in a fabric slide JSON with a transparent
+ *  placeholder so loadFromJSON succeeds. Returns the replaced objects (array
+ *  index + original src) so the caller can reattach `__originalSrc` to the live
+ *  fabric objects after enliven — the patched image toObject then always
+ *  re-emits the original URL, so the placeholder never reaches the DB. Mutates
+ *  only `data.objects[*].src`; reachable images (the common case — proxy disk
  *  cache) are left untouched. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function sanitizeUnreachableImages(data: any): Promise<void> {
+async function sanitizeUnreachableImages(data: any): Promise<Array<{ index: number; originalSrc: string }>> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const objs: any[] = data?.objects || [];
+  const replaced: Array<{ index: number; originalSrc: string }> = [];
   await Promise.all(
-    objs.map(async (o) => {
+    objs.map(async (o, i) => {
       const t = String(o?.type || "").toLowerCase();
       if (t !== "image" && t !== "fabricimage") return;
       if (typeof o.src !== "string" || !o.src) return;
-      if (o?.data?._brokenSrc) return; // already sanitized in a prior pass
+      if (o.src.startsWith("data:")) return; // inline / already a placeholder — nothing to fetch
       const ok = await imageReachable(o.src);
       if (!ok) {
-        o.data = { ...(o.data || {}), _brokenSrc: o.src };
+        replaced.push({ index: i, originalSrc: o.src });
         o.src = TRANSPARENT_PX;
       }
     }),
   );
+  return replaced;
 }
 
 interface CanvasEditorProps {
@@ -1149,18 +1155,9 @@ export function CanvasEditor({
     if (loadFailedRef.current) return;
 
     const json = canvas.toJSON();
-    // Restore any placeholder'd image src: a dead-image object carries the
-    // transparent stand-in on the live canvas (see sanitizeUnreachableImages),
-    // but the DB must keep the ORIGINAL src so a transiently-dead image (expired
-    // CDN link, proxy hiccup) isn't permanently dropped from the saved slide.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const o of (((json as any).objects || []) as any[])) {
-      const orig = o?.data?._brokenSrc;
-      if (typeof orig === "string" && orig) {
-        o.src = orig;
-        delete o.data._brokenSrc;
-      }
-    }
+    // (Placeholder'd dead images already serialize their ORIGINAL url here:
+    // the patched FabricImage.toObject re-emits __originalSrc, so json.objects
+    // never carries the transparent stand-in. No per-save restore needed.)
     const { w, h } = canvasSizeRef.current;
     // The user-visible slide background lives on the page-boundary rect now
     // (canvas.backgroundColor paints the gutter). Pull its fill back into the
@@ -1228,13 +1225,14 @@ export function CanvasEditor({
       // Fabric round-trip path. fabric's loadFromJSON is all-or-nothing — one
       // image whose src is unreachable makes enlivenObjects reject and the whole
       // slide blanks. Sanitize first (swap dead srcs for a transparent
-      // placeholder) so the user's text/layout always renders; saveCurrentSlide
-      // restores the original src so a (usually only transiently) dead image is
-      // never dropped from the stored data.
+      // placeholder) so the user's text/layout always renders; the placeholdered
+      // objects get their original URL reattached as __originalSrc after load,
+      // and the patched image toObject re-emits it on every save — so a dead
+      // image shows as an empty slot but its real reference is never lost.
       (async () => {
         const fabric = await getFabric();
         if (myToken !== loadTokenRef.current) return;
-        await sanitizeUnreachableImages(cleanData);
+        const replaced = await sanitizeUnreachableImages(cleanData);
         if (myToken !== loadTokenRef.current) return;
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1251,6 +1249,18 @@ export function CanvasEditor({
           return;
         }
         if (myToken !== loadTokenRef.current) return;
+        // Reattach the original URL to each placeholdered image so the patched
+        // image toObject re-emits it on every save (the transparent placeholder
+        // is display-only and must never be persisted). Indices still match
+        // cleanData.objects here — ensurePageBoundary prepends the page rect below.
+        if (replaced.length) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const loaded = canvas.getObjects() as any[];
+          for (const { index, originalSrc } of replaced) {
+            const o = loaded[index];
+            if (o) o.__originalSrc = originalSrc;
+          }
+        }
         // loadFromJSON reapplies the dimensions / backgroundColor / viewport
         // transform that were baked into the saved JSON — i.e. page-sized
         // buffer, page-color gutter, identity transform. Re-establish our
@@ -2638,6 +2648,9 @@ export function CanvasEditor({
           if (typeof img.setSrc === "function") {
             await img.setSrc(proxiedImageUrl(out), { crossOrigin: "anonymous" });
           }
+          // No longer a dead placeholder — drop __originalSrc so the new src saves.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          delete (img as any).__originalSrc;
           img.dirty = true;
           return { img, ok: true };
         } catch (err) {
@@ -2693,6 +2706,9 @@ export function CanvasEditor({
           if (typeof img.setSrc === "function") {
             await img.setSrc(proxiedImageUrl(res.url), { crossOrigin: "anonymous" });
           }
+          // No longer a dead placeholder — drop __originalSrc so the new src saves.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          delete (img as any).__originalSrc;
           img.dirty = true;
           return { img, ok: true };
         } catch (err) {
@@ -2733,6 +2749,9 @@ export function CanvasEditor({
       if (typeof img.setSrc === "function") {
         await img.setSrc(proxiedImageUrl(path), { crossOrigin: "anonymous" });
       }
+      // Replaced with a real uploaded image — no longer a dead placeholder.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (img as any).__originalSrc;
       img.dirty = true;
       canvas.requestRenderAll();
       saveCurrentSlide();

@@ -1096,6 +1096,17 @@ def _strip_json_fence(raw: str) -> str:
     return text
 
 
+def _unescape_newlines(text: str) -> str:
+    r"""Turn a literal escaped newline the model emitted (a backslash followed
+    by 'n', i.e. the two characters ``\n``) into a real newline. Models asked to
+    JSON-escape line breaks sometimes double-escape, so ``json.loads`` leaves a
+    literal ``\n`` inside the string — the editor then shows "\n" instead of a
+    line break. Normalize the common forms so paraphrased 속지글/캡션 wrap."""
+    if not isinstance(text, str) or "\\" not in text:
+        return text
+    return text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
+
+
 def default_paraphrase_body(n: int, tone: str = "marketing") -> str:
     """Render the system-default body for the /paraphrase prompt.
 
@@ -1236,7 +1247,7 @@ async def paraphrase_endpoint(
         f"{body_text}\n\n"
         f"입력:\n{numbered}\n\n"
         f"출력: 위 {len(texts)}개에 대응하는 JSON 배열만. 예: [\"새 표현1\", \"새 표현2\", ...]\n"
-        f"문자열 안 줄바꿈은 반드시 \\\\n으로 escape하고, 실제 줄바꿈을 넣지 마세요."
+        f"문자열 안 줄바꿈은 반드시 \\n(JSON escape)으로 쓰고, 실제 줄바꿈은 넣지 마세요."
     )
     try:
         max_tokens = max(2048, min(8192, sum(len(t) for t in texts) * 3 + 768))
@@ -1280,9 +1291,9 @@ async def paraphrase_endpoint(
         out: list[str] = []
         for i, item in enumerate(data_obj):
             if isinstance(item, str):
-                out.append(item.strip())
+                out.append(_unescape_newlines(item.strip()))
             elif isinstance(item, dict):
-                out.append(str(item.get("text") or item.get("rewrite") or "").strip())
+                out.append(_unescape_newlines(str(item.get("text") or item.get("rewrite") or "").strip()))
             else:
                 out.append(texts[i] if i < len(texts) else "")
         # Pad/truncate to match input length so the caller can zip 1:1
@@ -1367,7 +1378,7 @@ async def paraphrase_caption_endpoint(
         f"# 출력 형식\n"
         f"단일 JSON 객체(배열 X, 마크다운 X)만 출력:\n"
         f'  {{"hook": "한국어 한 줄", "body": "한국어 본문"}}\n\n'
-        f"문자열 안 줄바꿈은 반드시 \\\\n으로 escape하고, 실제 줄바꿈을 넣지 마세요.\n\n"
+        f"문자열 안 줄바꿈은 반드시 \\n(JSON escape)으로 쓰고, 실제 줄바꿈은 넣지 마세요.\n\n"
         f"{caption_rules}\n\n"
         f"# 원문 캡션\n{raw_caption}\n\n"
         f"위 규칙에 따라 JSON만 출력:"
@@ -1430,8 +1441,8 @@ async def paraphrase_caption_endpoint(
         if not isinstance(data_obj, dict):
             logger.warning(f"caption paraphrase returned non-dict; returning original: {str(data_obj)[:120]}")
             return {"paraphrased": raw_caption, "hook": "", "body": raw_caption, "fallback": True}
-        hook = str(data_obj.get("hook") or "").strip()
-        body_text = str(data_obj.get("body") or "").strip()
+        hook = _unescape_newlines(str(data_obj.get("hook") or "").strip())
+        body_text = _unescape_newlines(str(data_obj.get("body") or "").strip())
         # Defensive cleanup — the model occasionally ignores prompt constraints.
         # 1) Strip emoji and other pictographic characters from the hook.
         import re as _re

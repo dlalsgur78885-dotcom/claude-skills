@@ -73,10 +73,18 @@ export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOver
     setEditAllOpen(false);
   }
 
+  // Load the registered CTA image ONCE on mount. `onAddCta` is a stable
+  // feature-flag prop in practice, but it's an inline function in the parent so
+  // its identity changes every CanvasEditor render — keeping it in the dep array
+  // re-fired this effect on every parent re-render and hammered GET /api/cta
+  // (dozens/sec under any re-render churn), saturating the browser's per-host
+  // connection pool and making unrelated requests time out. A later CTA upload
+  // updates ctaUrl directly via handleRegisterCta, so a one-shot load is enough.
   useEffect(() => {
     if (!onAddCta) return;
     api.getCtaImage().then((r) => setCtaUrl(r.url)).catch(() => {});
-  }, [onAddCta]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleRegisterCta(file: File) {
     setCtaBusy(true);

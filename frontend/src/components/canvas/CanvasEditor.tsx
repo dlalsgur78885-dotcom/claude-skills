@@ -587,10 +587,14 @@ export function CanvasEditor({
   // Template re-apply (header dropdown)
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [applyingTemplate, setApplyingTemplate] = useState(false);
+  // Load the template list ONCE on mount. onReapplyTemplate is an inline parent
+  // callback (new identity each render), so keeping it in the deps re-fired this
+  // on every re-render — same GET-flood anti-pattern as the CTA effect.
   useEffect(() => {
     if (!onReapplyTemplate) return;
     api.listTemplates().then((res) => setTemplates(res.templates || [])).catch(() => {});
-  }, [onReapplyTemplate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleTemplateChange(templateId: number) {
     if (!onReapplyTemplate || templateId === currentTemplateId) return;

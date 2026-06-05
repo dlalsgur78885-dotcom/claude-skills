@@ -135,6 +135,54 @@ async def get_carousel(
     return await _hydrate_source_url(carousel, db)
 
 
+def _guard_canvas_data(new_cd: dict, old_cd: dict | None) -> dict:
+    """Durable-boundary slide-wipe guard.
+
+    The editor's source of truth (``canvas_data["canvas_slides"]``) is a
+    fabric-JSON render serialized from a volatile in-memory canvas. fabric's
+    ``loadFromJSON`` clears the canvas mid-load (``clear()`` runs only after its
+    async ``enlivenObjects`` resolves), so a raced/glitched autosave can
+    serialize a momentarily-blank canvas and overwrite a populated slide with
+    ``objects: []`` — permanent data loss. The frontend guards this now, but the
+    durable layer must too: NO client may replace a populated slide with an
+    empty one. (Confirmed in prod data — carousels 13/14/15 had slides flattened
+    to ``objects: []`` while background/version/width/height survived.)
+
+    Only triggers on a pure edit (same slide count) so add/remove/reorder, which
+    legitimately change the count, pass through untouched. Non-destructive and
+    self-healing — the next real edit re-saves the slide normally.
+    """
+    if not isinstance(new_cd, dict) or not isinstance(old_cd, dict):
+        return new_cd
+    new_slides = new_cd.get("canvas_slides")
+    old_slides = old_cd.get("canvas_slides")
+    if not isinstance(new_slides, list) or not isinstance(old_slides, list):
+        return new_cd
+    if not new_slides or len(new_slides) != len(old_slides):
+        return new_cd
+
+    def _obj_count(slide: object) -> int:
+        objs = slide.get("objects") if isinstance(slide, dict) else None
+        return len(objs) if isinstance(objs, list) else 0
+
+    merged = list(new_slides)
+    preserved: list[int] = []
+    for i, (incoming, stored) in enumerate(zip(new_slides, old_slides)):
+        if _obj_count(incoming) == 0 and _obj_count(stored) > 0:
+            merged[i] = stored  # keep last-known-good slide
+            preserved.append(i)
+    if not preserved:
+        return new_cd
+    logger.warning(
+        "carousel update would empty populated slide(s) %s — kept stored "
+        "content (slide-wipe guard)",
+        preserved,
+    )
+    guarded = dict(new_cd)
+    guarded["canvas_slides"] = merged
+    return guarded
+
+
 @router.patch("/{carousel_id}", response_model=CarouselResponse)
 async def update_carousel(
     carousel_id: int,
@@ -153,6 +201,8 @@ async def update_carousel(
         raise HTTPException(status_code=404, detail="캐러셀을 찾을 수 없습니다")
 
     for field, value in data.model_dump(exclude_unset=True).items():
+        if field == "canvas_data" and value is not None:
+            value = _guard_canvas_data(value, carousel.canvas_data)
         setattr(carousel, field, value)
 
     await db.commit()

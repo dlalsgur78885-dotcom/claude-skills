@@ -409,6 +409,20 @@ export function CanvasEditor({
   currentSlideIndexRef.current = currentSlideIndex;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [selectedObject, setSelectedObject] = useState<any>(null);
+  // ── Object alignment (피드백: 콘텐츠 확인 — 정렬 도구) ──────────────────
+  // Design-space bounding box of the current real selection, the live object
+  // count, and which reference frame the floating align bar acts on:
+  //   "canvas"    → align to the page (전체 기준 정렬)
+  //   "selection" → align objects to each other (선택 객체 사이의 정렬)
+  // selBox drives the bar's on-canvas position; hidden while a drag/scale is in
+  // flight (draggingSel) so it doesn't chase the cursor.
+  const [selBox, setSelBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const [selCount, setSelCount] = useState(0);
+  const [alignMode, setAlignMode] = useState<"canvas" | "selection">("canvas");
+  const [draggingSel, setDraggingSel] = useState(false);
+  // True while an align/distribute op programmatically discards+rebuilds the
+  // selection, so the selection:cleared handler doesn't blank the bar mid-flip.
+  const aligningRef = useRef(false);
   // Character range inside a textbox. Persists across text:editing:exited so the
   // property panel can apply styles to the user's drag-selection even after focus
   // moves to a panel input (fabric resets selectionStart/End when editing ends).
@@ -842,6 +856,7 @@ export function CanvasEditor({
         if (prev !== curId) setSelectedTextRange(null);
         selectedObjectIdRef.current = curId;
         setSelectedObject(obj);
+        refreshSelBox(true); // position the floating align bar on this selection
       };
       canvas.on("selection:created", onSelectionChange);
       canvas.on("selection:updated", onSelectionChange);
@@ -850,13 +865,18 @@ export function CanvasEditor({
         // Keep range a bit longer so panel onChange handlers still see it.
         // The next selection:created (if any) will reset it via id check.
         setSelectedObject(null);
+        if (!aligningRef.current) { setSelBox(null); setSelCount(0); }
       });
+      // Hide the align bar while a drag/scale/rotate is in flight so it doesn't
+      // chase the moving selection; it reappears (repositioned) on mouse:up.
+      canvas.on("mouse:down", () => setDraggingSel(true));
       // Before any drag/resize commits, the LAST snapshot is the "before" state.
       // Push it onto undo, then take a new snapshot of the (now modified) canvas.
       canvas.on("object:modified", () => {
         clearSnapGuides();
         commitUndo();
         saveCurrentSlide();
+        refreshSelBox(false); // re-anchor the align bar to the moved selection
       });
 
       // ── Snap-to-align while dragging ─────────────────────────────────────
@@ -1039,6 +1059,8 @@ export function CanvasEditor({
         clearSnapGuides();
         snapStuck.x = null;
         snapStuck.y = null;
+        setDraggingSel(false);
+        refreshSelBox(false); // show + re-anchor the align bar at the rest position
       });
 
       // Track character-level selection inside textboxes so the property panel
@@ -1171,6 +1193,23 @@ export function CanvasEditor({
     // to the CURRENTLY selected slide — otherwise Ctrl+D overwrites slide 0
     // every time, no matter which page the user has clicked.
     const idx = currentSlideIndexRef.current;
+    // Slide-wipe guard. fabric's loadFromJSON clears the canvas INSIDE the
+    // .then that runs after its async enlivenObjects resolves (see fabric
+    // dist: `this.clear(); this.add(...enlived)`), so a slow image — or a
+    // stale load whose enliven resolves late — can leave the canvas empty even
+    // after loadingRef/loadFailedRef have been cleared. Serializing that empty
+    // canvas over a slide that still has content is the editor's slide-wipe
+    // bug: the autosave then persists `objects: []` and the user's work is gone
+    // (observed as "switching slides leaves only the background"). An
+    // objects-empty canvas effectively never represents a real edit, so when
+    // the live canvas has no user objects but the stored slide does, treat it
+    // as a transient cleared state and skip — a genuine "delete everything" is
+    // re-saved by the user's next action.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const liveObjectCount = Array.isArray((json as any).objects) ? (json as any).objects.length : 0;
+    const storedObjects = slidesRef.current[idx]?.objects;
+    const storedObjectCount = Array.isArray(storedObjects) ? storedObjects.length : 0;
+    if (liveObjectCount === 0 && storedObjectCount > 0) return;
     setSlides((prev) => {
       const updated = [...prev];
       updated[idx] = {
@@ -1281,7 +1320,7 @@ export function CanvasEditor({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         for (const o of canvas.getObjects() as any[]) if (isGuide(o)) reapplyGuideConfig(o);
         canvas.renderAll();
-        lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
+        lastSnapshotRef.current = serializeCanvas();
         if (myToken === loadTokenRef.current) loadingRef.current = false;
       })();
       return;
@@ -1542,7 +1581,7 @@ export function CanvasEditor({
       markBackdropObjects(canvas);
       canvas.renderAll();
       // After load completes, capture this as the baseline for future undos
-      lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
+      lastSnapshotRef.current = serializeCanvas();
       if (myToken === loadTokenRef.current) loadingRef.current = false;
     })().catch(() => {
       // Reconstruction threw before finishing — the canvas may hold only part
@@ -1868,7 +1907,7 @@ export function CanvasEditor({
       if (cur) updated[currentSlideIndex] = { ...cur, width: w, height: h };
       return updated;
     });
-    lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
+    lastSnapshotRef.current = serializeCanvas();
   }
 
   function addSlide() {
@@ -2779,6 +2818,200 @@ export function CanvasEditor({
     setSelectedObject({ ...active });
   }
 
+  // ── Object alignment helpers ─────────────────────────────────────────────
+  /** Real, alignable objects in the current selection — excludes the page
+   *  boundary, guides, and any export-excluded marker. */
+  function realActiveObjects(): any[] {
+    const canvas = fabricRef.current;
+    if (!canvas) return [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const objs: any[] = (canvas.getActiveObjects?.() || []) as any[];
+    return objs.filter(
+      (o) => o && !o.excludeFromExport && !isGuide(o) && o?.data?.kind !== PAGE_BOUNDARY_KIND,
+    );
+  }
+
+  /** Recompute the selection's design-space bounding box + count for the align
+   *  bar. resetMode re-picks the default reference frame on a fresh selection
+   *  (2+ objects → align-to-each-other is the more useful default). */
+  function refreshSelBox(resetMode = false) {
+    const objs = realActiveObjects();
+    if (!objs.length) { setSelBox(null); setSelCount(0); return; }
+    let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+    for (const o of objs) {
+      const bb = o.getBoundingRect();
+      l = Math.min(l, bb.left); t = Math.min(t, bb.top);
+      r = Math.max(r, bb.left + bb.width); b = Math.max(b, bb.top + bb.height);
+    }
+    setSelBox({ left: l, top: t, width: r - l, height: b - t });
+    setSelCount(objs.length);
+    if (resetMode) setAlignMode(objs.length >= 2 ? "selection" : "canvas");
+    else if (objs.length < 2) setAlignMode("canvas");
+  }
+
+  /** Re-establish the active selection on a set of objects after a mutation
+   *  that required discarding it (so each object's left/top is absolute). */
+  async function reselectObjects(objs: any[]) {
+    const canvas = fabricRef.current;
+    if (!canvas || !objs.length) return;
+    if (objs.length === 1) { canvas.setActiveObject(objs[0]); return; }
+    const fabric = await getFabric();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const AS = (fabric as any).ActiveSelection;
+    canvas.setActiveObject(new AS(objs, { canvas }));
+  }
+
+  /** Align selected objects to either the page (`frame="canvas"`) or the
+   *  selection's own bounding box (`frame="selection"`). `mode` is one of
+   *  left/hcenter/right/top/vcenter/bottom. Moves each object by the delta
+   *  between its current bbox edge and the target — origin/scale/rotation safe. */
+  async function alignObjects(frame: "canvas" | "selection", mode: string) {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const objs = realActiveObjects();
+    if (!objs.length || (frame === "selection" && objs.length < 2)) return;
+    pushUndo();
+    aligningRef.current = true;
+    canvas.discardActiveObject(); // ungroup → absolute coords
+    const boxes = objs.map((o) => ({ o, bb: o.getBoundingRect() }));
+    let refL: number, refT: number, refR: number, refB: number;
+    if (frame === "canvas") {
+      refL = 0; refT = 0; refR = canvasSizeRef.current.w; refB = canvasSizeRef.current.h;
+    } else {
+      refL = Math.min(...boxes.map((x) => x.bb.left));
+      refT = Math.min(...boxes.map((x) => x.bb.top));
+      refR = Math.max(...boxes.map((x) => x.bb.left + x.bb.width));
+      refB = Math.max(...boxes.map((x) => x.bb.top + x.bb.height));
+    }
+    for (const { o, bb } of boxes) {
+      let dx = 0, dy = 0;
+      if (mode === "left") dx = refL - bb.left;
+      else if (mode === "hcenter") dx = (refL + refR) / 2 - (bb.left + bb.width / 2);
+      else if (mode === "right") dx = refR - (bb.left + bb.width);
+      else if (mode === "top") dy = refT - bb.top;
+      else if (mode === "vcenter") dy = (refT + refB) / 2 - (bb.top + bb.height / 2);
+      else if (mode === "bottom") dy = refB - (bb.top + bb.height);
+      if (dx) o.set("left", (o.left || 0) + dx);
+      if (dy) o.set("top", (o.top || 0) + dy);
+      o.setCoords();
+    }
+    await reselectObjects(objs);
+    aligningRef.current = false;
+    canvas.requestRenderAll();
+    lastSnapshotRef.current = serializeCanvas();
+    saveCurrentSlide();
+    refreshSelBox(false);
+  }
+
+  /** Evenly space 3+ selected objects along an axis (centers equidistant
+   *  between the two extreme objects, which stay put). */
+  async function distributeObjects(axis: "h" | "v") {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const objs = realActiveObjects();
+    if (objs.length < 3) return;
+    pushUndo();
+    aligningRef.current = true;
+    canvas.discardActiveObject();
+    const boxes = objs.map((o) => ({ o, bb: o.getBoundingRect() }));
+    const cen = (b: any) => (axis === "h" ? b.left + b.width / 2 : b.top + b.height / 2);
+    boxes.sort((a, b) => cen(a.bb) - cen(b.bb));
+    const c0 = cen(boxes[0].bb);
+    const c1 = cen(boxes[boxes.length - 1].bb);
+    const step = (c1 - c0) / (boxes.length - 1);
+    boxes.forEach((x, i) => {
+      if (i === 0 || i === boxes.length - 1) return;
+      const delta = (c0 + step * i) - cen(x.bb);
+      if (axis === "h") x.o.set("left", (x.o.left || 0) + delta);
+      else x.o.set("top", (x.o.top || 0) + delta);
+      x.o.setCoords();
+    });
+    await reselectObjects(objs);
+    aligningRef.current = false;
+    canvas.requestRenderAll();
+    lastSnapshotRef.current = serializeCanvas();
+    saveCurrentSlide();
+    refreshSelBox(false);
+  }
+
+  /** Serialize the live canvas for an undo snapshot. Mirrors saveCurrentSlide:
+   *  the user-visible page fill lives on the excludeFromExport page-boundary
+   *  rect, so toJSON's top-level `background` only holds the gutter color — pull
+   *  the page fill back into `background` so restoreSnapshot can repaint the
+   *  boundary when this snapshot is restored on undo/redo. */
+  function serializeCanvas(): string {
+    const canvas = fabricRef.current;
+    const json = canvas.toJSON();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pb = (canvas as any).__pageBoundary;
+    const pageFill = typeof pb?.fill === "string" ? pb.fill : (json as { background?: string }).background;
+    return JSON.stringify({ ...json, background: pageFill });
+  }
+
+  /** Restore a per-slide canvas snapshot (undo/redo). The raw loadFromJSON this
+   *  replaced blanked the editor: (1) it never sanitized dead images, so one
+   *  unreachable photo made fabric's all-or-nothing enliven reject and the
+   *  canvas stayed empty; (2) it never rebuilt the padded workspace
+   *  (dimensions / gutter / viewport / page-boundary rect) that loadFromJSON
+   *  wipes. Mirror loadSlide's fabric branch so an undo is as robust as a load. */
+  async function restoreSnapshot(dataStr: string) {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const fabric = await getFabric();
+    const myToken = ++loadTokenRef.current;
+    loadingRef.current = true;
+    loadFailedRef.current = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cleanData: any = { ...JSON.parse(dataStr), clipPath: null };
+    const bgFill = typeof cleanData.background === "string" ? cleanData.background : "#FFFFFF";
+    const replaced = await sanitizeUnreachableImages(cleanData);
+    if (myToken !== loadTokenRef.current) return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (canvas as any).loadFromJSON(cleanData);
+    } catch {
+      // Still failed after sanitizing — leave the canvas as-is and flag it so
+      // saveCurrentSlide won't persist a blank/partial canvas over the slide.
+      if (myToken === loadTokenRef.current) {
+        loadFailedRef.current = true;
+        loadingRef.current = false;
+      }
+      return;
+    }
+    if (myToken !== loadTokenRef.current) return;
+    // Reattach original URLs to placeholdered images so the patched image
+    // toObject re-emits them on every later save (placeholder is display-only).
+    if (replaced.length) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const loaded = canvas.getObjects() as any[];
+      for (const { index, originalSrc } of replaced) {
+        const o = loaded[index];
+        if (o) o.__originalSrc = originalSrc;
+      }
+    }
+    // loadFromJSON reset dimensions / background / viewport — re-establish the
+    // padded workspace, exactly like loadSlide does after its load.
+    const { w: pageW, h: pageH } = canvasSizeRef.current;
+    canvas.setDimensions({ width: pageW + 2 * PAGE_PAD, height: pageH + 2 * PAGE_PAD });
+    applyDisplayCss(canvas, pageW, pageH);
+    canvas.backgroundColor = "#1E1E1E";  // workspace gutter
+    canvas.setViewportTransform([zoomRef.current, 0, 0, zoomRef.current, PAGE_PAD, PAGE_PAD]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (canvas as any).clipPath = null;
+    // The page boundary is excludeFromExport, so it was never in the snapshot —
+    // rebuild it with the page fill that serializeCanvas folded into background.
+    ensurePageBoundary(canvas, fabric, pageW, pageH, bgFill);
+    setBgColor(bgFill);
+    markBackdropObjects(canvas);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const o of canvas.getObjects() as any[]) if (isGuide(o)) reapplyGuideConfig(o);
+    canvas.renderAll();
+    if (myToken !== loadTokenRef.current) return;
+    lastSnapshotRef.current = dataStr;
+    loadingRef.current = false;
+    saveCurrentSlide();
+  }
+
   /** Snapshot the CURRENT canvas state and push the previous one onto undo. */
   function commitUndo() {
     const canvas = fabricRef.current;
@@ -2791,7 +3024,7 @@ export function CanvasEditor({
       });
       setRedoStack([]);
     }
-    lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
+    lastSnapshotRef.current = serializeCanvas();
   }
 
   /** Manual snapshot — used by toolbar buttons (addText/addRect/...) before they mutate. */
@@ -2851,7 +3084,7 @@ export function CanvasEditor({
       const pb = (canvas as any).__pageBoundary;
       if (pb) { pb.set("fill", color); }
       canvas.renderAll();
-      lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
+      lastSnapshotRef.current = serializeCanvas();
     }
     setSlides((prev) => prev.map((s) => ({ ...s, background: color })));
     setBgColor(color);
@@ -2922,7 +3155,7 @@ export function CanvasEditor({
       canvas.requestRenderAll();
       // Sync the snapshot baseline so the canvas-modified watcher doesn't
       // double-count this as a separate undo step.
-      lastSnapshotRef.current = JSON.stringify(canvas.toJSON());
+      lastSnapshotRef.current = serializeCanvas();
     }
     // Bulk-update every slide's stored text objects. saveCurrentSlide() above
     // already refreshed the current slide's entry, so `prev` is up to date.
@@ -2969,14 +3202,9 @@ export function CanvasEditor({
         return u.slice(0, -1);
       }
       // Per-slide canvas snapshot — push current state to redo, then revert.
-      const current = JSON.stringify(canvas.toJSON());
+      const current = serializeCanvas();
       setRedoStack((r) => [...r, { kind: "canvas", data: current }]);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (canvas as any).loadFromJSON(JSON.parse(entry.data)).then(() => {
-        canvas.renderAll();
-        lastSnapshotRef.current = entry.data;
-        saveCurrentSlide();
-      });
+      restoreSnapshot(entry.data);
       return u.slice(0, -1);
     });
   }
@@ -2992,14 +3220,9 @@ export function CanvasEditor({
         setUndoStack((u) => [...u, inverse]);
         return r.slice(0, -1);
       }
-      const current = JSON.stringify(canvas.toJSON());
+      const current = serializeCanvas();
       setUndoStack((u) => [...u, { kind: "canvas", data: current }]);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (canvas as any).loadFromJSON(JSON.parse(entry.data)).then(() => {
-        canvas.renderAll();
-        lastSnapshotRef.current = entry.data;
-        saveCurrentSlide();
-      });
+      restoreSnapshot(entry.data);
       return r.slice(0, -1);
     });
   }
@@ -4957,6 +5180,113 @@ export function CanvasEditor({
                 }}
               >
                 {guideTooltip.axis}: {guideTooltip.value}px
+              </div>
+            );
+          })()}
+
+          {/* Floating object-alignment bar (피드백: 콘텐츠 확인 — 정렬 도구).
+              Appears centred above the current selection. Two reference frames:
+              "전체" aligns to the page, "객체" aligns the selected objects to each
+              other (≥2). Placed in viewport coords like the guide tooltip so it
+              tracks the selection through zoom/pan. Hidden mid-drag + during crop. */}
+          {selBox && !draggingSel && !cropping && (() => {
+            const scale = DISPLAY_MAX / Math.max(canvasW, canvasH);
+            const wrapperW = (canvasW + 2 * PAGE_PAD) * scale;
+            const wrapperH = (canvasH + 2 * PAGE_PAD) * scale;
+            const originX = viewportSize.w / 2 - wrapperW / 2 + PAGE_PAD * scale + pan.x;
+            const originY = viewportSize.h / 2 - wrapperH / 2 + PAGE_PAD * scale + pan.y;
+            const ppu = zoom * scale;
+            const selTopPx = originY + selBox.top * ppu;
+            const selCenterPx = originX + (selBox.left + selBox.width / 2) * ppu;
+            const BAR_H = 34;
+            let top = selTopPx - BAR_H - 10;
+            if (top < 6) top = selTopPx + selBox.height * ppu + 10; // flip below if too high
+            top = Math.max(6, Math.min(viewportSize.h - BAR_H - 6, top));
+            const left = Math.max(150, Math.min(viewportSize.w - 150, selCenterPx));
+
+            const canObj = selCount >= 2;
+            const canDist = selCount >= 3;
+            const frame: "canvas" | "selection" = alignMode === "selection" && canObj ? "selection" : "canvas";
+
+            // 16×16 icon set. `currentColor` so it inherits the button color.
+            const I = {
+              left: <><rect x="1" y="2" width="1.6" height="12" rx="0.6" /><rect x="3.5" y="3.5" width="9" height="3" rx="1" /><rect x="3.5" y="9.5" width="5.5" height="3" rx="1" /></>,
+              hcenter: <><rect x="7.2" y="1" width="1.6" height="14" rx="0.6" /><rect x="3.5" y="3.5" width="9" height="3" rx="1" /><rect x="5.25" y="9.5" width="5.5" height="3" rx="1" /></>,
+              right: <><rect x="13.4" y="2" width="1.6" height="12" rx="0.6" /><rect x="3.5" y="3.5" width="9" height="3" rx="1" /><rect x="7" y="9.5" width="5.5" height="3" rx="1" /></>,
+              top: <><rect x="2" y="1" width="12" height="1.6" rx="0.6" /><rect x="3.5" y="3.5" width="3" height="9" rx="1" /><rect x="9.5" y="3.5" width="3" height="5.5" rx="1" /></>,
+              vcenter: <><rect x="1" y="7.2" width="14" height="1.6" rx="0.6" /><rect x="3.5" y="3.5" width="3" height="9" rx="1" /><rect x="9.5" y="5.25" width="3" height="5.5" rx="1" /></>,
+              bottom: <><rect x="2" y="13.4" width="12" height="1.6" rx="0.6" /><rect x="3.5" y="3.5" width="3" height="9" rx="1" /><rect x="9.5" y="7" width="3" height="5.5" rx="1" /></>,
+              distH: <><rect x="1.4" y="3" width="2" height="10" rx="0.8" /><rect x="7" y="3" width="2" height="10" rx="0.8" /><rect x="12.6" y="3" width="2" height="10" rx="0.8" /></>,
+              distV: <><rect x="3" y="1.4" width="10" height="2" rx="0.8" /><rect x="3" y="7" width="10" height="2" rx="0.8" /><rect x="3" y="12.6" width="10" height="2" rx="0.8" /></>,
+            } as const;
+            const aligns: { key: keyof typeof I; mode: string; title: string }[] = [
+              { key: "left", mode: "left", title: "왼쪽 정렬" },
+              { key: "hcenter", mode: "hcenter", title: "가로 가운데 정렬" },
+              { key: "right", mode: "right", title: "오른쪽 정렬" },
+              { key: "top", mode: "top", title: "위쪽 정렬" },
+              { key: "vcenter", mode: "vcenter", title: "세로 가운데 정렬" },
+              { key: "bottom", mode: "bottom", title: "아래쪽 정렬" },
+            ];
+            const iconBtn = (
+              icon: React.ReactNode, title: string, onClick: () => void, disabled = false,
+            ) => (
+              <button
+                key={title}
+                title={title}
+                disabled={disabled}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={onClick}
+                style={{
+                  width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center",
+                  border: "none", borderRadius: 5, background: "transparent",
+                  color: disabled ? "var(--text-tertiary)" : "var(--text-secondary)",
+                  opacity: disabled ? 0.35 : 1, cursor: disabled ? "not-allowed" : "pointer",
+                }}
+                onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.background = "var(--bg-overlay)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              >
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor">{icon}</svg>
+              </button>
+            );
+            const modeBtn = (m: "canvas" | "selection", label: string, disabled = false) => (
+              <button
+                title={m === "canvas" ? "페이지 전체 기준" : "선택 객체끼리 기준"}
+                disabled={disabled}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setAlignMode(m)}
+                style={{
+                  padding: "3px 8px", fontSize: 11, fontWeight: 600, borderRadius: 5, border: "none",
+                  cursor: disabled ? "not-allowed" : "pointer",
+                  background: frame === m ? "var(--accent)" : "transparent",
+                  color: frame === m ? "#fff" : disabled ? "var(--text-tertiary)" : "var(--text-secondary)",
+                  opacity: disabled ? 0.4 : 1,
+                }}
+              >
+                {label}
+              </button>
+            );
+            const divider = <div style={{ width: 1, alignSelf: "stretch", background: "var(--border)", margin: "4px 2px" }} />;
+            return (
+              <div
+                onMouseDown={(e) => e.stopPropagation()}
+                style={{
+                  position: "absolute", left, top, transform: "translateX(-50%)",
+                  display: "flex", alignItems: "center", gap: 1,
+                  height: BAR_H, padding: "0 5px",
+                  background: "var(--bg-elevated)", border: "1px solid var(--border)",
+                  borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+                  zIndex: 20, whiteSpace: "nowrap",
+                }}
+              >
+                <div style={{ display: "flex", gap: 2, background: "var(--bg-overlay)", borderRadius: 6, padding: 2 }}>
+                  {modeBtn("canvas", "전체")}
+                  {modeBtn("selection", "객체", !canObj)}
+                </div>
+                {divider}
+                {aligns.map((a) => iconBtn(I[a.key], a.title, () => alignObjects(frame, a.mode)))}
+                {divider}
+                {iconBtn(I.distH, "가로 균등 분배", () => distributeObjects("h"), !canDist)}
+                {iconBtn(I.distV, "세로 균등 분배", () => distributeObjects("v"), !canDist)}
               </div>
             );
           })()}

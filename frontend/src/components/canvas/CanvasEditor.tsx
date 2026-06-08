@@ -2973,59 +2973,51 @@ export function CanvasEditor({
     refreshSelBox(false);
   }
 
-  /** Render slide 1 to a 1:1 cover PNG Blob on a throwaway StaticCanvas (never
-   *  touches the live editor canvas), for the works-list preview. Mirrors the
-   *  load path: dead-image sanitize + page-fill background. Center-crops to a
-   *  square (top/bottom trimmed for portrait slides) at 480px. */
+  /** Capture slide 1 from the LIVE editor canvas to a 1:1 cover PNG for the
+   *  works-list preview. The live canvas is the render the user actually sees
+   *  and exports — an off-screen re-render mis-sized clipped/cover-fit images.
+   *  Only fires when slide 1 is the one currently shown; the page-export crop
+   *  (viewport reset + boundary/guide hide) is reset → captured → restored
+   *  synchronously, so the editor view never flickers. Mirrors runDownload. */
   async function renderFirstSlideThumb(): Promise<Blob | null> {
-    const slide = slidesRef.current[0];
-    if (!slide || !Array.isArray(slide.objects) || slide.objects.length === 0) return null;
+    const canvas = fabricRef.current;
+    if (!canvas) return null;
+    if (currentSlideIndexRef.current !== 0 || loadingRef.current || loadFailedRef.current) return null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const real = (canvas.getObjects() as any[]).filter((o) => !o.excludeFromExport && !isGuide(o));
+    if (real.length === 0) return null;
     try {
-      const fabric = await getFabric();
-      const w = Number(slide.width) || 1080;
-      const h = Number(slide.height) || 1080;
-      const bg = typeof slide.background === "string" ? slide.background : "#FFFFFF";
-      const el = document.createElement("canvas");
+      const { w, h } = canvasSizeRef.current;
+      const side = Math.min(w, h);
+      const savedVT = canvas.viewportTransform?.slice() as number[] | undefined;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const sc: any = new (fabric as any).StaticCanvas(el, {
-        width: w, height: h, renderOnAddRemove: false, enableRetinaScaling: false,
-      });
+      const pb = (canvas as any).__pageBoundary;
+      const savedStroke = pb?.stroke;
+      const savedStrokeW = pb?.strokeWidth;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const data: any = JSON.parse(JSON.stringify({ ...slide, clipPath: null, background: bg }));
-      // crossOrigin on every image so the proxied bitmaps don't taint toDataURL.
-      for (const o of (data.objects || [])) {
-        const t = String((o as { type?: unknown })?.type || "").toLowerCase();
-        if (t === "image" || t === "fabricimage") (o as { crossOrigin?: string }).crossOrigin = "anonymous";
-      }
-      await sanitizeUnreachableImages(data);
-      try {
-        await sc.loadFromJSON(data);
-      } catch {
-        /* one bad object — render whatever enlivened */
-      }
-      sc.backgroundColor = bg;
-      sc.renderAll();
-      // Full-page PNG, then center-square crop via a plain 2D canvas. Doing the
-      // crop in fabric's toDataURL (left/top/width/height) mis-captured under
-      // devicePixelRatio scaling — the page landed in a corner. Cropping by the
-      // decoded image's natural size is DPR-proof.
-      const fullUrl: string = sc.toDataURL({ format: "png", multiplier: 1, enableRetinaScaling: false });
-      sc.dispose();
-      const im = await new Promise<HTMLImageElement>((res, rej) => {
-        const x = new Image();
-        x.onload = () => res(x);
-        x.onerror = rej;
-        x.src = fullUrl;
+      (canvas as any).__suppressPageOutline = true;
+      if (pb) pb.set({ stroke: null, strokeWidth: 0 });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const hiddenGuides = (canvas.getObjects() as any[]).filter((o) => isGuide(o) && o.visible !== false);
+      for (const g of hiddenGuides) g.visible = false;
+      canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
+      // 1:1 cover — crop the centred square of the page (top/bottom trimmed for
+      // portrait), scaled to 480px.
+      const dataUrl: string = canvas.toDataURL({
+        format: "png",
+        left: PAGE_PAD + (w - side) / 2,
+        top: PAGE_PAD + (h - side) / 2,
+        width: side,
+        height: side,
+        multiplier: 480 / side,
       });
-      const nw = im.naturalWidth, nh = im.naturalHeight;
-      const sq = Math.min(nw, nh);
-      const out = document.createElement("canvas");
-      out.width = 480;
-      out.height = 480;
-      const ctx = out.getContext("2d");
-      if (!ctx) return null;
-      ctx.drawImage(im, (nw - sq) / 2, (nh - sq) / 2, sq, sq, 0, 0, 480, 480);
-      return await new Promise<Blob | null>((res) => out.toBlob((bb) => res(bb), "image/png"));
+      if (savedVT) canvas.setViewportTransform(savedVT);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (canvas as any).__suppressPageOutline = false;
+      if (pb) pb.set({ stroke: savedStroke, strokeWidth: savedStrokeW });
+      for (const g of hiddenGuides) g.visible = true;
+      canvas.requestRenderAll();
+      return await (await fetch(dataUrl)).blob();
     } catch {
       return null;
     }

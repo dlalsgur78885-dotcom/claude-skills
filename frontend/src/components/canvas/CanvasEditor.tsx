@@ -2245,16 +2245,20 @@ export function CanvasEditor({
     }
     try {
       const fabric = await getFabric();
-      // Read the file as a data URL — fabric can load any browser-decodable
-      // raster format (incl. jfif) directly from a data URL.
-      const dataUrl: string = await new Promise((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(String(r.result || ""));
-        r.onerror = () => reject(r.error || new Error("file read failed"));
-        r.readAsDataURL(file);
-      });
+      // Upload the image to the server and reference it by URL — do NOT embed it
+      // inline as a base64 data URL. An embedded photo bloats canvas_data, and
+      // after a drop or two the 1s autosave PATCH blows past nginx's 32MB body
+      // limit → 413, which (over HTTP/2, where statusText is empty) surfaces as
+      // the opaque "API 요청 실패" popup. Uploading — the same path as 이미지 교체 —
+      // keeps canvas_data tiny and makes the dropped/added asset a permanent,
+      // URL-referenced image.
+      const { path } = await api.uploadTemplateAsset(file);
       pushUndo();
-      const img = await fabric.FabricImage.fromURL(dataUrl, { crossOrigin: "anonymous" });
+      // resolveImageUrl (NOT proxiedImageUrl): `path` already points at our own
+      // backend (/api/images/template-assets/…); resolveImageUrl prefixes the
+      // API origin so it loads on both same-origin prod and the split-origin dev
+      // server, whereas proxiedImageUrl would leave the bare relative path.
+      const img = await fabric.FabricImage.fromURL(resolveImageUrl(path), { crossOrigin: "anonymous" });
       // Fit the image inside the PAGE (export area) with some breathing room
       // (max 80% of either dimension); preserve aspect ratio; center it.
       //

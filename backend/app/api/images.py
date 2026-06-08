@@ -242,6 +242,15 @@ async def serve_output_image(carousel_id: int, filename: str, w: int | None = Qu
     return await _serve(path, w)
 
 
+@router.get("/thumbnails/{carousel_id}.png")
+async def serve_carousel_thumbnail(carousel_id: int, w: int | None = Query(None, ge=16, le=4000)):
+    """Works-list preview — the editor-rendered first slide (see carousels API)."""
+    path = settings.DATA_DIR / "images" / "thumbnails" / f"{carousel_id}.png"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
+    return await _serve(path, w)
+
+
 @router.get("/pool/{post_id}/{element_dir}/{filename}")
 async def serve_pool_image(post_id: int, element_dir: str, filename: str, w: int | None = Query(None, ge=16, le=4000)):
     path = settings.DATA_DIR / "images" / "pool" / str(post_id) / element_dir / filename

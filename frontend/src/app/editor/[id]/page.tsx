@@ -161,6 +161,7 @@ export default function EditorPage() {
       <CanvasEditor
         initialSlides={initialSlides}
         onSave={handleSave}
+        onGenerateThumbnail={(blob) => api.uploadCarouselThumbnail(id, blob)}
         currentTemplateId={carouselMeta.template_db_id || null}
         canReapplyTemplate={!!carouselMeta.source_slides}
         onReapplyTemplate={handleReapplyTemplate}

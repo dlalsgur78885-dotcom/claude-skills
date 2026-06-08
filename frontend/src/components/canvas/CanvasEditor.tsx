@@ -244,6 +244,9 @@ async function sanitizeUnreachableImages(data: any): Promise<Array<{ index: numb
 interface CanvasEditorProps {
   initialSlides?: SlideData[];
   onSave?: (slides: SlideData[]) => void;
+  // Receives a rendered PNG of the FIRST slide (full page, 1:1 cover) whenever
+  // slide 1 changes — uploaded as the works-list preview. Best-effort.
+  onGenerateThumbnail?: (blob: Blob) => Promise<void> | void;
   currentTemplateId?: number | null;
   canReapplyTemplate?: boolean;
   onReapplyTemplate?: (templateId: number) => Promise<SlideData[] | null>;
@@ -272,6 +275,7 @@ interface CanvasEditorProps {
 export function CanvasEditor({
   initialSlides,
   onSave,
+  onGenerateThumbnail,
   currentTemplateId,
   canReapplyTemplate,
   onReapplyTemplate,
@@ -502,6 +506,33 @@ export function CanvasEditor({
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
   }, [slides]);
+
+  // ── Works-list thumbnail ─────────────────────────────────────────────────
+  // Render slide 1 (full page, 1:1 cover) to a PNG and upload it as the works
+  // preview whenever slide 1's content changes. Debounced ~6s and gated on a
+  // content signature so it doesn't fire per keystroke or for unchanged slides.
+  // onGenerateThumbnail is an inline parent callback (fresh identity each
+  // render) → kept in a ref so it stays out of the effect deps.
+  const onGenThumbRef = useRef(onGenerateThumbnail);
+  onGenThumbRef.current = onGenerateThumbnail;
+  const lastThumbSigRef = useRef<string>("");
+  const thumbTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!onGenThumbRef.current) return;
+    const s0 = slides[0];
+    if (!s0 || !Array.isArray(s0.objects) || s0.objects.length === 0) return;
+    const sig = `${JSON.stringify(s0.objects)}|${String(s0.background)}|${s0.width}x${s0.height}`;
+    if (sig === lastThumbSigRef.current) return;
+    if (thumbTimerRef.current) clearTimeout(thumbTimerRef.current);
+    thumbTimerRef.current = setTimeout(async () => {
+      const blob = await renderFirstSlideThumb();
+      if (!blob) return;
+      lastThumbSigRef.current = sig;
+      try { await onGenThumbRef.current?.(blob); } catch { /* preview is non-critical */ }
+    }, 6000);
+    return () => { if (thumbTimerRef.current) clearTimeout(thumbTimerRef.current); };
+  }, [slides]);
+
   // Warn before leaving the page if a save is mid-flight or queued.
   useEffect(() => {
     function onBeforeUnload(e: BeforeUnloadEvent) {
@@ -2940,6 +2971,55 @@ export function CanvasEditor({
     lastSnapshotRef.current = serializeCanvas();
     saveCurrentSlide();
     refreshSelBox(false);
+  }
+
+  /** Render slide 1 to a 1:1 cover PNG Blob on a throwaway StaticCanvas (never
+   *  touches the live editor canvas), for the works-list preview. Mirrors the
+   *  load path: dead-image sanitize + page-fill background. Center-crops to a
+   *  square (top/bottom trimmed for portrait slides) at 480px. */
+  async function renderFirstSlideThumb(): Promise<Blob | null> {
+    const slide = slidesRef.current[0];
+    if (!slide || !Array.isArray(slide.objects) || slide.objects.length === 0) return null;
+    try {
+      const fabric = await getFabric();
+      const w = Number(slide.width) || 1080;
+      const h = Number(slide.height) || 1080;
+      const bg = typeof slide.background === "string" ? slide.background : "#FFFFFF";
+      const el = document.createElement("canvas");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sc: any = new (fabric as any).StaticCanvas(el, {
+        width: w, height: h, renderOnAddRemove: false, enableRetinaScaling: false,
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data: any = JSON.parse(JSON.stringify({ ...slide, clipPath: null, background: bg }));
+      // crossOrigin on every image so the proxied bitmaps don't taint toDataURL.
+      for (const o of (data.objects || [])) {
+        const t = String((o as { type?: unknown })?.type || "").toLowerCase();
+        if (t === "image" || t === "fabricimage") (o as { crossOrigin?: string }).crossOrigin = "anonymous";
+      }
+      await sanitizeUnreachableImages(data);
+      try {
+        await sc.loadFromJSON(data);
+      } catch {
+        /* one bad object — render whatever enlivened */
+      }
+      sc.backgroundColor = bg;
+      sc.renderAll();
+      const side = Math.min(w, h);
+      const OUT = 480;
+      const dataUrl: string = sc.toDataURL({
+        format: "png",
+        left: (w - side) / 2,
+        top: (h - side) / 2,
+        width: side,
+        height: side,
+        multiplier: OUT / side,
+      });
+      sc.dispose();
+      return await (await fetch(dataUrl)).blob();
+    } catch {
+      return null;
+    }
   }
 
   /** Serialize the live canvas for an undo snapshot. Mirrors saveCurrentSlide:

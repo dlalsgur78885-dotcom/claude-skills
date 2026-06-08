@@ -2,13 +2,14 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
+from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.models.carousel import GeneratedCarousel, CarouselStatus
@@ -50,7 +51,15 @@ def _carousel_list_item(carousel: GeneratedCarousel) -> CarouselListItem:
     canvas_data = carousel.canvas_data or {}
     slides = canvas_data.get("canvas_slides") if isinstance(canvas_data, dict) else None
     thumbnail_url: str | None = None
-    if isinstance(slides, list) and slides:
+    # Prefer the editor-rendered first-slide thumbnail (full page: image + text +
+    # shapes, generated on save). `?v=` busts the browser cache when it's
+    # regenerated. Fall back to the first image's src for carousels not yet
+    # re-saved (legacy / never-opened).
+    thumb_file = settings.DATA_DIR / "images" / "thumbnails" / f"{carousel.id}.png"
+    if thumb_file.exists():
+        ts = int(carousel.updated_at.timestamp()) if carousel.updated_at else 0
+        thumbnail_url = f"/api/images/thumbnails/{carousel.id}.png?v={ts}"
+    elif isinstance(slides, list) and slides:
         first = slides[0]
         objects = first.get("objects") if isinstance(first, dict) else None
         if isinstance(objects, list):
@@ -208,6 +217,33 @@ async def update_carousel(
     await db.commit()
     await db.refresh(carousel)
     return carousel
+
+
+@router.post("/{carousel_id}/thumbnail", status_code=204)
+async def upload_carousel_thumbnail(
+    carousel_id: int,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Store the editor-rendered first-slide PNG used as the works-list preview.
+
+    The editor renders slide 1 (full page — image + text + shapes, 1:1 cover)
+    on save and POSTs it here. One file per carousel; overwritten on each save.
+    """
+    owns = await db.execute(
+        select(GeneratedCarousel.id).where(
+            GeneratedCarousel.id == carousel_id,
+            GeneratedCarousel.user_id == user.id,
+        )
+    )
+    if owns.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="캐러셀을 찾을 수 없습니다")
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=415, detail="이미지 파일만 업로드 가능합니다")
+    out_dir = settings.DATA_DIR / "images" / "thumbnails"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"{carousel_id}.png").write_bytes(await file.read())
 
 
 @router.delete("/{carousel_id}", status_code=204)

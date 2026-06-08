@@ -651,6 +651,21 @@ class ApiClient {
     return res.json();
   }
 
+  /** Store the editor-rendered first-slide PNG used as the works-list preview.
+   *  Best-effort — never throws (a missing thumbnail just falls back to the
+   *  first-image heuristic on the works page). */
+  async uploadCarouselThumbnail(carouselId: number, blob: Blob): Promise<void> {
+    const fd = new FormData();
+    fd.append("file", blob, "thumb.png");
+    const headers: Record<string, string> = {};
+    if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
+    try {
+      await fetch(`${API_BASE}/carousels/${carouselId}/thumbnail`, { method: "POST", headers, body: fd });
+    } catch {
+      /* ignore — preview is non-critical */
+    }
+  }
+
   // CTA image — reusable call-to-action PNG dropped onto a fresh last slide.
   async getCtaImage(): Promise<{ url: string | null }> {
     return this.fetch("/cta");

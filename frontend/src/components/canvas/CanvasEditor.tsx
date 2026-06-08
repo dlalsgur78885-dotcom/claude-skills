@@ -3005,18 +3005,27 @@ export function CanvasEditor({
       }
       sc.backgroundColor = bg;
       sc.renderAll();
-      const side = Math.min(w, h);
-      const OUT = 480;
-      const dataUrl: string = sc.toDataURL({
-        format: "png",
-        left: (w - side) / 2,
-        top: (h - side) / 2,
-        width: side,
-        height: side,
-        multiplier: OUT / side,
-      });
+      // Full-page PNG, then center-square crop via a plain 2D canvas. Doing the
+      // crop in fabric's toDataURL (left/top/width/height) mis-captured under
+      // devicePixelRatio scaling — the page landed in a corner. Cropping by the
+      // decoded image's natural size is DPR-proof.
+      const fullUrl: string = sc.toDataURL({ format: "png", multiplier: 1, enableRetinaScaling: false });
       sc.dispose();
-      return await (await fetch(dataUrl)).blob();
+      const im = await new Promise<HTMLImageElement>((res, rej) => {
+        const x = new Image();
+        x.onload = () => res(x);
+        x.onerror = rej;
+        x.src = fullUrl;
+      });
+      const nw = im.naturalWidth, nh = im.naturalHeight;
+      const sq = Math.min(nw, nh);
+      const out = document.createElement("canvas");
+      out.width = 480;
+      out.height = 480;
+      const ctx = out.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(im, (nw - sq) / 2, (nh - sq) / 2, sq, sq, 0, 0, 480, 480);
+      return await new Promise<Blob | null>((res) => out.toBlob((bb) => res(bb), "image/png"));
     } catch {
       return null;
     }

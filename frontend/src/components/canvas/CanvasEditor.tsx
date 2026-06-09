@@ -905,6 +905,38 @@ export function CanvasEditor({
       // Hide the align bar while a drag/scale/rotate is in flight so it doesn't
       // chase the moving selection; it reappears (repositioned) on mouse:up.
       canvas.on("mouse:down", () => setDraggingSel(true));
+
+      // Aspect-ratio lock: when an object carries the __lockAspect flag (set by
+      // the 크기 panel's chain icon), force every resize to stay proportional —
+      // on any handle, not just corners. fabric's default uniform scaling only
+      // covers corner controls; edge handles scale a single axis. We read the
+      // scale captured at drag start (transform.original) and re-apply the more
+      // strongly-changed axis's factor to both, so width:height never drifts.
+      canvas.on("object:scaling", (e: any) => {
+        const tgt = e?.target;
+        if (!tgt || !tgt.__lockAspect) return;
+        const tr = e?.transform;
+        const orig = tr?.original;
+        if (!orig) return;
+        const sx0 = Number(orig.scaleX) || 1;
+        const sy0 = Number(orig.scaleY) || 1;
+        const k = sy0 / sx0; // height:width scale ratio to preserve
+        const corner = tr.corner;
+        // Side handles scale a single axis — mirror it onto the other so the
+        // ratio holds. Corner handles already scale both; force them uniform
+        // off the dominant axis.
+        if (corner === "ml" || corner === "mr") {
+          tgt.scaleY = (Number(tgt.scaleX) || 1) * k;
+        } else if (corner === "mt" || corner === "mb") {
+          tgt.scaleX = (Number(tgt.scaleY) || 1) / k;
+        } else {
+          const f = Math.max((Number(tgt.scaleX) || 1) / sx0, (Number(tgt.scaleY) || 1) / sy0);
+          tgt.scaleX = sx0 * f;
+          tgt.scaleY = sy0 * f;
+        }
+        if (typeof tgt.setCoords === "function") tgt.setCoords();
+      });
+
       // Before any drag/resize commits, the LAST snapshot is the "before" state.
       // Push it onto undo, then take a new snapshot of the (now modified) canvas.
       canvas.on("object:modified", () => {
@@ -3899,6 +3931,62 @@ export function CanvasEditor({
       const snap: any = { ...target };
       snap.type = target.type;
       snap.angle = target.angle;
+      snap.__fabricRef = target;
+      setSelectedObject(snap);
+      return;
+    }
+
+    // Aspect-ratio lock toggle (the 크기 panel's chain icon). Stored as a
+    // runtime flag on the fabric object — when set, the object:scaling handler
+    // (and the W/H inputs below) keep the object's width:height ratio fixed.
+    // Session-only: not serialized into canvas_data, so it resets on reload.
+    if (prop === "__lockAspect") {
+      target.__lockAspect = !!value;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const snap: any = { ...target };
+      snap.type = target.type;
+      snap.__lockAspect = target.__lockAspect;
+      snap.__fabricRef = target;
+      setSelectedObject(snap);
+      return;
+    }
+
+    // W/H from the 크기 inputs. The panel shows the VISUAL size (width*scaleX),
+    // but fabric resizes shapes/images via scaleX/scaleY — writing `width`
+    // directly while a non-1 scale lingers (e.g. after a corner-drag) made the
+    // value double on every commit. Convert the desired visual size into the
+    // matching scale so what the user types is what renders. Text is left to
+    // the generic path below: a textbox's width is its wrap box, not a scale.
+    const isTextual = t === "textbox" || t === "Textbox" || t === "i-text" || t === "IText";
+    if ((prop === "width" || prop === "height") && !isTextual) {
+      const v = Math.max(1, Number(value) || 1);
+      const baseW = Number(target.width) || 1;
+      const baseH = Number(target.height) || 1;
+      // When locked, drive the opposite axis so the visual ratio is preserved.
+      const visW = baseW * (Number(target.scaleX) || 1);
+      const visH = baseH * (Number(target.scaleY) || 1);
+      pushUndo();
+      if (prop === "width") {
+        target.set("scaleX", v / baseW);
+        if (target.__lockAspect && visW > 0) {
+          target.set("scaleY", (v * (visH / visW)) / baseH);
+        }
+      } else {
+        target.set("scaleY", v / baseH);
+        if (target.__lockAspect && visH > 0) {
+          target.set("scaleX", (v * (visW / visH)) / baseW);
+        }
+      }
+      if (typeof target.setCoords === "function") target.setCoords();
+      target.dirty = true;
+      canvas.requestRenderAll();
+      saveCurrentSlide();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const snap: any = { ...target };
+      snap.type = target.type;
+      snap.scaleX = target.scaleX;
+      snap.scaleY = target.scaleY;
+      snap.__lockAspect = target.__lockAspect;
       snap.__fabricRef = target;
       setSelectedObject(snap);
       return;

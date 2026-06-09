@@ -286,26 +286,56 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, use
           </div>
         </div>
 
-        {/* Size */}
+        {/* Size — W and H, with a chain toggle between them that locks the
+            aspect ratio (feedback slide 3). When locked, typing one dimension
+            updates the other proportionally and canvas resizes stay
+            proportional. Hidden for text, whose width is a wrap box, not a
+            scale. */}
         <div>
           <label style={labelStyle}>크기</label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-            {[
-              { label: "W", prop: "width", val: Math.round(selectedObject.width * (selectedObject.scaleX || 1)) },
-              { label: "H", prop: "height", val: Math.round((selectedObject.height || 0) * (selectedObject.scaleY || 1)) },
-            ].map(({ label, prop, val }) => (
-              <div key={prop}>
-                <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 500 }}>{label}</span>
-                <input
-                  type="number"
-                  value={val}
-                  onChange={(e) => onUpdate(prop, Number(e.target.value))}
-                  style={inputStyle}
-                  onFocus={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
-                  onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
-                />
-              </div>
-            ))}
+          <div style={{ display: "grid", gridTemplateColumns: isText ? "1fr 1fr" : "1fr auto 1fr", gap: 6, alignItems: "end" }}>
+            <div>
+              <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 500 }}>W</span>
+              <SizeNumberInput
+                value={Math.round(selectedObject.width * (selectedObject.scaleX || 1))}
+                onCommit={(n) => onUpdate("width", n)}
+                inputStyle={inputStyle}
+              />
+            </div>
+            {!isText && (
+              <button
+                type="button"
+                aria-pressed={!!selectedObject.__lockAspect}
+                title={selectedObject.__lockAspect ? "가로세로 비율 고정 해제" : "가로세로 비율 고정"}
+                onClick={() => onUpdate("__lockAspect", !selectedObject.__lockAspect)}
+                style={{
+                  height: 28,
+                  width: 26,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: selectedObject.__lockAspect ? "var(--accent)" : "var(--bg-overlay)",
+                  color: selectedObject.__lockAspect ? "white" : "var(--text-tertiary)",
+                  border: "1px solid",
+                  borderColor: selectedObject.__lockAspect ? "var(--accent)" : "var(--border)",
+                  borderRadius: 5,
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              >
+                <svg width="13" height="13" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
+                </svg>
+              </button>
+            )}
+            <div>
+              <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 500 }}>H</span>
+              <SizeNumberInput
+                value={Math.round((selectedObject.height || 0) * (selectedObject.scaleY || 1))}
+                onCommit={(n) => onUpdate("height", n)}
+                inputStyle={inputStyle}
+              />
+            </div>
           </div>
         </div>
 
@@ -864,6 +894,73 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, use
         />
       )}
     </div>
+  );
+}
+
+// ─── Size (W/H) input ───────────────────────────────────────────────────
+// Feedback (slide 2): rectangle 크기 fields had two problems —
+//   1) typing a number jumped/doubled (the setter ignored scaleX); fixed in
+//      CanvasEditor.updateSelectedProperty, which now maps W/H to scale.
+//   2) arrow keys didn't nudge the value. Here ↑/→ add 1, ↓/← subtract 1.
+// `value` is the live VISUAL size from the object; while focused we stage the
+// typed string so clearing/retyping isn't fought by re-renders (mirrors the
+// 글꼴 크기 input).
+function SizeNumberInput({
+  value,
+  onCommit,
+  inputStyle,
+}: {
+  value: number;
+  onCommit: (n: number) => void;
+  inputStyle: React.CSSProperties;
+}) {
+  const [pending, setPending] = useState<string | null>(null);
+  const shown = pending !== null ? pending : String(value);
+
+  function commit(raw: string) {
+    if (raw.trim() === "") return; // keep the staged empty string visible
+    const n = Math.round(Number(raw));
+    if (Number.isFinite(n) && n >= 1) onCommit(n);
+  }
+  function step(delta: number) {
+    const base = pending !== null && pending.trim() !== "" ? Number(pending) : value;
+    const next = Math.max(1, Math.round((Number.isFinite(base) ? base : value) + delta));
+    setPending(null);
+    onCommit(next);
+  }
+
+  return (
+    <input
+      type="number"
+      min={1}
+      value={shown}
+      onChange={(e) => {
+        setPending(e.target.value);
+        commit(e.target.value);
+      }}
+      onKeyDown={(e) => {
+        // ↑/→ +1, ↓/← −1. preventDefault so the number input's native
+        // ↑/↓ step (and the cursor move on ←/→) don't fight our step.
+        if (e.key === "ArrowUp" || e.key === "ArrowRight") {
+          e.preventDefault();
+          step(1);
+        } else if (e.key === "ArrowDown" || e.key === "ArrowLeft") {
+          e.preventDefault();
+          step(-1);
+        } else if (e.key === "Enter" || e.key === "Escape") {
+          e.currentTarget.blur();
+        }
+      }}
+      onFocus={(e) => {
+        e.currentTarget.style.borderColor = "var(--accent)";
+        e.currentTarget.select();
+      }}
+      onBlur={(e) => {
+        setPending(null); // drop any half-typed value; fall back to live size
+        e.currentTarget.style.borderColor = "var(--border)";
+      }}
+      style={inputStyle}
+    />
   );
 }
 

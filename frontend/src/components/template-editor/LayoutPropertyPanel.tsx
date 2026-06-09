@@ -396,29 +396,84 @@ function WHGrid({
   basePath,
   vals,
   onChange,
+  lockPath,
+  locked,
 }: {
   basePath: string;
   vals: { width?: number; height?: number };
   onChange: (path: string, v: unknown) => void;
+  // When provided, render a chain toggle between W/H that locks the ratio.
+  // `lockPath` is where the boolean lives in the spec; `locked` is its value.
+  lockPath?: string;
+  locked?: boolean;
 }) {
+  // The aspect ratio is captured on focus and held for the whole typing
+  // session — these inputs commit on EVERY keystroke, so recomputing the ratio
+  // from the (mutating) live values would drift it (typing "1920" digit by
+  // digit would corrupt W:H toward 1:1). Capturing once keeps it stable.
+  const ratioRef = useRef(1);
+  const captureRatio = () => {
+    if (vals.width && vals.height) ratioRef.current = vals.width / vals.height;
+  };
+  const setDim = (key: "width" | "height", raw: string) => {
+    const n = Number(raw) || 0;
+    onChange(`${basePath}.${key}`, n);
+    if (locked && n > 0) {
+      const r = ratioRef.current || 1;
+      if (key === "width") onChange(`${basePath}.height`, Math.max(1, Math.round(n / r)));
+      else onChange(`${basePath}.width`, Math.max(1, Math.round(n * r)));
+    }
+  };
   return (
     <div>
       <label style={LABEL_STYLE}>크기</label>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-        {[
-          { sub: "W", key: "width", val: vals.width },
-          { sub: "H", key: "height", val: vals.height },
-        ].map((c) => (
-          <div key={c.key}>
-            <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 500 }}>{c.sub}</span>
-            <input
-              type="number"
-              value={Math.round(c.val ?? 0)}
-              onChange={(e) => onChange(`${basePath}.${c.key}`, Number(e.target.value) || 0)}
-              style={INPUT_STYLE}
-            />
-          </div>
-        ))}
+      <div style={{ display: "grid", gridTemplateColumns: lockPath ? "1fr auto 1fr" : "1fr 1fr", gap: 6, alignItems: "end" }}>
+        <div>
+          <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 500 }}>W</span>
+          <input
+            type="number"
+            value={Math.round(vals.width ?? 0)}
+            onFocus={captureRatio}
+            onChange={(e) => setDim("width", e.target.value)}
+            style={INPUT_STYLE}
+          />
+        </div>
+        {lockPath && (
+          <button
+            type="button"
+            aria-pressed={!!locked}
+            title={locked ? "가로세로 비율 고정 해제" : "가로세로 비율 고정"}
+            onClick={() => onChange(lockPath, !locked)}
+            style={{
+              height: 28,
+              width: 26,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: locked ? "var(--accent)" : "var(--bg-overlay)",
+              color: locked ? "white" : "var(--text-tertiary)",
+              border: "1px solid",
+              borderColor: locked ? "var(--accent)" : "var(--border)",
+              borderRadius: 5,
+              cursor: "pointer",
+              padding: 0,
+            }}
+          >
+            <svg width="13" height="13" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
+            </svg>
+          </button>
+        )}
+        <div>
+          <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 500 }}>H</span>
+          <input
+            type="number"
+            value={Math.round(vals.height ?? 0)}
+            onFocus={captureRatio}
+            onChange={(e) => setDim("height", e.target.value)}
+            style={INPUT_STYLE}
+          />
+        </div>
       </div>
     </div>
   );
@@ -1275,7 +1330,7 @@ function SelectionEditor({
   const isReorderable = /\.(decorations|text_slots)\[\d+\]$/.test(selected.path);
 
   if (selected.kind === "text_slot") {
-    const t = node as { role?: string; position?: { x: number; y: number }; size?: { width: number; height: number }; style?: TextStyle; opacity?: number };
+    const t = node as { role?: string; position?: { x: number; y: number }; size?: { width: number; height: number }; style?: TextStyle; opacity?: number; lock_aspect?: boolean };
     return (
       <div style={SECTION_STYLE}>
         <p style={SECTION_TITLE}>텍스트 슬롯{t?.role ? ` · ${t.role}` : ""}</p>
@@ -1284,7 +1339,7 @@ function SelectionEditor({
             {/* 1. 위치 */}
             <XYGrid basePath={`${selected.path}.position`} vals={{ x: t?.position?.x, y: t?.position?.y }} onChange={onChange} />
             {/* 2. 크기 */}
-            <WHGrid basePath={`${selected.path}.size`} vals={{ width: t?.size?.width, height: t?.size?.height }} onChange={onChange} />
+            <WHGrid basePath={`${selected.path}.size`} vals={{ width: t?.size?.width, height: t?.size?.height }} onChange={onChange} lockPath={`${selected.path}.lock_aspect`} locked={!!t?.lock_aspect} />
             {/* 3. 색상 */}
             <TextStyleEditor path={`${selected.path}.style`} style={t?.style} onChange={onChange} section="color" />
             {/* 4. 불투명도 */}
@@ -1322,7 +1377,7 @@ function SelectionEditor({
             {/* 1. 위치 */}
             <XYGrid basePath={`${selected.path}.position`} vals={{ x: d?.position?.x, y: d?.position?.y }} onChange={onChange} />
             {/* 2. 크기 */}
-            <WHGrid basePath={`${selected.path}.size`} vals={{ width: d?.size?.width, height: d?.size?.height }} onChange={onChange} />
+            <WHGrid basePath={`${selected.path}.size`} vals={{ width: d?.size?.width, height: d?.size?.height }} onChange={onChange} lockPath={`${selected.path}.lock_aspect`} locked={!!d?.lock_aspect} />
             {/* 3. 색상 */}
             {!fillIsGradient && (
               <ColorRow label="색상" value={solidFill || ""} onChange={(v) => onChange(`${selected.path}.fill`, v)} />
@@ -1385,12 +1440,12 @@ function SelectionEditor({
 
   if (selected.kind === "grid_image") {
     if (activeTab !== "basic") return null;
-    const ia = node as { x?: number; y?: number; width?: number; height?: number; border_radius?: number };
+    const ia = node as { x?: number; y?: number; width?: number; height?: number; border_radius?: number; lock_aspect?: boolean };
     return (
       <div style={SECTION_STYLE}>
         <p style={SECTION_TITLE}>그리드 이미지 영역</p>
         <XYGrid basePath={selected.path} vals={{ x: ia?.x, y: ia?.y }} onChange={onChange} />
-        <WHGrid basePath={selected.path} vals={{ width: ia?.width, height: ia?.height }} onChange={onChange} />
+        <WHGrid basePath={selected.path} vals={{ width: ia?.width, height: ia?.height }} onChange={onChange} lockPath={`${selected.path}.lock_aspect`} locked={!!ia?.lock_aspect} />
         <SliderRow
           label="모서리 둥글기"
           value={ia?.border_radius}

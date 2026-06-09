@@ -77,6 +77,9 @@ class TextSlot(BaseModel):
     role: str
     position: Position
     size: Size
+    # Editor-only: when true the 크기 W/H stay proportional on resize (the
+    # template-studio chain-lock). Defaults off so existing templates load.
+    lock_aspect: bool = False
 
     @field_validator("role")
     @classmethod
@@ -98,6 +101,8 @@ class Decoration(BaseModel):
     size: Size
     src: str | None = None
     fill: str | None = None
+    # Editor-only aspect-ratio lock (see TextSlot.lock_aspect).
+    lock_aspect: bool = False
 
 
 class ItemBox(BaseModel):

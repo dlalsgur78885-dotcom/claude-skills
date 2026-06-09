@@ -219,6 +219,37 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
         setSelectedMeta(null);
       });
 
+      // Aspect-ratio lock (the 크기 chain icon). The spec element carries a
+      // `lock_aspect` flag; when set, force every resize to stay proportional
+      // on any handle. Side handles scale one axis — mirror it; corner handles
+      // get forced uniform off the dominant axis. applyMovementToTemplate then
+      // bakes the proportional scale back into width/height on object:modified.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      canvas.on("object:scaling", (e: any) => {
+        const obj = e?.target;
+        const path = obj?.data?.path;
+        if (!path) return;
+        const node = getByPath(templateRef.current, path) as { lock_aspect?: boolean } | undefined;
+        if (!node?.lock_aspect) return;
+        const tr = e?.transform;
+        const orig = tr?.original;
+        if (!orig) return;
+        const sx0 = Number(orig.scaleX) || 1;
+        const sy0 = Number(orig.scaleY) || 1;
+        const k = sy0 / sx0;
+        const corner = tr.corner;
+        if (corner === "ml" || corner === "mr") {
+          obj.scaleY = (Number(obj.scaleX) || 1) * k;
+        } else if (corner === "mt" || corner === "mb") {
+          obj.scaleX = (Number(obj.scaleY) || 1) / k;
+        } else {
+          const f = Math.max((Number(obj.scaleX) || 1) / sx0, (Number(obj.scaleY) || 1) / sy0);
+          obj.scaleX = sx0 * f;
+          obj.scaleY = sy0 * f;
+        }
+        if (typeof obj.setCoords === "function") obj.setCoords();
+      });
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       canvas.on("object:modified", (e: { target?: any }) => {
         const obj = e.target;

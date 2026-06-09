@@ -79,6 +79,7 @@ export interface Decoration {
   stroke_width?: number;
   opacity?: number;  // 0..1, default 1
   color_fill?: ColorFillSpec | null;  // image-only BlendColor filter
+  lock_aspect?: boolean;  // editor 크기 chain-lock — keep W/H proportional on resize
 }
 
 export interface TextSlot {

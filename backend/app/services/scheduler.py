@@ -1,5 +1,6 @@
 """APScheduler-based scheduler — scraping + image cleanup."""
 
+import asyncio
 import logging
 import shutil
 from datetime import datetime, timedelta
@@ -14,6 +15,17 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
+
+# ── DB compaction (VACUUM) ────────────────────────────────────────────────
+# Deleting a carousel hard-removes its row, but SQLite keeps the freed pages
+# in the file (auto_vacuum is OFF) — so the file, and every hourly backup of
+# it, stays bloated until a VACUUM rewrites it compactly. We don't VACUUM on
+# every delete (it locks the whole DB for seconds); instead a delete schedules
+# one debounced, gated run.
+VACUUM_MIN_RECLAIM_MB = 50      # skip unless at least this much is reclaimable
+VACUUM_DEBOUNCE_SECONDS = 300   # run ~5 min after the first delete in a burst
+VACUUM_DISK_HEADROOM = 1.2      # need free disk >= db_size * this (VACUUM temp copy)
+_vacuum_lock = asyncio.Lock()
 
 # 수집하거나 생성한 모든 이미지: 3시간 후 자동 삭제
 EPHEMERAL_HOURS = 3
@@ -144,6 +156,10 @@ async def cleanup_images():
     else:
         logger.debug("[Cleanup] nothing to clean")
 
+    # Backstop: compact the DB if deletes have left enough reclaimable space.
+    # Gated + locked, so this is a no-op unless a real VACUUM is warranted.
+    await maybe_vacuum("periodic")
+
 
 async def cleanup_proxy_cache():
     """proxy_cache 정리 — '미참조 + 7일 경과' 파일만 삭제.
@@ -209,6 +225,92 @@ async def cleanup_proxy_cache():
             f"(>{LONG_LIVED_DAYS}d old), freed {freed / 1024 / 1024:.1f}MB "
             f"(kept {len(referenced)} referenced keys)"
         )
+
+
+def _db_file() -> Path:
+    return settings.DATA_DIR / "db.sqlite3"
+
+
+async def maybe_vacuum(reason: str = "scheduled") -> None:
+    """Compact the SQLite file via VACUUM — but only when worth it and safe.
+
+    Gates:
+      - reclaimable (freelist) >= VACUUM_MIN_RECLAIM_MB, so we don't rewrite the
+        whole DB to reclaim a few KB.
+      - free disk >= db_size * VACUUM_DISK_HEADROOM — VACUUM writes a full temp
+        copy; without headroom it fails (and could fill the disk). This is also
+        why a near-full disk can't be compacted: keep margin, run often.
+    A module lock prevents overlapping runs (debounce job vs. periodic backstop).
+    """
+    db_path = _db_file()
+    if not db_path.exists() or _vacuum_lock.locked():
+        return
+    async with _vacuum_lock:
+        try:
+            import aiosqlite
+
+            async def _scalar(db, q):
+                async with db.execute(q) as cur:
+                    row = await cur.fetchone()
+                    return row[0] if row else 0
+
+            async with aiosqlite.connect(db_path) as db:
+                await db.execute("PRAGMA busy_timeout=30000")
+                page_size = await _scalar(db, "PRAGMA page_size")
+                page_count = await _scalar(db, "PRAGMA page_count")
+                freelist = await _scalar(db, "PRAGMA freelist_count")
+                db_bytes = page_size * page_count
+                reclaimable = page_size * freelist
+                if reclaimable < VACUUM_MIN_RECLAIM_MB * 1024 * 1024:
+                    logger.debug(
+                        f"[Vacuum] {reclaimable/1024/1024:.1f}MB reclaimable "
+                        f"(<{VACUUM_MIN_RECLAIM_MB}MB) — skip ({reason})"
+                    )
+                    return
+                free = shutil.disk_usage(db_path.parent).free
+                if free < db_bytes * VACUUM_DISK_HEADROOM:
+                    logger.warning(
+                        f"[Vacuum] low disk — free {free/1024/1024:.0f}MB < "
+                        f"db {db_bytes/1024/1024:.0f}MB×{VACUUM_DISK_HEADROOM}; skip ({reason})"
+                    )
+                    return
+                before = db_path.stat().st_size
+                await db.execute("VACUUM")
+                await db.commit()
+            after = db_path.stat().st_size
+            logger.info(
+                f"[Vacuum] {reason}: {before/1024/1024:.1f}MB → {after/1024/1024:.1f}MB "
+                f"(reclaimed {(before-after)/1024/1024:.1f}MB)"
+            )
+        except Exception as e:
+            logger.warning(f"[Vacuum] failed ({reason}): {e}")
+
+
+def schedule_vacuum_soon(reason: str = "post-delete") -> None:
+    """Debounced trigger: run a gated VACUUM ~VACUUM_DEBOUNCE_SECONDS from now.
+
+    Coalesces — if a run is already pending, leave it. So deleting 10 carousels
+    in a row schedules ONE VACUUM ~5 min after the first, not ten. Safe to call
+    from a request handler; it just (re)registers a one-shot APScheduler job.
+    """
+    try:
+        if not scheduler.running:
+            return
+        if scheduler.get_job("vacuum_debounce") is not None:
+            return  # already pending → coalesce
+        scheduler.add_job(
+            maybe_vacuum,
+            trigger="date",
+            run_date=datetime.now() + timedelta(seconds=VACUUM_DEBOUNCE_SECONDS),
+            args=[reason],
+            id="vacuum_debounce",
+            name="삭제 후 DB 압축 (debounced VACUUM)",
+            replace_existing=True,
+            misfire_grace_time=600,
+        )
+        logger.debug(f"[Vacuum] scheduled in {VACUUM_DEBOUNCE_SECONDS}s ({reason})")
+    except Exception as e:
+        logger.debug(f"[Vacuum] schedule skipped: {e}")
 
 
 def start_scheduler():

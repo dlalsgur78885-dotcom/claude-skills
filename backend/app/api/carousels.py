@@ -265,6 +265,12 @@ async def delete_carousel(
     await db.delete(carousel)
     await db.commit()
 
+    # The row's canvas_data (often base64-embedded images) is now logically
+    # gone, but SQLite keeps the freed pages in the file. Schedule a debounced,
+    # gated VACUUM so the file — and its hourly backups — actually shrink.
+    from app.services.scheduler import schedule_vacuum_soon
+    schedule_vacuum_soon("carousel-delete")
+
 
 @router.post("/{carousel_id}/clone", response_model=CarouselResponse, status_code=201)
 async def clone_carousel(

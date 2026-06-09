@@ -28,6 +28,17 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
     Object.keys(initial.layouts || {})[0] || ""
   );
   const [selectedMeta, setSelectedMeta] = useState<FabricMeta | null>(null);
+  // ── Object alignment (피드백 슬라이드 4: 정렬 도구) ──────────────────────
+  // selBox = the current selection's bbox in DESIGN coords (drives the floating
+  // align bar's position). selCount gates 객체-기준 정렬(≥2) / 분배(≥3).
+  // alignMode: "canvas" → 페이지 전체 기준, "selection" → 선택 객체끼리.
+  const [selBox, setSelBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const [selCount, setSelCount] = useState(0);
+  const [alignMode, setAlignMode] = useState<"canvas" | "selection">("canvas");
+  const [draggingSel, setDraggingSel] = useState(false);
+  // True while an align/distribute op discards+rebuilds the selection, so the
+  // selection:cleared handler doesn't wipe the panel mid-op.
+  const aligningRef = useRef(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -183,6 +194,12 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
   const canvasW = template.canvas?.width || 1080;
   const canvasH = template.canvas?.height || 1080;
   const scale = DISPLAY_SIZE / Math.max(canvasW, canvasH);
+  // Mount-effect canvas handlers capture their closures once; mirror scale in a
+  // ref so they (and the align helpers) always read the current zoom factor.
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
+  // Positioning context for the floating align bar (the center canvas column).
+  const canvasAreaRef = useRef<HTMLDivElement>(null);
 
   const layoutNames = useMemo(() => Object.keys(template.layouts || {}), [template.layouts]);
 
@@ -205,19 +222,28 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const obj = e.selected?.[0] as any;
         setSelectedMeta(obj?.data || null);
+        refreshSelBox(true); // position + frame-default the align bar
       });
       canvas.on("selection:updated", (e: { selected?: unknown[] }) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const obj = e.selected?.[0] as any;
         setSelectedMeta(obj?.data || null);
+        refreshSelBox(true);
       });
       canvas.on("selection:cleared", () => {
         // canvas.clear() inside a property-edit redraw dispatches this — we
         // restore the selection right after, so the null state would only
-        // last for one render and erase the panel. Ignore it during redraw.
-        if (inRedrawRef.current) return;
+        // last for one render and erase the panel. Ignore it during redraw or
+        // an align op (which discards+reselects).
+        if (inRedrawRef.current || aligningRef.current) return;
         setSelectedMeta(null);
+        setSelBox(null);
+        setSelCount(0);
       });
+
+      // Hide the floating align bar while a drag/scale is in flight.
+      canvas.on("mouse:down", () => setDraggingSel(true));
+      canvas.on("mouse:up", () => { setDraggingSel(false); refreshSelBox(false); });
 
       // Aspect-ratio lock (the 크기 chain icon). The spec element carries a
       // `lock_aspect` flag; when set, force every resize to stay proportional
@@ -253,8 +279,26 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       canvas.on("object:modified", (e: { target?: any }) => {
         const obj = e.target;
-        if (!obj || !obj.data) return;
+        if (!obj) return;
+        const t = String(obj.type || "").toLowerCase();
+        if (t === "activeselection") {
+          // Multi-object move: an ActiveSelection has no spec path, so the
+          // single-object path below would drop it. Discard → absolute coords,
+          // write every member back to the spec, then re-group. (Position only;
+          // multi-resize isn't persisted — same as before this change.)
+          const members = realActiveObjects();
+          aligningRef.current = true;
+          canvas.discardActiveObject();
+          bakeMoves(members);
+          reselectObjects(members).then(() => {
+            aligningRef.current = false;
+            refreshSelBox(false);
+          });
+          return;
+        }
+        if (!obj.data) return;
         applyMovementToTemplate(obj);
+        refreshSelBox(false);
       });
     })();
 
@@ -481,6 +525,139 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
     skipRenderRef.current = true;
     commit(next, JSON.stringify(prev));
   }
+
+  // ── Object alignment helpers (피드백 슬라이드 4) ───────────────────────────
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const ALIGNABLE_KINDS = new Set(["text_slot", "decoration", "grid_image"]);
+
+  /** Selected content objects that carry a spec position (excludes background,
+   *  grid origin marker, anything without a path). */
+  function realActiveObjects(): any[] {
+    const canvas = fabricRef.current;
+    if (!canvas) return [];
+    const objs: any[] = (canvas.getActiveObjects?.() || []) as any[];
+    return objs.filter((o) => o && o.data?.path && ALIGNABLE_KINDS.has(o.data.kind));
+  }
+
+  /** Recompute the selection bbox (DESIGN coords) + count for the floating bar.
+   *  resetMode picks the default frame on a fresh selection (2+ → 객체 기준). */
+  function refreshSelBox(resetMode = false) {
+    const objs = realActiveObjects();
+    if (!objs.length) { setSelBox(null); setSelCount(0); return; }
+    const sc = scaleRef.current;
+    let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+    for (const o of objs) {
+      const bb = o.getBoundingRect();
+      l = Math.min(l, bb.left); t = Math.min(t, bb.top);
+      r = Math.max(r, bb.left + bb.width); b = Math.max(b, bb.top + bb.height);
+    }
+    setSelBox({ left: l / sc, top: t / sc, width: (r - l) / sc, height: (b - t) / sc });
+    setSelCount(objs.length);
+    if (resetMode) setAlignMode(objs.length >= 2 ? "selection" : "canvas");
+    else if (objs.length < 2) setAlignMode("canvas");
+  }
+
+  async function reselectObjects(objs: any[]) {
+    const canvas = fabricRef.current;
+    if (!canvas || !objs.length) return;
+    if (objs.length === 1) { canvas.setActiveObject(objs[0]); return; }
+    const fabric = await getFabric();
+    const AS = (fabric as any).ActiveSelection;
+    canvas.setActiveObject(new AS(objs, { canvas }));
+  }
+
+  /** Write each object's new (absolute) position back into the spec in ONE
+   *  commit. Position-only — align/distribute never resize. Caller must have
+   *  discarded the active selection first so left/top are absolute. */
+  function bakeMoves(objs: any[]) {
+    const sc = scaleRef.current;
+    const prev = templateRef.current;
+    let next: TemplateData = prev;
+    for (const o of objs) {
+      const meta = o.data;
+      if (!meta?.path) continue;
+      const x = Math.round((o.left || 0) / sc);
+      const y = Math.round((o.top || 0) / sc);
+      if (meta.kind === "text_slot" || meta.kind === "decoration") {
+        next = setByPath(next, `${meta.path}.position.x`, x) as TemplateData;
+        next = setByPath(next, `${meta.path}.position.y`, y) as TemplateData;
+      } else {
+        next = setByPath(next, `${meta.path}.x`, x) as TemplateData;
+        next = setByPath(next, `${meta.path}.y`, y) as TemplateData;
+      }
+    }
+    templateRef.current = next;
+    skipRenderRef.current = true;
+    commit(next, JSON.stringify(prev));
+  }
+
+  /** Align to the page (frame="canvas") or to the selection's own bbox
+   *  (frame="selection", ≥2). mode = left/hcenter/right/top/vcenter/bottom. */
+  async function alignObjects(frame: "canvas" | "selection", mode: string) {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const objs = realActiveObjects();
+    if (!objs.length || (frame === "selection" && objs.length < 2)) return;
+    const sc = scaleRef.current;
+    aligningRef.current = true;
+    canvas.discardActiveObject(); // ungroup → absolute coords
+    const boxes = objs.map((o) => ({ o, bb: o.getBoundingRect() }));
+    let refL: number, refT: number, refR: number, refB: number;
+    if (frame === "canvas") {
+      refL = 0; refT = 0; refR = canvasW * sc; refB = canvasH * sc;
+    } else {
+      refL = Math.min(...boxes.map((x) => x.bb.left));
+      refT = Math.min(...boxes.map((x) => x.bb.top));
+      refR = Math.max(...boxes.map((x) => x.bb.left + x.bb.width));
+      refB = Math.max(...boxes.map((x) => x.bb.top + x.bb.height));
+    }
+    for (const { o, bb } of boxes) {
+      let dx = 0, dy = 0;
+      if (mode === "left") dx = refL - bb.left;
+      else if (mode === "hcenter") dx = (refL + refR) / 2 - (bb.left + bb.width / 2);
+      else if (mode === "right") dx = refR - (bb.left + bb.width);
+      else if (mode === "top") dy = refT - bb.top;
+      else if (mode === "vcenter") dy = (refT + refB) / 2 - (bb.top + bb.height / 2);
+      else if (mode === "bottom") dy = refB - (bb.top + bb.height);
+      if (dx) o.set("left", (o.left || 0) + dx);
+      if (dy) o.set("top", (o.top || 0) + dy);
+      o.setCoords();
+    }
+    bakeMoves(objs);
+    await reselectObjects(objs);
+    aligningRef.current = false;
+    canvas.requestRenderAll();
+    refreshSelBox(false);
+  }
+
+  /** Evenly space 3+ selected objects along an axis (extremes stay put). */
+  async function distributeObjects(axis: "h" | "v") {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const objs = realActiveObjects();
+    if (objs.length < 3) return;
+    aligningRef.current = true;
+    canvas.discardActiveObject();
+    const boxes = objs.map((o) => ({ o, bb: o.getBoundingRect() }));
+    const cen = (b: any) => (axis === "h" ? b.left + b.width / 2 : b.top + b.height / 2);
+    boxes.sort((a, b) => cen(a.bb) - cen(b.bb));
+    const c0 = cen(boxes[0].bb);
+    const c1 = cen(boxes[boxes.length - 1].bb);
+    const stepv = (c1 - c0) / (boxes.length - 1);
+    boxes.forEach((x, i) => {
+      if (i === 0 || i === boxes.length - 1) return;
+      const delta = (c0 + stepv * i) - cen(x.bb);
+      if (axis === "h") x.o.set("left", (x.o.left || 0) + delta);
+      else x.o.set("top", (x.o.top || 0) + delta);
+      x.o.setCoords();
+    });
+    bakeMoves(objs);
+    await reselectObjects(objs);
+    aligningRef.current = false;
+    canvas.requestRenderAll();
+    refreshSelBox(false);
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 
   function patchTemplate(path: string, value: unknown) {
     const prev = templateRef.current;
@@ -1291,6 +1468,7 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         {/* Center: canvas */}
         <div
+          ref={canvasAreaRef}
           onDragOver={handleDragOver}
           onDragEnter={handleDragEnter}
           onDragLeave={handleDragLeave}
@@ -1318,6 +1496,109 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
           >
             <canvas ref={canvasRef} />
           </div>
+
+          {/* Floating object-alignment bar (피드백 슬라이드 4). Centred above the
+              selection. "전체" aligns to the page, "객체" aligns the selected
+              objects to each other (≥2). Hidden mid-drag. */}
+          {selBox && !draggingSel && (() => {
+            const cv = canvasRef.current;
+            const area = canvasAreaRef.current;
+            if (!cv || !area) return null;
+            const cvR = cv.getBoundingClientRect();
+            const arR = area.getBoundingClientRect();
+            const offX = cvR.left - arR.left;
+            const offY = cvR.top - arR.top;
+            const selTopPx = offY + selBox.top * scale;
+            const selCenterPx = offX + (selBox.left + selBox.width / 2) * scale;
+            const BAR_H = 34;
+            let top = selTopPx - BAR_H - 10;
+            if (top < 6) top = selTopPx + selBox.height * scale + 10; // flip below
+            const left = Math.max(140, Math.min(arR.width - 140, selCenterPx));
+
+            const canObj = selCount >= 2;
+            const canDist = selCount >= 3;
+            const frame: "canvas" | "selection" = alignMode === "selection" && canObj ? "selection" : "canvas";
+
+            const I = {
+              left: <><rect x="1" y="2" width="1.6" height="12" rx="0.6" /><rect x="3.5" y="3.5" width="9" height="3" rx="1" /><rect x="3.5" y="9.5" width="5.5" height="3" rx="1" /></>,
+              hcenter: <><rect x="7.2" y="1" width="1.6" height="14" rx="0.6" /><rect x="3.5" y="3.5" width="9" height="3" rx="1" /><rect x="5.25" y="9.5" width="5.5" height="3" rx="1" /></>,
+              right: <><rect x="13.4" y="2" width="1.6" height="12" rx="0.6" /><rect x="3.5" y="3.5" width="9" height="3" rx="1" /><rect x="7" y="9.5" width="5.5" height="3" rx="1" /></>,
+              top: <><rect x="2" y="1" width="12" height="1.6" rx="0.6" /><rect x="3.5" y="3.5" width="3" height="9" rx="1" /><rect x="9.5" y="3.5" width="3" height="5.5" rx="1" /></>,
+              vcenter: <><rect x="1" y="7.2" width="14" height="1.6" rx="0.6" /><rect x="3.5" y="3.5" width="3" height="9" rx="1" /><rect x="9.5" y="5.25" width="3" height="5.5" rx="1" /></>,
+              bottom: <><rect x="2" y="13.4" width="12" height="1.6" rx="0.6" /><rect x="3.5" y="3.5" width="3" height="9" rx="1" /><rect x="9.5" y="7" width="3" height="5.5" rx="1" /></>,
+              distH: <><rect x="1.4" y="3" width="2" height="10" rx="0.8" /><rect x="7" y="3" width="2" height="10" rx="0.8" /><rect x="12.6" y="3" width="2" height="10" rx="0.8" /></>,
+              distV: <><rect x="3" y="1.4" width="10" height="2" rx="0.8" /><rect x="3" y="7" width="10" height="2" rx="0.8" /><rect x="3" y="12.6" width="10" height="2" rx="0.8" /></>,
+            } as const;
+            const aligns: { key: keyof typeof I; mode: string; title: string }[] = [
+              { key: "left", mode: "left", title: "왼쪽 정렬" },
+              { key: "hcenter", mode: "hcenter", title: "가로 가운데 정렬" },
+              { key: "right", mode: "right", title: "오른쪽 정렬" },
+              { key: "top", mode: "top", title: "위쪽 정렬" },
+              { key: "vcenter", mode: "vcenter", title: "세로 가운데 정렬" },
+              { key: "bottom", mode: "bottom", title: "아래쪽 정렬" },
+            ];
+            const iconBtn = (icon: React.ReactNode, title: string, onClick: () => void, disabled = false) => (
+              <button
+                key={title}
+                title={title}
+                disabled={disabled}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={onClick}
+                style={{
+                  width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center",
+                  border: "none", borderRadius: 5, background: "transparent",
+                  color: disabled ? "var(--text-tertiary)" : "var(--text-secondary)",
+                  opacity: disabled ? 0.35 : 1, cursor: disabled ? "not-allowed" : "pointer",
+                }}
+                onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.background = "var(--bg-overlay)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              >
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor">{icon}</svg>
+              </button>
+            );
+            const modeBtn = (m: "canvas" | "selection", label: string, disabled = false) => (
+              <button
+                title={m === "canvas" ? "페이지 전체 기준" : "선택 객체끼리 기준"}
+                disabled={disabled}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setAlignMode(m)}
+                style={{
+                  padding: "3px 8px", fontSize: 11, fontWeight: 600, borderRadius: 5, border: "none",
+                  cursor: disabled ? "not-allowed" : "pointer",
+                  background: frame === m ? "var(--accent)" : "transparent",
+                  color: frame === m ? "#fff" : disabled ? "var(--text-tertiary)" : "var(--text-secondary)",
+                  opacity: disabled ? 0.4 : 1,
+                }}
+              >
+                {label}
+              </button>
+            );
+            const divider = <div style={{ width: 1, alignSelf: "stretch", background: "var(--border)", margin: "4px 2px" }} />;
+            return (
+              <div
+                onMouseDown={(e) => e.stopPropagation()}
+                style={{
+                  position: "absolute", left, top, transform: "translateX(-50%)",
+                  display: "flex", alignItems: "center", gap: 1,
+                  height: BAR_H, padding: "0 5px",
+                  background: "var(--bg-elevated)", border: "1px solid var(--border)",
+                  borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+                  zIndex: 20, whiteSpace: "nowrap",
+                }}
+              >
+                <div style={{ display: "flex", gap: 2, background: "var(--bg-overlay)", borderRadius: 6, padding: 2 }}>
+                  {modeBtn("canvas", "전체")}
+                  {modeBtn("selection", "객체", !canObj)}
+                </div>
+                {divider}
+                {aligns.map((a) => iconBtn(I[a.key], a.title, () => alignObjects(frame, a.mode)))}
+                {divider}
+                {iconBtn(I.distH, "가로 균등 분배", () => distributeObjects("h"), !canDist)}
+                {iconBtn(I.distV, "세로 균등 분배", () => distributeObjects("v"), !canDist)}
+              </div>
+            );
+          })()}
+
           {dropDepth > 0 && (
             <div
               style={{

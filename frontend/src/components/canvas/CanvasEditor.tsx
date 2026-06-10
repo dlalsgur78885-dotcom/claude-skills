@@ -602,8 +602,10 @@ export function CanvasEditor({
   // An undo/redo entry is either a per-slide canvas snapshot, or a whole-
   // carousel snapshot. The latter backs the "전체 수정" bulk edit, which
   // changes every slide at once — a single canvas snapshot can't represent it.
+  // A canvas entry carries the index of the slide it belongs to so undo/redo
+  // can auto-navigate back to that page when it isn't the one on screen.
   type UndoEntry =
-    | { kind: "canvas"; data: string }
+    | { kind: "canvas"; slideIndex: number; data: string }
     | { kind: "bulk"; slides: SlideData[] };
   const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
   const [redoStack, setRedoStack] = useState<UndoEntry[]>([]);
@@ -1919,11 +1921,19 @@ export function CanvasEditor({
   function switchSlide(index: number) {
     saveCurrentSlide();
     setCurrentSlideIndex(index);
+    currentSlideIndexRef.current = index;
     loadSlide(index);
     setSelectedObject(null);
-    // Per-slide canvas undo history is meaningless on another slide — drop it
-    // so Ctrl+Z can't pull a different slide's snapshot into this one. Bulk
-    // ("전체 수정") entries span every slide, so they survive the switch.
+    // History is kept across the switch: each canvas entry is tagged with its
+    // slide index, so undo/redo can reach a previous page's edit and auto-jump
+    // back to it (feedback: "뒤로 가기" must stay enabled after page changes).
+  }
+
+  // Per-slide canvas history references slides by index, so any structural
+  // change to the slide array (insert / delete / reorder) leaves those indices
+  // pointing at the wrong page. Drop the per-slide entries on such edits; bulk
+  // ("전체 수정") entries snapshot the whole carousel and stay valid.
+  function clearCanvasHistory() {
     setUndoStack((u) => u.filter((e) => e.kind === "bulk"));
     setRedoStack((r) => r.filter((e) => e.kind === "bulk"));
   }
@@ -2075,10 +2085,14 @@ export function CanvasEditor({
     const newIdx = idx + 1;
     setCurrentSlideIndex(newIdx);
     currentSlideIndexRef.current = newIdx;
+    // Splice shifts every index after idx — the tagged history no longer maps.
+    clearCanvasHistory();
     setTimeout(() => loadSlide(newIdx), 0);
   }
 
   function removeSlide(index: number) {
+    // Removing a slide shifts every later index — drop the tagged history.
+    clearCanvasHistory();
     setSlides((prev) => {
       if (prev.length <= 1) return prev;
       const next = prev.filter((_, i) => i !== index);
@@ -2105,6 +2119,8 @@ export function CanvasEditor({
     // Persist the live fabric canvas FIRST so a mid-edit reorder doesn't lose
     // the buffered changes on the slide being moved.
     saveCurrentSlide();
+    // Reordering remaps indices — the tagged per-slide history is now stale.
+    clearCanvasHistory();
     setSlides((prev) => {
       if (from < 0 || from >= prev.length) return prev;
       const insertAt = dropBefore > from ? dropBefore - 1 : dropBefore;
@@ -3139,9 +3155,12 @@ export function CanvasEditor({
     if (!canvas) return;
     const prev = lastSnapshotRef.current;
     if (prev !== null) {
+      // lastSnapshotRef always holds the slide currently on screen (loadSlide /
+      // restoreSnapshot refresh it on every page change), so tag with that index.
+      const slideIndex = currentSlideIndexRef.current;
       setUndoStack((u) => {
         const trimmed = u.length >= 50 ? u.slice(-49) : u;
-        return [...trimmed, { kind: "canvas", data: prev }];
+        return [...trimmed, { kind: "canvas", slideIndex, data: prev }];
       });
       setRedoStack([]);
     }
@@ -3311,6 +3330,35 @@ export function CanvasEditor({
     return inverse;
   }
 
+  // Apply one per-slide canvas history entry (shared by undo & redo). The entry
+  // may belong to a page other than the one on screen — e.g. the user edited
+  // slide 1, moved to slide 2, then hit Ctrl+Z. In that case auto-jump to the
+  // entry's slide first so the user SEES the change being reverted, and push the
+  // OPPOSITE-stack entry from that slide's stored state (the live canvas is
+  // showing the wrong page, so serializeCanvas() can't be used there).
+  function applyCanvasHistory(
+    entry: { kind: "canvas"; slideIndex: number; data: string },
+    pushOpposite: (e: UndoEntry) => void
+  ) {
+    const targetIdx = entry.slideIndex;
+    if (targetIdx === currentSlideIndexRef.current) {
+      // Same page — capture the live canvas (slidesRef can lag unsaved edits).
+      pushOpposite({ kind: "canvas", slideIndex: targetIdx, data: serializeCanvas() });
+      restoreSnapshot(entry.data);
+      return;
+    }
+    // Different page — persist the one we're leaving, then read the target's
+    // current state from slidesRef for the opposite stack before reverting it.
+    saveCurrentSlide();
+    const stored = slidesRef.current[targetIdx];
+    if (!stored) return; // index went stale (structural edits clear history first)
+    pushOpposite({ kind: "canvas", slideIndex: targetIdx, data: JSON.stringify(stored) });
+    setCurrentSlideIndex(targetIdx);
+    currentSlideIndexRef.current = targetIdx;
+    setSelectedObject(null);
+    restoreSnapshot(entry.data); // loads the target page, then reverts it
+  }
+
   function undo() {
     const canvas = fabricRef.current;
     if (!canvas) return;
@@ -3322,10 +3370,7 @@ export function CanvasEditor({
         setRedoStack((r) => [...r, inverse]);
         return u.slice(0, -1);
       }
-      // Per-slide canvas snapshot — push current state to redo, then revert.
-      const current = serializeCanvas();
-      setRedoStack((r) => [...r, { kind: "canvas", data: current }]);
-      restoreSnapshot(entry.data);
+      applyCanvasHistory(entry, (e) => setRedoStack((r) => [...r, e]));
       return u.slice(0, -1);
     });
   }
@@ -3341,9 +3386,7 @@ export function CanvasEditor({
         setUndoStack((u) => [...u, inverse]);
         return r.slice(0, -1);
       }
-      const current = serializeCanvas();
-      setUndoStack((u) => [...u, { kind: "canvas", data: current }]);
-      restoreSnapshot(entry.data);
+      applyCanvasHistory(entry, (e) => setUndoStack((u) => [...u, e]));
       return r.slice(0, -1);
     });
   }

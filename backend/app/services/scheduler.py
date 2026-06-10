@@ -99,7 +99,6 @@ async def cleanup_images():
         data_dir / "images" / "processed",
         data_dir / "images" / "sourced",
         data_dir / "images" / "pool",
-        data_dir / "template_studio_cache",
     ]
 
     for root in ephemeral_roots:
@@ -118,6 +117,34 @@ async def cleanup_images():
                     deleted += 1
             except Exception as e:
                 logger.warning(f"[Cleanup] Failed to delete {item}: {e}")
+
+    # template_studio_cache/<slug>/ — 저장된 템플릿의 "원본 예시" 슬라이드.
+    # 미리보기 모달이 템플릿이 사는 동안 참조하므로(피드백 13-1) 살아있는
+    # slug 폴더는 보존하고, 고아 폴더(실패/중단된 추출)만 3h 룰로 정리한다.
+    # slug 조회가 실패하면 안전하게 이번 회차는 건너뛴다.
+    studio = data_dir / "template_studio_cache"
+    if studio.exists():
+        try:
+            from sqlalchemy import select
+            from app.database import async_session
+            from app.models.template import CarouselTemplate
+            async with async_session() as db:
+                live_slugs = set((await db.scalars(select(CarouselTemplate.slug))).all())
+            for sub in studio.iterdir():
+                if not sub.is_dir() or sub.name in live_slugs:
+                    continue
+                for f in sub.rglob("*"):
+                    if f.is_file() and datetime.fromtimestamp(f.stat().st_mtime) < cutoff:
+                        size = f.stat().st_size
+                        f.unlink()
+                        freed += size
+                        deleted += 1
+                try:
+                    sub.rmdir()  # only removes if emptied
+                except OSError:
+                    pass
+        except Exception as e:
+            logger.warning(f"[Cleanup] studio-cache sweep skipped: {e}")
 
     # Sweep empty directories left behind
     for root in ephemeral_roots:

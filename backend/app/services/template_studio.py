@@ -527,6 +527,27 @@ async def _call_gemini_for_template(
     slide_paths = await _download_slide_images(image_urls, cache_subdir=template_slug)
     logger.info(f"[TemplateStudio] {len(slide_paths)} slides downloaded for {template_slug}")
 
+    # kind="none" slides are excluded from extraction entirely (피드백 13-4:
+    # 선택한 슬라이드만 분류). Filter them out and REINDEX the remaining hints
+    # so the whole downstream pipeline (dedup / prompt / CV) sees a smaller
+    # carousel and never has to know about the skipped slides.
+    if layout_hints:
+        by_idx = {int(h.get("slide_index", -1)): h for h in layout_hints if isinstance(h, dict)}
+        active = [i for i in range(len(slide_paths)) if (by_idx.get(i) or {}).get("kind") != "none"]
+        if not active:
+            raise ValueError("최소 1개 슬라이드의 레이아웃을 분류해주세요 (전부 '없음'으로 선택됨)")
+        if len(active) < len(slide_paths):
+            logger.info(
+                "[TemplateStudio] %d of %d slides selected for extraction ('없음' excluded)",
+                len(active), len(slide_paths),
+            )
+            slide_paths = [slide_paths[i] for i in active]
+            layout_hints = [
+                {**by_idx[i], "slide_index": pos}
+                for pos, i in enumerate(active)
+                if i in by_idx
+            ]
+
     canvas_w, canvas_h, aspect_label = _detect_canvas_from_slides(slide_paths)
     logger.info(
         "[TemplateStudio] canvas auto-detected: %dx%d (%s) for %s",
@@ -663,9 +684,11 @@ async def generate_and_save_template(
     """
 
     slug = template_slug or _slug(template_name)
-    template = await _call_gemini_for_template(post_url, template_name, slug, layout_hints=layout_hints)
-
-    # Resolve a unique slug per user (append -2, -3, ...)
+    # Resolve a unique slug per user (append -2, -3, ...) BEFORE generating —
+    # the gemini call caches the source-post slides under CACHE_DIR/<slug>, and
+    # _source_slide_urls later looks them up by the slug SAVED on the row.
+    # Deduping after the cache write left the folder under the base name, so
+    # re-extracting with a reused name lost the 원본 예시 preview images.
     base = slug
     n = 1
     while await db.scalar(
@@ -675,6 +698,8 @@ async def generate_and_save_template(
     ):
         n += 1
         slug = f"{base}-{n}"
+
+    template = await _call_gemini_for_template(post_url, template_name, slug, layout_hints=layout_hints)
 
     row = CarouselTemplate(
         user_id=user_id,

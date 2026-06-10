@@ -61,8 +61,8 @@ function extractInstagramPostUrls(text: string): string[] {
 const LAYOUT_PREFERENCE: Record<string, string[]> = {
   cover: ["photo_with_caption", "fullbg_overlay", "single_image", "text_only"],
   cta: ["phone_mockup", "fullbg_overlay", "photo_with_caption", "single_image", "text_only"],
-  content_grid: ["grid_2x2", "grid_3x1", "grid_1x2", "list_vertical", "photo_with_caption", "single_image"],
-  content_list: ["list_vertical", "grid_3x1", "grid_2x2", "photo_with_caption", "single_image"],
+  content_grid: ["grid_2x2", "grid_3x1", "grid_1x3", "grid_1x2", "grid_2x3", "grid_3x2", "grid_3x3", "list_vertical", "photo_with_caption", "single_image"],
+  content_list: ["list_vertical", "grid_3x1", "grid_1x3", "grid_2x2", "photo_with_caption", "single_image"],
   content_solo: ["photo_with_caption", "single_image", "fullbg_overlay", "text_only"],
 };
 

@@ -3,7 +3,7 @@ const API_ORIGIN = API_BASE.replace(/\/api\/?$/, "");
 
 export interface LayoutHint {
   slide_index: number;
-  kind: "single" | "grid";
+  kind: "single" | "grid" | "none";
   rows?: number;
   cols?: number;
 }

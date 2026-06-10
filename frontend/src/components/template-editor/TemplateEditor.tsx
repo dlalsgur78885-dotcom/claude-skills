@@ -164,6 +164,10 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
   }
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Marquee (rubber-band) drag started OUTSIDE the canvas — fabric only sees
+  // events on its own element, so drags from the surrounding dark workspace
+  // never reached it (피드백 4124-5). Coords are canvasArea-relative px.
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fabricRef = useRef<any>(null);
   // Tracked-in-state copy of the fabric instance so render effects can
@@ -286,14 +290,22 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
           // single-object path below would drop it. Discard → absolute coords,
           // write every member back to the spec, then re-group. (Position only;
           // multi-resize isn't persisted — same as before this change.)
-          const members = realActiveObjects();
-          aligningRef.current = true;
-          canvas.discardActiveObject();
-          bakeMoves(members);
-          reselectObjects(members).then(() => {
-            aligningRef.current = false;
-            refreshSelBox(false);
-          });
+          //
+          // Deferred: object:modified fires INSIDE fabric's mouse-up pipeline,
+          // and discarding/replacing the active selection there desyncs the
+          // in-flight transform — the selection then keeps following the mouse
+          // with no button held. Run after fabric finishes its mouse-up.
+          setTimeout(() => {
+            const members = realActiveObjects();
+            if (!members.length) return;
+            aligningRef.current = true;
+            canvas.discardActiveObject();
+            bakeMoves(members);
+            reselectObjects(members).then(() => {
+              aligningRef.current = false;
+              refreshSelBox(false);
+            });
+          }, 0);
           return;
         }
         if (!obj.data) return;
@@ -564,6 +576,60 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
     const fabric = await getFabric();
     const AS = (fabric as any).ActiveSelection;
     canvas.setActiveObject(new AS(objs, { canvas }));
+  }
+
+  /** Rubber-band select starting from the dark workspace AROUND the canvas.
+   *  Fabric's own group selector only sees drags that start on its element,
+   *  so we track the drag ourselves, then hand the intersecting objects back
+   *  to fabric as the active selection on mouse-up (피드백 4124-5). */
+  function startMarquee(e: React.MouseEvent) {
+    // Only drags that start on the bare workspace surface — clicks on the
+    // canvas (fabric's own rubber band), align bar, etc. are children.
+    if (e.button !== 0 || e.target !== canvasAreaRef.current) return;
+    const area = canvasAreaRef.current;
+    if (!area) return;
+    e.preventDefault();
+    const aR = area.getBoundingClientRect();
+    const x0 = e.clientX - aR.left;
+    const y0 = e.clientY - aR.top;
+    setMarquee({ x0, y0, x1: x0, y1: y0 });
+
+    function onMove(ev: MouseEvent) {
+      setMarquee({ x0, y0, x1: ev.clientX - aR.left, y1: ev.clientY - aR.top });
+    }
+    function onUp(ev: MouseEvent) {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      setMarquee(null);
+      const canvas = fabricRef.current;
+      const cv = canvasRef.current;
+      if (!canvas || !cv) return;
+      // Marquee rect → canvas display coords (client px minus canvas origin).
+      const cR = cv.getBoundingClientRect();
+      const sx0 = Math.min(x0 + aR.left, ev.clientX) - cR.left;
+      const sy0 = Math.min(y0 + aR.top, ev.clientY) - cR.top;
+      const sx1 = Math.max(x0 + aR.left, ev.clientX) - cR.left;
+      const sy1 = Math.max(y0 + aR.top, ev.clientY) - cR.top;
+      // Same candidates fabric's group selector would consider.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const hit = (canvas.getObjects() as any[]).filter((o) => {
+        if (o.selectable === false || o.evented === false || o.visible === false) return false;
+        const bb = o.getBoundingRect();
+        return bb.left < sx1 && bb.left + bb.width > sx0 && bb.top < sy1 && bb.top + bb.height > sy0;
+      });
+      canvas.discardActiveObject();
+      if (hit.length) {
+        reselectObjects(hit).then(() => {
+          canvas.requestRenderAll();
+          refreshSelBox(true);
+        });
+        return;
+      }
+      canvas.requestRenderAll();
+      refreshSelBox(false);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
   }
 
   /** Write each object's new (absolute) position back into the spec in ONE
@@ -1473,6 +1539,7 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
           onDragEnter={handleDragEnter}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
+          onMouseDown={startMarquee}
           style={{
             flex: 1,
             position: "relative",
@@ -1496,6 +1563,23 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
           >
             <canvas ref={canvasRef} />
           </div>
+
+          {/* Outside-the-canvas rubber band (피드백 4124-5) */}
+          {marquee && (
+            <div
+              style={{
+                position: "absolute",
+                left: Math.min(marquee.x0, marquee.x1),
+                top: Math.min(marquee.y0, marquee.y1),
+                width: Math.abs(marquee.x1 - marquee.x0),
+                height: Math.abs(marquee.y1 - marquee.y0),
+                border: "1px dashed var(--accent)",
+                background: "rgba(94,106,210,0.08)",
+                pointerEvents: "none",
+                zIndex: 5,
+              }}
+            />
+          )}
 
           {/* Floating object-alignment bar (피드백 슬라이드 4). Centred above the
               selection. "전체" aligns to the page, "객체" aligns the selected

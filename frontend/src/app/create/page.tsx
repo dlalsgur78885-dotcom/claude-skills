@@ -1369,7 +1369,7 @@ export default function CreatePage() {
                     onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}>
                     {rp.thumbnail && (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={rp.thumbnail} alt="" style={{ width: 28, height: 28, borderRadius: 4, objectFit: "cover" }} />
+                      <img src={imgSrc(rp.thumbnail)} alt="" style={{ width: 28, height: 28, borderRadius: 4, objectFit: "cover" }} />
                     )}
                     <div>
                       <p style={{ fontSize: 11, color: "var(--text-primary)", margin: 0, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

@@ -5,19 +5,24 @@ import hashlib
 import ipaddress
 import logging
 import mimetypes
+import re
 import socket
 from dataclasses import asdict
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, RedirectResponse, Response
 
 from app.config import settings
 from app.api.auth import get_current_user
+from app.database import get_db
+from app.models.image import PostImage
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -219,11 +224,30 @@ async def proxy_external_image(url: str = Query(..., min_length=8)):
 
 
 @router.get("/raw/{post_id}/{filename}")
-async def serve_raw_image(post_id: int, filename: str, w: int | None = Query(None, ge=16, le=4000)):
+async def serve_raw_image(
+    post_id: int,
+    filename: str,
+    w: int | None = Query(None, ge=16, le=4000),
+    db: AsyncSession = Depends(get_db),
+):
     path = settings.DATA_DIR / "images" / "raw" / str(post_id) / filename
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
-    return await _serve(path, w)
+    if path.exists():
+        return await _serve(path, w)
+    # Local copy was swept by the 3h ephemeral cleanup, but PostImage keeps the
+    # original CDN URL in source_url exactly for this case (see the model
+    # comment) — bounce through the SSRF-safe proxy so the reference still
+    # renders (피드백 14-1: 콘텐츠 확인의 레퍼런스 이미지 깨짐).
+    m = re.match(r"slide_(\d+)\.", filename)
+    if m is not None:
+        src = await db.scalar(
+            select(PostImage.source_url).where(
+                PostImage.post_id == post_id,
+                PostImage.slide_index == int(m.group(1)),
+            )
+        )
+        if src and src.startswith("http"):
+            return RedirectResponse(f"/api/images/proxy?url={quote(src, safe='')}", status_code=307)
+    raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
 
 
 @router.get("/processed/{post_id}/{filename}")

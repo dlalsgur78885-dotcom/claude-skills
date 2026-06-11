@@ -507,6 +507,43 @@ def _grid_dict_from_cv(grid, existing_item_box: dict | None, canvas_w: int, canv
     }
 
 
+def _force_grid_dims(layouts: dict, hints: list[dict] | None, canvas: dict) -> None:
+    """사용자가 분류한 그리드의 rows/cols를 최종 스펙에 강제한다.
+
+    피드백 16-1: CV 그리드 검출이 콜라주 이미지에서 4×4 같은 하위 구조를
+    오검출하면 `_grid_layout_key` 폴백이 사용자의 grid_2x2 레이아웃에 그
+    잘못된 치수를 덮어썼다. Gemini/CV 어느 쪽이 틀렸든, 사람이 고른
+    분류(TRUST THESE)가 이긴다. 셀 크기는 기존 fit-first 수학으로 재계산,
+    image/cell 비율은 기존 스펙에서 보존."""
+    from types import SimpleNamespace
+
+    cw = int((canvas or {}).get("width") or 1080)
+    ch = int((canvas or {}).get("height") or 1350)
+    for h in hints or []:
+        if not isinstance(h, dict) or h.get("kind") != "grid":
+            continue
+        r, c = int(h.get("rows") or 0), int(h.get("cols") or 0)
+        if r < 1 or c < 1:
+            continue
+        layout = layouts.get(f"grid_{r}x{c}")
+        if not isinstance(layout, dict):
+            continue
+        g = layout.get("grid") or {}
+        if int(g.get("rows") or 0) == r and int(g.get("cols") or 0) == c:
+            continue
+        prev_cell_h = int(((g.get("cell_size") or {}).get("height")) or 100)
+        prev_img_h = int(
+            (((g.get("item_box") or {}).get("image_area") or {}).get("height"))
+            or int(prev_cell_h * 0.75)
+        )
+        shim = SimpleNamespace(rows=r, cols=c, cell_height=prev_cell_h, image_area_height=prev_img_h)
+        logger.info(
+            "[TemplateStudio] grid dims forced to user hint %dx%d for grid_%dx%d (spec had %sx%s)",
+            r, c, r, c, g.get("rows"), g.get("cols"),
+        )
+        layout["grid"] = _grid_dict_from_cv(shim, (g.get("item_box") or {}), cw, ch)
+
+
 async def _call_gemini_for_template(
     post_url: str,
     template_name: str,
@@ -655,6 +692,12 @@ async def _call_gemini_for_template(
         _apply_cv_overrides(raw, cv_results, bg_dict, bg_kind)
     except Exception as e:
         logger.warning("[TemplateStudio] CV overrides failed: %s", e)
+
+    # 사용자 그리드 분류 최종 보증 — CV/Gemini가 뭐라 했든 rows/cols는 힌트가 이긴다.
+    try:
+        _force_grid_dims(raw.get("layouts") or {}, layout_hints, raw.get("canvas") or {})
+    except Exception as e:
+        logger.warning("[TemplateStudio] grid-dims enforcement failed: %s", e)
 
     # Deterministic post-processing: clamp coords, fix grid text overlap, etc.
     raw = validate_and_fix_template(raw)

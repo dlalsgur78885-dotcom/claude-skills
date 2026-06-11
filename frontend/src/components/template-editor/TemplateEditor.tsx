@@ -465,9 +465,28 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
     if (!layout) return;
     const myToken = ++renderTokenRef.current;
     const targetPath = selectedMetaRef.current?.path;
+    // Capture EVERY selected path so a multi-selection survives the redraw —
+    // restoring just selectedMeta collapsed it to one object, which broke
+    // consecutive bulk edits (피드백 14-6).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const selectedPaths: string[] = (fabricReady.getActiveObjects?.() || [])
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((o: any) => o?.data?.path)
+      .filter(Boolean);
     inRedrawRef.current = true;
     renderLayoutToCanvas(fabricReady, layoutName, layout, template.brand, scale, canvasW, canvasH).then(() => {
       if (myToken !== renderTokenRef.current) { inRedrawRef.current = false; return; }
+      if (selectedPaths.length > 1) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const matches = fabricReady.getObjects().filter((o: any) => selectedPaths.includes(o?.data?.path));
+        if (matches.length > 1) {
+          reselectObjects(matches).then(() => {
+            fabricReady.requestRenderAll();
+            inRedrawRef.current = false;
+          });
+          return;
+        }
+      }
       if (targetPath) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const match = fabricReady.getObjects().find((o: any) => o?.data?.path === targetPath);
@@ -727,7 +746,23 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
 
   function patchTemplate(path: string, value: unknown) {
     const prev = templateRef.current;
-    const next = setByPath(prev, path, value) as TemplateData;
+    let next = setByPath(prev, path, value) as TemplateData;
+    // 다중 선택 일괄 적용 (피드백 14-6): 패널은 첫 선택(selectedMeta)의
+    // 경로만 편집하므로, 같은 kind의 나머지 선택 객체에도 동일한 하위
+    // 속성을 복제 적용한다. 위치(.position)는 제외 — 일괄 적용하면 전부
+    // 같은 좌표로 겹쳐버린다.
+    const primary = selectedMetaRef.current;
+    if (primary?.path && path.startsWith(primary.path + ".")) {
+      const suffix = path.slice(primary.path.length);
+      if (!suffix.startsWith(".position")) {
+        for (const o of realActiveObjects()) {
+          const d = o.data;
+          if (d?.path && d.path !== primary.path && d.kind === primary.kind) {
+            next = setByPath(next, d.path + suffix, value) as TemplateData;
+          }
+        }
+      }
+    }
     // React state는 비동기라 setTemplate 후에도 다음 render 전까지 ref가
     // prev 상태다. toggleOn처럼 같은 tick에 patchTemplate을 연달아 두 번
     // 호출하는 케이스에서 두 번째가 stale prev로 덮어써서 첫번째 변경이

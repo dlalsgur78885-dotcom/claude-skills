@@ -1470,8 +1470,8 @@ export function CanvasEditor({
             width: (obj.width || 200) * scale,
             height: (obj.height || 200) * scale,
             fill,
-            rx: 0,
-            ry: 0,
+            rx: (Number(obj.rx) || 0) * scale,
+            ry: (Number(obj.ry) || 0) * scale,
             angle: Number(obj.angle) || 0,
             originX: "left",
             originY: "top",
@@ -3974,6 +3974,31 @@ export function CanvasEditor({
       const snap: any = { ...target };
       snap.type = target.type;
       snap.angle = target.angle;
+      snap.__fabricRef = target;
+      setSelectedObject(snap);
+      return;
+    }
+
+    // Rounded corners for rects (피드백 14-8). rx/ry must move together, and
+    // ActiveSelection.set() doesn't reach members — apply to each rect member.
+    if (prop === "cornerRadius") {
+      const r = Math.max(0, Number(value) || 0);
+      pushUndo();
+      const members = isActiveSel
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ? (target.getObjects() as any[]).filter((o) => String(o.type).toLowerCase() === "rect")
+        : [target];
+      for (const o of members) {
+        o.set({ rx: r, ry: r });
+        o.dirty = true;
+      }
+      canvas.requestRenderAll();
+      saveCurrentSlide();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const snap: any = { ...target };
+      snap.type = target.type;
+      snap.rx = r;
+      snap.ry = r;
       snap.__fabricRef = target;
       setSelectedObject(snap);
       return;

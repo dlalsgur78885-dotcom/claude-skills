@@ -354,6 +354,8 @@ export async function renderLayoutToCanvas(
       originX: "left",
       originY: "top",
       opacity: d.opacity ?? 1,
+      rx: (d.corner_radius || 0) * scale,
+      ry: (d.corner_radius || 0) * scale,
     });
     if (d.shadow) {
       // v7: see comment in applyTextEffects — must go through .set() or be a

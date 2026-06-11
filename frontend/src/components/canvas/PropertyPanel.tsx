@@ -449,6 +449,27 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, use
           )}
         </div>
 
+        {/* 라운드 — rect 모서리 둥글기 (피드백 14-8) */}
+        {(selectedObject.type === "rect" || selectedObject.type === "Rect") && (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <label style={{ ...labelStyle, marginBottom: 0 }}>라운드</label>
+              <span style={{ fontSize: 11, color: "var(--accent-text)", fontWeight: 600 }}>
+                {Math.round(selectedObject.rx ?? 0)}px
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="200"
+              step="1"
+              value={selectedObject.rx ?? 0}
+              onChange={(e) => onUpdate("cornerRadius", Number(e.target.value))}
+              style={{ width: "100%", accentColor: "var(--accent)" }}
+            />
+          </div>
+        )}
+
         {/* Opacity */}
         <div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>

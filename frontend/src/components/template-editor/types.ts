@@ -79,6 +79,7 @@ export interface Decoration {
   stroke_width?: number;
   opacity?: number;  // 0..1, default 1
   color_fill?: ColorFillSpec | null;  // image-only BlendColor filter
+  corner_radius?: number;  // shape rect 라운드, canvas px (피드백 14-8)
   lock_aspect?: boolean;  // editor 크기 chain-lock — keep W/H proportional on resize
 }
 

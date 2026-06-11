@@ -1382,6 +1382,15 @@ function SelectionEditor({
             {!fillIsGradient && (
               <ColorRow label="색상" value={solidFill || ""} onChange={(v) => onChange(`${selected.path}.fill`, v)} />
             )}
+            {/* 라운드 — shape rect 모서리 둥글기 (피드백 14-8) */}
+            {d?.kind === "shape" && (
+              <SliderRow
+                label="라운드"
+                value={d?.corner_radius ?? 0}
+                min={0} max={200} step={1} suffix="px"
+                onChange={(v) => onChange(`${selected.path}.corner_radius`, v)}
+              />
+            )}
             {/* 4. 불투명도 */}
             <SliderRow
               label="불투명도"

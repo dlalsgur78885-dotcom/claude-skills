@@ -262,6 +262,22 @@ export async function renderLayoutToCanvas(
 
   const layoutPath = `layouts.${layoutName}`;
 
+  // Placeholder chrome (src 없는 image/logo 슬롯의 점선 박스) was white-on-
+  // anything — on a white canvas the boxes vanished entirely after 그리드
+  // 해제 (피드백 15-1). Pick dark chrome when the background is light.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const bgHexForChrome: string | undefined = bg?.type === "color"
+    ? (bg.value || brand.background_color)
+    : bg?.type === "gradient"
+      ? bg.color_a
+      : brand.background_color;
+  const hh = String(bgHexForChrome || "").replace("#", "");
+  const lightBg = hh.length === 6 &&
+    0.299 * parseInt(hh.slice(0, 2), 16) + 0.587 * parseInt(hh.slice(2, 4), 16) + 0.114 * parseInt(hh.slice(4, 6), 16) > 160;
+  const chromeFill = lightBg ? "rgba(0,0,0,0.07)" : "rgba(255,255,255,0.12)";
+  const chromeStroke = lightBg ? "rgba(0,0,0,0.45)" : "rgba(255,255,255,0.6)";
+  const chromeLabel = lightBg ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.85)";
+
   // 3. Decorations
   for (let i = 0; i < (layout.decorations || []).length; i++) {
     const d = layout.decorations[i];
@@ -343,8 +359,8 @@ export async function renderLayoutToCanvas(
       top: dy * scale,
       width: w,
       height: h,
-      fill: resolvedFill ?? (showPlaceholderChrome ? "rgba(255,255,255,0.12)" : "transparent"),
-      stroke: userStroke ? d.stroke : showPlaceholderChrome ? "rgba(255,255,255,0.6)" : undefined,
+      fill: resolvedFill ?? (showPlaceholderChrome ? chromeFill : "transparent"),
+      stroke: userStroke ? d.stroke : showPlaceholderChrome ? chromeStroke : undefined,
       strokeWidth: userStroke ? (d.stroke_width || 0) * scale : showPlaceholderChrome ? 1 : 0,
       strokeUniform: userStroke ? true : undefined,
       strokeDashArray: !userStroke && showPlaceholderChrome ? [4, 4] : undefined,
@@ -371,7 +387,7 @@ export async function renderLayoutToCanvas(
         width: w,
         fontSize: 11,
         fontFamily: "monospace",
-        fill: "rgba(255,255,255,0.85)",
+        fill: chromeLabel,
         textAlign: "center",
         selectable: false,
         evented: false,

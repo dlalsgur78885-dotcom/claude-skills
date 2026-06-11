@@ -931,6 +931,20 @@ export default function CreatePage() {
     const effective = layoutName || autoName;
     const n = layoutCellCount(effective);
     const slide = slides.find((s) => s.index === slideIndex);
+    // The renderer only draws grid cells from slide.items, and the per-cell
+    // 제목/설명 fields only render when items exist — switching a "single"
+    // slide to a grid layout used to leave items empty, so neither the cell
+    // editors nor the rendered grid appeared (피드백 14-2). Pad items up to
+    // the grid's cell count; existing entries are kept untouched.
+    if (n > 1) {
+      setSlides((prev) => prev.map((s) => {
+        if (s.index !== slideIndex) return s;
+        const items = [...(s.items || [])];
+        if (items.length >= n) return s;
+        while (items.length < n) items.push({ title: "", description: "" });
+        return { ...s, items };
+      }));
+    }
     setImageKeywords((prev) => {
       const mine = prev.filter((k) => k.slide_index === slideIndex);
       const others = prev.filter((k) => k.slide_index !== slideIndex);

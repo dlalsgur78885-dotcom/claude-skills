@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getFabric } from "@/lib/fabric";
 import { renderLayoutToCanvas } from "./renderer";
-import { gridNameHint, type TemplateData } from "./types";
+import { displayLayoutName, type TemplateData } from "./types";
 
 interface Props {
   template: TemplateData;
@@ -88,7 +88,7 @@ export function LayoutMiniPreview({ template, layoutName, size = 64, active, onC
   return (
     <button
       onClick={onClick}
-      title={`${layoutName}${gridNameHint(layoutName)}`}
+      title={displayLayoutName(layoutName)}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -139,7 +139,7 @@ export function LayoutMiniPreview({ template, layoutName, size = 64, active, onC
       ) : (
         <span
           onDoubleClick={onRename ? startEdit : undefined}
-          title={onRename ? "더블클릭하여 이름 변경" : layoutName}
+          title={onRename ? "더블클릭하여 이름 변경" : displayLayoutName(layoutName)}
           style={{
             fontSize: 10,
             color: active ? "var(--text-primary)" : "var(--text-tertiary)",
@@ -150,7 +150,7 @@ export function LayoutMiniPreview({ template, layoutName, size = 64, active, onC
             cursor: onRename ? "text" : "inherit",
           }}
         >
-          {layoutName}
+          {displayLayoutName(layoutName)}
         </span>
       )}
     </button>

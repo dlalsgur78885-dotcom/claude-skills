@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { api, resolveImageUrl, proxiedImageUrl } from "@/lib/api";
 import type { Post, TemplateSummary } from "@/lib/types";
 import { TemplateThumbnail } from "@/components/template-editor/TemplateThumbnail";
+import { displayLayoutName } from "@/components/template-editor/types";
 import { HoverZoomImage } from "@/components/HoverZoomImage";
 import { HoverZoomTemplate } from "@/components/HoverZoomTemplate";
 import { CellSearchOptions, type CellSearchState } from "./CellSearchOptions";
@@ -1040,7 +1041,7 @@ export default function CreatePage() {
                       <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {selected.name}
                         {selected.user_id === null ? " (시스템)" : ""}
-                        {selected.layouts.length > 0 ? ` — ${selected.layouts.join(", ")}` : ""}
+                        {selected.layouts.length > 0 ? ` — ${selected.layouts.map(displayLayoutName).join(", ")}` : ""}
                       </span>
                     </>
                   ) : (
@@ -1118,7 +1119,7 @@ export default function CreatePage() {
                                   <HoverZoomTemplate templateId={t.id} layoutName={layoutName} size={88} />
                                 </div>
                                 <span style={{ fontSize: 9, color: "var(--text-tertiary)", maxWidth: 94, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                  {layoutName}
+                                  {displayLayoutName(layoutName)}
                                 </span>
                               </div>
                             ))}
@@ -1230,7 +1231,7 @@ export default function CreatePage() {
                               <HoverZoomTemplate templateId={t.id} layoutName={layoutName} size={96} />
                             </div>
                             <span style={{ fontSize: 10, color: "var(--text-tertiary)", maxWidth: 102, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {layoutName}
+                              {displayLayoutName(layoutName)}
                             </span>
                           </div>
                         ))}
@@ -1463,11 +1464,11 @@ export default function CreatePage() {
                               borderRadius: 4,
                               cursor: "pointer",
                             }}
-                            title={`자동 매치: ${auto || "(없음)"}\n다른 레이아웃 선택 시 백엔드 폴백 무시`}
+                            title={`자동 매치: ${auto ? displayLayoutName(auto) : "(없음)"}\n다른 레이아웃 선택 시 백엔드 폴백 무시`}
                           >
                             {tplLayouts.map((l) => (
                               <option key={l} value={l}>
-                                {l}{l === auto ? " (자동)" : ""}
+                                {displayLayoutName(l)}{l === auto ? " (자동)" : ""}
                               </option>
                             ))}
                           </select>

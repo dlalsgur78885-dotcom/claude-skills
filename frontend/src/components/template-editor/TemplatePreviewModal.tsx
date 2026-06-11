@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, resolveImageUrl } from "@/lib/api";
-import { gridNameHint, type TemplateData } from "./types";
+import { displayLayoutName, type TemplateData } from "./types";
 import { TemplateThumbnail } from "./TemplateThumbnail";
 
 interface Props {
@@ -185,7 +185,7 @@ export function TemplatePreviewModal({ templateId, templateName, onClose, onEdit
                 >
                   <TemplateThumbnail templateId={templateId} layoutName={name} size={280} />
                   <div style={{ fontSize: 12, color: "var(--text-secondary)", fontFamily: "monospace" }}>
-                    {name}{gridNameHint(name)}
+                    {displayLayoutName(name)}
                   </div>
                 </div>
               ))}

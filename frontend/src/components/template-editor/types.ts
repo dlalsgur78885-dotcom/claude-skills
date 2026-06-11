@@ -135,13 +135,15 @@ export interface TemplateData {
   created_by?: string;
 }
 
-/** "grid_3x2" → " (가로2·세로3)". Grid layout keys are rows-first internally
- *  (backend enum), but users read grids width-first — without this hint a
- *  user who picked 2×3 (가로2·세로3) sees the key "grid_3x2" and assumes the
- *  grid came out transposed (feedback 13, slide 2). Display-only. */
-export function gridNameHint(name: string): string {
+/** Display name for a layout key. Grid keys are rows-first internally
+ *  (grid_3x2 = 3 rows × 2 cols), but users read grids width-first — showing
+ *  the raw key made a 가로2·세로3 grid look transposed even with a hint
+ *  appended (피드백 13-2, 14-4). Render grid keys as 그리드 가로×세로;
+ *  every other (renamable) key passes through unchanged. Display-only —
+ *  the stored key never changes. */
+export function displayLayoutName(name: string): string {
   const m = /^grid_(\d+)x(\d+)$/.exec(name);
-  return m ? ` (가로${m[2]}·세로${m[1]})` : "";
+  return m ? `그리드 ${m[2]}×${m[1]}` : name;
 }
 
 /** What a Fabric object's `data` field carries so we can sync back. */

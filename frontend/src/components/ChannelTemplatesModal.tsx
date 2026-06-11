@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api, resolveImageUrl, type LayoutHint } from "@/lib/api";
 import type { Channel, TemplateSummary } from "@/lib/types";
 import { SlideClassifier } from "@/components/template-editor/SlideClassifier";
+import { displayLayoutName } from "@/components/template-editor/types";
 
 
 interface Props {
@@ -340,7 +341,7 @@ export function ChannelTemplatesModal({ channel, onClose, onChannelUpdate }: Pro
                         )}
                       </div>
                       <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
-                        {t.layouts.join(", ") || "레이아웃 없음"}
+                        {t.layouts.map(displayLayoutName).join(", ") || "레이아웃 없음"}
                       </div>
                       {t.source_post_url && (
                         <a

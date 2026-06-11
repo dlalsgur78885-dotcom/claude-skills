@@ -7,6 +7,7 @@ import { api, type LayoutHint } from "@/lib/api";
 import type { TemplateSummary } from "@/lib/types";
 import { TemplateThumbnail } from "@/components/template-editor/TemplateThumbnail";
 import { TemplatePreviewModal } from "@/components/template-editor/TemplatePreviewModal";
+import { displayLayoutName } from "@/components/template-editor/types";
 import { SlideClassifier } from "@/components/template-editor/SlideClassifier";
 
 export default function TemplatesPage() {
@@ -340,7 +341,7 @@ export default function TemplatesPage() {
               ✓ 생성 완료: {lastResult.name}
             </div>
             <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
-              레이아웃: {lastResult.layouts.join(", ")}
+              레이아웃: {lastResult.layouts.map(displayLayoutName).join(", ")}
             </div>
           </div>
         )}
@@ -541,7 +542,7 @@ export default function TemplatesPage() {
                     </span>
                   </div>
                   <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 8 }}>
-                    {t.layouts.join(", ") || "레이아웃 없음"}
+                    {t.layouts.map(displayLayoutName).join(", ") || "레이아웃 없음"}
                   </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                   {t.user_id !== null ? (

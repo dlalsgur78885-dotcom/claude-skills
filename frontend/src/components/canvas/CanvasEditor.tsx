@@ -1490,6 +1490,9 @@ export function CanvasEditor({
             fill,
             rx: (Number(obj.rx) || 0) * scale,
             ry: (Number(obj.ry) || 0) * scale,
+            stroke: obj.stroke || undefined,
+            strokeWidth: (Number(obj.strokeWidth) || 0) * scale,
+            strokeUniform: true,
             angle: Number(obj.angle) || 0,
             originX: "left",
             originY: "top",
@@ -4022,6 +4025,33 @@ export function CanvasEditor({
       // recovers the visual radius as rx * scaleX.
       snap.rx = target.rx;
       snap.ry = target.ry;
+      snap.__fabricRef = target;
+      setSelectedObject(snap);
+      return;
+    }
+
+    // 도형 테두리 색/두께 (피드백 17-2). strokeUniform을 함께 켜서 비균등
+    // 스케일에도 테두리 두께가 늘어나지 않게 한다. ActiveSelection.set()은
+    // 멤버에 닿지 않으므로 도형 멤버마다 직접 적용.
+    if (prop === "stroke" || prop === "strokeWidth") {
+      const SHAPE_TYPES = new Set(["rect", "circle", "triangle", "ellipse"]);
+      pushUndo();
+      const members = isActiveSel
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ? (target.getObjects() as any[]).filter((o) => SHAPE_TYPES.has(String(o.type).toLowerCase()))
+        : [target];
+      for (const o of members) {
+        if (prop === "stroke") o.set({ stroke: value || null, strokeUniform: true });
+        else o.set({ strokeWidth: Math.max(0, Number(value) || 0), strokeUniform: true });
+        o.dirty = true;
+      }
+      canvas.requestRenderAll();
+      saveCurrentSlide();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const snap: any = { ...target };
+      snap.type = target.type;
+      snap.stroke = target.stroke;
+      snap.strokeWidth = target.strokeWidth;
       snap.__fabricRef = target;
       setSelectedObject(snap);
       return;

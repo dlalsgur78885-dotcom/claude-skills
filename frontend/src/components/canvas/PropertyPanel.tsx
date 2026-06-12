@@ -475,6 +475,48 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, use
           );
         })()}
 
+        {/* 테두리 — 도형 stroke 색/두께 (피드백 17-2) */}
+        {!isText && (selectedObject.type === "rect" || selectedObject.type === "Rect" || selectedObject.type === "circle" || selectedObject.type === "Circle") && (() => {
+          const strokeColor = typeof selectedObject.stroke === "string" && selectedObject.stroke ? selectedObject.stroke : "#000000";
+          const strokeW = Math.round(Number(selectedObject.strokeWidth) || 0);
+          return (
+            <div>
+              <label style={labelStyle}>테두리</label>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                <input
+                  type="color"
+                  value={/^#[0-9a-fA-F]{6}$/.test(strokeColor) ? strokeColor : "#000000"}
+                  onChange={(e) => onUpdate("stroke", e.target.value)}
+                  style={{ width: 32, height: 32, borderRadius: 5, border: "1px solid var(--border)", background: "transparent", cursor: "pointer", padding: 2 }}
+                />
+                <input
+                  type="text"
+                  value={strokeColor}
+                  onChange={(e) => {
+                    if (/^#?[0-9a-fA-F]{6}$/.test(e.target.value.trim())) {
+                      onUpdate("stroke", e.target.value.startsWith("#") ? e.target.value : "#" + e.target.value);
+                    }
+                  }}
+                  style={{ ...inputStyle, flex: 1, fontFamily: "monospace" }}
+                />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>두께</span>
+                <span style={{ fontSize: 11, color: "var(--accent-text)", fontWeight: 600 }}>{strokeW}px</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="30"
+                step="1"
+                value={strokeW}
+                onChange={(e) => onUpdate("strokeWidth", Number(e.target.value))}
+                style={{ width: "100%", accentColor: "var(--accent)" }}
+              />
+            </div>
+          );
+        })()}
+
         {/* Opacity */}
         <div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>

@@ -1391,6 +1391,22 @@ function SelectionEditor({
                 onChange={(v) => onChange(`${selected.path}.corner_radius`, v)}
               />
             )}
+            {/* 테두리 색/두께 — 렌더러는 stroke && stroke_width>0일 때 그린다 (피드백 17-2) */}
+            {d?.kind === "shape" && (
+              <>
+                <ColorRow
+                  label="테두리 색상"
+                  value={typeof d?.stroke === "string" ? d.stroke : ""}
+                  onChange={(v) => onChange(`${selected.path}.stroke`, v)}
+                />
+                <SliderRow
+                  label="테두리 두께"
+                  value={d?.stroke_width ?? 0}
+                  min={0} max={30} step={1} suffix="px"
+                  onChange={(v) => onChange(`${selected.path}.stroke_width`, v)}
+                />
+              </>
+            )}
             {/* 4. 불투명도 */}
             <SliderRow
               label="불투명도"

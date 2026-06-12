@@ -181,7 +181,11 @@ def _looks_light(hex_color: str) -> bool:
     return (0.299 * r + 0.587 * g + 0.114 * b) > 160
 
 
-def _make_rect(left: int, top: int, width: int, height: int, fill: str, opacity: float = 1.0, rx: int = 0) -> dict:
+def _make_rect(
+    left: int, top: int, width: int, height: int, fill: str,
+    opacity: float = 1.0, rx: int = 0,
+    stroke: str | None = None, stroke_width: int = 0,
+) -> dict:
     out = {
         "type": "rect",
         "left": int(left),
@@ -194,6 +198,10 @@ def _make_rect(left: int, top: int, width: int, height: int, fill: str, opacity:
     if rx > 0:
         out["rx"] = int(rx)
         out["ry"] = int(rx)
+    if stroke and stroke_width > 0:
+        out["stroke"] = stroke
+        out["strokeWidth"] = int(stroke_width)
+        out["strokeUniform"] = True
     return out
 
 
@@ -388,6 +396,7 @@ async def render_slide_to_canvas(
                 int(pos.get("x", 0)), int(pos.get("y", 0)),
                 int(size.get("width", 100)), int(size.get("height", 50)),
                 fill, opacity=1.0, rx=int(dec.get("corner_radius") or 0),
+                stroke=dec.get("stroke"), stroke_width=int(dec.get("stroke_width") or 0),
             ))
         elif kind == "image" and dec.get("src"):
             objects.append(_make_image(

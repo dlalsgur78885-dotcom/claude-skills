@@ -103,6 +103,9 @@ class Decoration(BaseModel):
     fill: str | None = None
     # Rounded corners for shape rects, in canvas px (피드백 14-8).
     corner_radius: int = 0
+    # Shape border (피드백 17-2) — rendered when both are set.
+    stroke: str | None = None
+    stroke_width: int = 0
     # Editor-only aspect-ratio lock (see TextSlot.lock_aspect).
     lock_aspect: bool = False
 

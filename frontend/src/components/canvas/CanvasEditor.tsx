@@ -916,6 +916,24 @@ export function CanvasEditor({
       // strongly-changed axis's factor to both, so width:height never drifts.
       canvas.on("object:scaling", (e: any) => {
         const tgt = e?.target;
+        // Rect corner radii are object-space, so scaling multiplies them —
+        // a horizontal stretch turns round corners into a pill (피드백 17-1).
+        // Hold the on-screen radius constant through the drag by dividing the
+        // start-of-drag visual radius by the live scale. The start value is
+        // stashed on the per-drag transform object at the first event.
+        const tr0 = e?.transform;
+        if (
+          tgt && tr0?.original && String(tgt.type).toLowerCase() === "rect" &&
+          ((tgt.rx || 0) > 0 || (tgt.ry || 0) > 0)
+        ) {
+          if (tr0.__rx0 === undefined) {
+            tr0.__rx0 = (tgt.rx || 0) * (Number(tr0.original.scaleX) || 1);
+            tr0.__ry0 = (tgt.ry || 0) * (Number(tr0.original.scaleY) || 1);
+          }
+          tgt.rx = tr0.__rx0 / (Number(tgt.scaleX) || 1);
+          tgt.ry = tr0.__ry0 / (Number(tgt.scaleY) || 1);
+          tgt.dirty = true;
+        }
         if (!tgt || !tgt.__lockAspect) return;
         const tr = e?.transform;
         const orig = tr?.original;
@@ -3981,6 +3999,9 @@ export function CanvasEditor({
 
     // Rounded corners for rects (피드백 14-8). rx/ry must move together, and
     // ActiveSelection.set() doesn't reach members — apply to each rect member.
+    // `value` is the VISUAL radius in display px: rx/ry are object-space and
+    // get multiplied by scale, so divide per-axis or a stretched rect renders
+    // pill-shaped corners (피드백 17-1).
     if (prop === "cornerRadius") {
       const r = Math.max(0, Number(value) || 0);
       pushUndo();
@@ -3989,7 +4010,7 @@ export function CanvasEditor({
         ? (target.getObjects() as any[]).filter((o) => String(o.type).toLowerCase() === "rect")
         : [target];
       for (const o of members) {
-        o.set({ rx: r, ry: r });
+        o.set({ rx: r / (Number(o.scaleX) || 1), ry: r / (Number(o.scaleY) || 1) });
         o.dirty = true;
       }
       canvas.requestRenderAll();
@@ -3997,8 +4018,10 @@ export function CanvasEditor({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const snap: any = { ...target };
       snap.type = target.type;
-      snap.rx = r;
-      snap.ry = r;
+      // rx stays object-space ({...target} already copied it) — the panel
+      // recovers the visual radius as rx * scaleX.
+      snap.rx = target.rx;
+      snap.ry = target.ry;
       snap.__fabricRef = target;
       setSelectedObject(snap);
       return;
@@ -4033,6 +4056,11 @@ export function CanvasEditor({
       // When locked, drive the opposite axis so the visual ratio is preserved.
       const visW = baseW * (Number(target.scaleX) || 1);
       const visH = baseH * (Number(target.scaleY) || 1);
+      // Rect corner radii are object-space — capture the visual radius before
+      // the scale change so it can be held constant (피드백 17-1).
+      const isRectShape = t === "rect" || t === "Rect";
+      const vrx = isRectShape ? (Number(target.rx) || 0) * (Number(target.scaleX) || 1) : 0;
+      const vry = isRectShape ? (Number(target.ry) || 0) * (Number(target.scaleY) || 1) : 0;
       pushUndo();
       if (prop === "width") {
         target.set("scaleX", v / baseW);
@@ -4044,6 +4072,12 @@ export function CanvasEditor({
         if (target.__lockAspect && visH > 0) {
           target.set("scaleX", (v * (visW / visH)) / baseW);
         }
+      }
+      if (isRectShape && (vrx > 0 || vry > 0)) {
+        target.set({
+          rx: vrx / (Number(target.scaleX) || 1),
+          ry: vry / (Number(target.scaleY) || 1),
+        });
       }
       if (typeof target.setCoords === "function") target.setCoords();
       target.dirty = true;

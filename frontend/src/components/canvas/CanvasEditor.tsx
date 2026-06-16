@@ -243,7 +243,9 @@ async function sanitizeUnreachableImages(data: any): Promise<Array<{ index: numb
 
 interface CanvasEditorProps {
   initialSlides?: SlideData[];
-  onSave?: (slides: SlideData[]) => void;
+  // metaOverride lets non-canvas edits (e.g. the caption) ride the same persist
+  // path: the parent merges the override into canvas_data alongside the slides.
+  onSave?: (slides: SlideData[], metaOverride?: { caption?: string; hashtags?: string[] }) => void;
   // Receives a rendered PNG of the FIRST slide (full page, 1:1 cover) whenever
   // slide 1 changes — uploaded as the works-list preview. Best-effort.
   onGenerateThumbnail?: (blob: Blob) => Promise<void> | void;
@@ -506,6 +508,16 @@ export function CanvasEditor({
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
   }, [slides]);
+
+  // Persist an edited caption/hashtags through the same onSave path as the
+  // canvas (the parent merges the override into canvas_data). The caption isn't
+  // a canvas object, so it can't ride the slides effect — flush it explicitly
+  // with the current slides so nothing else is clobbered.
+  const handleSaveCaption = useCallback(async (nextCaption: string, nextHashtags: string[]) => {
+    const handler = onSaveRef.current;
+    if (!handler) return;
+    await Promise.resolve(handler(slidesRef.current, { caption: nextCaption, hashtags: nextHashtags }));
+  }, []);
 
   // ── Works-list thumbnail ─────────────────────────────────────────────────
   // Render slide 1 (full page, 1:1 cover) to a PNG and upload it as the works
@@ -5398,6 +5410,7 @@ export function CanvasEditor({
           caption={caption}
           hashtags={hashtags}
           sourcePostUrl={sourcePostUrl}
+          onSaveCaption={handleSaveCaption}
         />
 
         {/* Center: Canvas (also the drop target for image files) */}

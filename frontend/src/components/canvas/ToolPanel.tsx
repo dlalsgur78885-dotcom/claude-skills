@@ -24,10 +24,11 @@ interface ToolPanelProps {
   // Uploaded fonts, for the "전체 수정" modal's font dropdown.
   userFonts?: UserFont[];
   // Instagram caption + hashtag chips generated upstream (콘텐츠 확인 step).
-  // We don't allow editing them here — the editor's role is the visual side,
-  // captions belong to the post flow. Show-and-copy is enough.
+  // The caption modal can both show-and-copy and edit: onSaveCaption persists
+  // the edited caption back into canvas_data via the editor's onSave path.
   caption?: string;
   hashtags?: string[];
+  onSaveCaption?: (caption: string, hashtags: string[]) => Promise<void> | void;
   // Instagram URL of the benchmark post this carousel was generated from.
   // When present, the toolbar surfaces a "원본 링크 보기" button right below
   // the caption button so users can pop the source open in a new tab without
@@ -39,9 +40,14 @@ interface ToolPanelProps {
   onAddCta?: (imageUrl: string) => void;
 }
 
-export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOverlay, onImportPsd, onImportImage, bgColor, onApplyBgToCurrent, onApplyBgToAll, onApplyTextPropsToAll, userFonts, caption, hashtags, sourcePostUrl, onAddCta }: ToolPanelProps) {
+export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOverlay, onImportPsd, onImportImage, bgColor, onApplyBgToCurrent, onApplyBgToAll, onApplyTextPropsToAll, userFonts, caption, hashtags, sourcePostUrl, onAddCta, onSaveCaption }: ToolPanelProps) {
   const [captionOpen, setCaptionOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Caption edit mode inside the modal. editCaption holds the in-progress text;
+  // it's seeded from the live caption each time editing starts.
+  const [captionEditing, setCaptionEditing] = useState(false);
+  const [editCaption, setEditCaption] = useState("");
+  const [captionSaving, setCaptionSaving] = useState(false);
   const [ctaOpen, setCtaOpen] = useState(false);
   const [ctaUrl, setCtaUrl] = useState<string | null>(null);
   const [ctaBusy, setCtaBusy] = useState(false);
@@ -114,6 +120,24 @@ export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOver
       // Fallback: select the textarea contents so the user can Ctrl+C.
       const ta = document.getElementById("caption-modal-textarea") as HTMLTextAreaElement | null;
       ta?.select();
+    }
+  }
+
+  function startCaptionEdit() {
+    setEditCaption(captionText);
+    setCaptionEditing(true);
+  }
+
+  async function saveCaptionEdit() {
+    if (!onSaveCaption) return;
+    setCaptionSaving(true);
+    try {
+      await onSaveCaption(editCaption.trim(), tagList);
+      setCaptionEditing(false);
+    } catch (err) {
+      alert("캡션 저장 실패: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setCaptionSaving(false);
     }
   }
   const btnStyle: React.CSSProperties = {
@@ -401,7 +425,7 @@ export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOver
         </div>
       )}
 
-      {(captionText || tagList.length > 0) && (
+      {(captionText || tagList.length > 0 || onSaveCaption) && (
         <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
           <p style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8, paddingLeft: 2 }}>
             캡션
@@ -409,7 +433,7 @@ export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOver
           <button
             type="button"
             data-caption-trigger="true"
-            onClick={() => { setCopied(false); setCaptionOpen(true); }}
+            onClick={() => { setCopied(false); setCaptionEditing(false); setCaptionOpen(true); }}
             title="콘텐츠 확인 단계에서 만든 인스타그램 캡션 보기"
             style={{
               ...btnStyle,
@@ -458,7 +482,7 @@ export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOver
           )}
         </div>
       )}
-      {!captionText && !tagList.length && sourcePostUrl && (
+      {!captionText && !tagList.length && !onSaveCaption && sourcePostUrl && (
         // Even without a caption section, still show the original-link button
         // — the user feedback was scoped to the editor toolbar, not "only when
         // caption is present". Render a slim standalone block.
@@ -802,15 +826,17 @@ export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOver
             </div>
             <textarea
               id="caption-modal-textarea"
-              readOnly
-              value={fullText || "(캡션이 비어 있습니다)"}
+              readOnly={!captionEditing}
+              value={captionEditing ? editCaption : (fullText || "(캡션이 비어 있습니다)")}
+              onChange={captionEditing ? (e) => setEditCaption(e.target.value) : undefined}
+              placeholder={captionEditing ? "캡션을 입력하세요" : undefined}
               style={{
                 width: "100%", flex: 1, minHeight: 220,
                 padding: 12, fontSize: 13, lineHeight: 1.55,
                 fontFamily: "inherit",
                 color: "var(--text-primary)",
                 background: "var(--bg-overlay)",
-                border: "1px solid var(--border)",
+                border: captionEditing ? "1px solid var(--accent)" : "1px solid var(--border)",
                 borderRadius: 6,
                 resize: "vertical",
                 whiteSpace: "pre-wrap",
@@ -836,22 +862,76 @@ export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOver
               </div>
             )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              <button
-                type="button"
-                onClick={copyToClipboard}
-                disabled={!fullText}
-                style={{
-                  padding: "7px 14px", fontSize: 12, fontWeight: 500,
-                  color: "white",
-                  background: "var(--accent)",
-                  border: "none",
-                  borderRadius: 6,
-                  cursor: fullText ? "pointer" : "default",
-                  opacity: fullText ? 1 : 0.5,
-                }}
-              >
-                {copied ? "복사됨 ✓" : "복사"}
-              </button>
+              {captionEditing ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setCaptionEditing(false)}
+                    disabled={captionSaving}
+                    style={{
+                      padding: "7px 14px", fontSize: 12, fontWeight: 500,
+                      color: "var(--text-secondary)",
+                      background: "transparent",
+                      border: "1px solid var(--border)",
+                      borderRadius: 6,
+                      cursor: captionSaving ? "default" : "pointer",
+                    }}
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveCaptionEdit}
+                    disabled={captionSaving}
+                    style={{
+                      padding: "7px 14px", fontSize: 12, fontWeight: 500,
+                      color: "white",
+                      background: "var(--accent)",
+                      border: "none",
+                      borderRadius: 6,
+                      cursor: captionSaving ? "default" : "pointer",
+                      opacity: captionSaving ? 0.6 : 1,
+                    }}
+                  >
+                    {captionSaving ? "저장 중…" : "저장"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  {onSaveCaption && (
+                    <button
+                      type="button"
+                      onClick={startCaptionEdit}
+                      style={{
+                        padding: "7px 14px", fontSize: 12, fontWeight: 500,
+                        color: "var(--text-primary)",
+                        background: "transparent",
+                        border: "1px solid var(--border)",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                      }}
+                    >
+                      편집
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={copyToClipboard}
+                    disabled={!fullText}
+                    style={{
+                      padding: "7px 14px", fontSize: 12, fontWeight: 500,
+                      color: "white",
+                      background: "var(--accent)",
+                      border: "none",
+                      borderRadius: 6,
+                      cursor: fullText ? "pointer" : "default",
+                      opacity: fullText ? 1 : 0.5,
+                    }}
+                  >
+                    {copied ? "복사됨 ✓" : "복사"}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

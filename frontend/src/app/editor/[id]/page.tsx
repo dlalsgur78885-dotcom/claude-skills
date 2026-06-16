@@ -70,8 +70,16 @@ export default function EditorPage() {
     setTitle(next);
   }
 
-  async function handleSave(slides: SlideData[]) {
+  async function handleSave(
+    slides: SlideData[],
+    metaOverride?: { caption?: string; hashtags?: string[] },
+  ) {
     try {
+      // Caption edits arrive as a metaOverride (the caption isn't a canvas
+      // object). Merge it into carouselMeta so this write — and every later
+      // autosave — carries the new value.
+      const meta = metaOverride ? { ...carouselMeta, ...metaOverride } : carouselMeta;
+      if (metaOverride) setCarouselMeta(meta);
       // fabric's toJSON already emits the cover-fit pose (left/top set to the
       // recenter offset, width = image natural pixel size, scaleX/Y = the
       // uniform cover scale). Writing that pose back to the DB used to drift
@@ -84,7 +92,7 @@ export default function EditorPage() {
       // photo's natural size, which is what produced empty grid cells in
       // exports while thumbnails (which read obj.width × scaleX) stayed fine.
       await api.updateCarousel(id, {
-        canvas_data: { canvas_slides: slides, ...carouselMeta },
+        canvas_data: { canvas_slides: slides, ...meta },
       });
     } catch (err) {
       alert(err instanceof Error ? err.message : "저장 실패");

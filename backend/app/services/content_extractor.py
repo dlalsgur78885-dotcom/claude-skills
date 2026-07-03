@@ -29,24 +29,26 @@ content."""
 
 
 USER_PROMPT_TEMPLATE = """Read the {n} slides of this Instagram carousel and \
-return a JSON list with one entry per slide.
+return a JSON object with a "slides" array — one entry per slide, in order.
 
 # Output schema
 ```json
-[
-  {{
-    "index": 0,
-    "type": "cover" | "content" | "cta",
-    "tag": "small badge/label text (often in a colored pill at top or bottom — e.g. 'What to Eat', 'Where to Go', '#01', 'TIP'). Empty if no badge.",
-    "headline": "main visible title text",
-    "body": "supporting/body text, items collapsed into one string with newlines",
-    "subtext": "secondary/subtitle text if any (or empty)",
-    "items": [
-      {{"title": "item title", "subtitle": "optional", "description": "item description"}}
-    ]
-  }},
-  ...
-]
+{{
+  "slides": [
+    {{
+      "index": 0,
+      "type": "cover" | "content" | "cta",
+      "tag": "small badge/label text (often in a colored pill at top or bottom — e.g. 'What to Eat', 'Where to Go', '#01', 'TIP'). Empty if no badge.",
+      "headline": "main visible title text",
+      "body": "supporting/body text, items collapsed into one string with newlines",
+      "subtext": "secondary/subtitle text if any (or empty)",
+      "items": [
+        {{"title": "item title", "subtitle": "optional", "description": "item description"}}
+      ]
+    }},
+    ...
+  ]
+}}
 ```
 
 # Rules
@@ -67,8 +69,11 @@ mark it `content`, not `cta`.
 - ALWAYS look for small badge/pill labels (typically "What to Eat", "Where to Go", \
 "#01", "TIP", category words in a small colored box) and put them in `tag`. If \
 none, return empty string.
+- Each slide MUST appear as its own entry under "slides" with its correct \
+`index` — never merge two slides into one entry, and never split one slide's \
+`items` into separate slide entries.
 - Preserve the ORIGINAL TEXT exactly — Korean stays Korean, do not translate.{extra_rules}
-- Output ONLY the JSON array. No prose."""
+- Output ONLY the JSON object. No prose."""
 
 
 # Appended to the Vision prompt when the chosen output template renders one
@@ -120,16 +125,27 @@ _VISION_CHUNK_SIZE = 6
 
 
 def _unwrap_raw(raw):
-    """Strip common JSON wrappers Vision uses ({slides: [...]}, {data: [...]}, ...)."""
+    """Pull the slide list out of Vision's JSON response.
+
+    Vision runs in json_object mode, so it can't return a bare array — it returns
+    {"slides": [...]} (the shape we now ask for) or, when it slips, a single slide
+    object. We must NOT treat the per-slide "items" field as the wrapper: doing so
+    explodes one slide's item cells into separate slides and drops that slide's
+    real headline/body — the "text lands on the wrong page / blank slide" bug.
+    """
     if isinstance(raw, dict) and "raw" in raw:
         logger.warning(f"[content_extractor] Vision returned non-JSON: {raw['raw'][:200]}")
         return None
-    if isinstance(raw, dict):
-        for key in ("slides", "data", "items"):
-            if key in raw and isinstance(raw[key], list):
-                return raw[key]
     if isinstance(raw, list):
         return raw
+    if isinstance(raw, dict):
+        for key in ("slides", "data", "results"):
+            if isinstance(raw.get(key), list):
+                return raw[key]
+        # A single slide object returned bare (no wrapper array). Return it as a
+        # one-element list so its `items` aren't mistaken for the slide list.
+        if any(k in raw for k in ("index", "headline", "type", "body", "subtext")):
+            return [raw]
     return None
 
 
@@ -170,6 +186,15 @@ async def _vision_extract_chunk(paths: list[str], *, offset: int, total: int, mo
             f"\n\n# Chunk context\nThis batch covers slides {offset}–{offset + len(paths) - 1} "
             f"of a {total}-slide carousel. Use those absolute indices in the `index` field."
         )
+    # Label each image with its absolute index right before the image itself.
+    # Prompt-only numbering isn't enough: Vision sometimes reorders its output
+    # (e.g. by the slides' rank badges ①→⑩) and its self-reported `index` then
+    # lands the wrong text on every page of the chunk.
+    prompt += (
+        "\n\n# Image labels\nEach image below is IMMEDIATELY PRECEDED by a text "
+        "label 'SLIDE index=N'. That N is the slide's `index` — copy it exactly. "
+        "Emit one entry per image, in the same order as the images."
+    )
 
     raw = await gemini_vision(
         image_paths=paths,
@@ -178,6 +203,7 @@ async def _vision_extract_chunk(paths: list[str], *, offset: int, total: int, mo
         model=model,
         json_mode=True,
         max_tokens=8192,
+        image_labels=[f"SLIDE index={offset + i}" for i in range(len(paths))],
     )
     raw = _unwrap_raw(raw)
     if raw is None:
@@ -202,7 +228,9 @@ async def extract_slides_from_post_images(
     image_urls: list[str],
     *,
     cache_key: str,
-    model: str = "gemini-flash-lite",
+    # flash (not lite): lite mis-reads Korean glyphs on photo backgrounds
+    # (마마누카→마누카, 바쿠잇만→바 الكويت만) — the 피드백 21-1 "인식 누락" symptom.
+    model: str = "gemini-flash",
     template_profile: dict | None = None,
 ) -> list[dict]:
     """Run Gemini Vision over the slide images and return extracted slide list.

@@ -719,7 +719,10 @@ async def generate_content(
                         "gemini/gemini-2.5-flash",
                         [{"role": "user", "content": prompt}],
                         json_mode=True,
-                        max_tokens=2048,
+                        # Scale with item count — grid carousels can carry 12+
+                        # per-cell terms and a 2048 cap truncated the JSON,
+                        # silently dropping ALL translated search variants.
+                        max_tokens=max(2048, 256 * len(slide_descs)),
                     )
                     try:
                         res = _json.loads(raw)

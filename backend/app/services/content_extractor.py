@@ -10,6 +10,7 @@ visual STYLE; this one captures CONTENT.
 
 import json
 import logging
+import re
 from pathlib import Path
 
 import httpx
@@ -147,6 +148,16 @@ def _unwrap_raw(raw):
         if any(k in raw for k in ("index", "headline", "type", "body", "subtext")):
             return [raw]
     return None
+
+
+# Decorative bullet glyphs some carousels put before item titles ("⋮ 반쎄오").
+# Vision OCRs them as ":"/"·"/etc. and they end up polluting titles AND the
+# image-search keywords built from them — strip them off the front.
+_DECOR_PREFIX_RE = re.compile(r"^[\s:;·•⋮∙▪▶›»|\-–—]+")
+
+
+def _strip_decor(s: str) -> str:
+    return _DECOR_PREFIX_RE.sub("", (s or "").strip()).strip()
 
 
 def _fold_items_into_body(slide: dict) -> None:
@@ -323,13 +334,18 @@ async def extract_slides_from_post_images(
         if (i == 0 and cover_headline_only) or (ttype == "cta" and cta_headline_only):
             body = ""
             subtext = ""
+        items = []
+        for it in s.get("items") or []:
+            if isinstance(it, dict):
+                it = {**it, "title": _strip_decor(str(it.get("title") or ""))}
+            items.append(it)
         cleaned.append({
             "index": i,
             "type": ttype,
-            "tag": (s.get("tag") or "").strip(),
-            "headline": (s.get("headline") or "").strip(),
+            "tag": _strip_decor(s.get("tag") or ""),
+            "headline": _strip_decor(s.get("headline") or ""),
             "body": body,
             "subtext": subtext,
-            "items": s.get("items") or [],
+            "items": items,
         })
     return cleaned

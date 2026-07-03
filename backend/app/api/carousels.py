@@ -719,10 +719,11 @@ async def generate_content(
                         "gemini/gemini-2.5-flash",
                         [{"role": "user", "content": prompt}],
                         json_mode=True,
-                        # Scale with item count — grid carousels can carry 12+
-                        # per-cell terms and a 2048 cap truncated the JSON,
-                        # silently dropping ALL translated search variants.
-                        max_tokens=max(2048, 256 * len(slide_descs)),
+                        # Generous cap — for gemini-2.5 max_tokens INCLUDES the
+                        # model's hidden thinking tokens, so a tight budget
+                        # truncates the JSON mid-array and silently drops ALL
+                        # translated search variants.
+                        max_tokens=max(8192, 512 * len(slide_descs)),
                     )
                     try:
                         res = _json.loads(raw)
@@ -733,7 +734,23 @@ async def generate_content(
                             cleaned = cleaned.split("```")[1]
                             if cleaned.startswith("json"):
                                 cleaned = cleaned[4:]
-                        res = _json.loads(cleaned.strip())
+                        try:
+                            res = _json.loads(cleaned.strip())
+                        except Exception:
+                            # Response truncated mid-array (thinking tokens ate
+                            # the budget) — salvage every complete flat object;
+                            # pairing below matches them by "input" field, and
+                            # unrecovered terms fall back to the raw ko keyword.
+                            import re as _re
+                            objs = []
+                            for m in _re.findall(r"\{[^{}]*\}", cleaned):
+                                try:
+                                    objs.append(_json.loads(m))
+                                except Exception:
+                                    pass
+                            if not objs:
+                                raise
+                            res = objs
                     # LLM may return either {phrase: {en, native, country}} or [{en, native, country}, ...]
                     pairs: list[tuple[str, dict]] = []
                     if isinstance(res, dict):

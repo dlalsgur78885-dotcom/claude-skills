@@ -69,6 +69,51 @@ def _make_thumbnail(src: Path, w: int) -> Path:
     return cached
 
 
+def _proxy_thumbnail(cache_key: str, src: Path, w: int) -> Path:
+    """Resize a proxy-cached original to width `w`, cached alongside it.
+
+    Keyed by the url's cache_key (proxy cache content is immutable per url),
+    so unlike `_make_thumbnail` no mtime component is needed. The `_w<width>`
+    suffix never collides with the original's `{cache_key}.<ext>` glob lookup.
+    Sync — call via asyncio.to_thread so it doesn't block the event loop."""
+    from PIL import Image
+    use_png = src.suffix.lower() in (".png", ".webp")
+    suffix = ".png" if use_png else ".jpg"
+    cached = _PROXY_CACHE_DIR / f"{cache_key}_w{w}{suffix}"
+    if cached.exists():
+        return cached
+    with Image.open(src) as im:
+        im.thumbnail((w, w * 8), Image.LANCZOS)
+        save_kw: dict = {"optimize": True}
+        if not use_png:
+            if im.mode in ("RGBA", "LA", "P"):
+                im = im.convert("RGB")
+            save_kw["quality"] = 80
+        im.save(cached, **save_kw)
+    return cached
+
+
+async def _proxy_serve(original: Path, cache_key: str, w: int | None, source: str) -> Response:
+    """Return a proxy Response for a cached original, optionally downscaled."""
+    path = original
+    if w:
+        try:
+            path = await asyncio.to_thread(_proxy_thumbnail, cache_key, original, w)
+        except Exception as e:
+            logger.warning(f"[proxy] resize failed for {original} (w={w}): {e}")
+            path = original
+    media_type = mimetypes.guess_type(path.name)[0] or "image/jpeg"
+    return Response(
+        content=path.read_bytes(),
+        media_type=media_type,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "public, max-age=86400",
+            "X-Proxy-Source": source,
+        },
+    )
+
+
 async def _serve(path: Path, w: int | None) -> FileResponse:
     """Serve `path`, optionally downscaled to width `w` with on-disk cache.
     Caller is responsible for 404 + path-traversal checks before calling."""
@@ -120,11 +165,16 @@ def _referer_for(host: str) -> str:
 
 
 @router.get("/proxy")
-async def proxy_external_image(url: str = Query(..., min_length=8)):
+async def proxy_external_image(
+    url: str = Query(..., min_length=8),
+    w: int | None = Query(None, ge=16, le=4000),
+):
     """Fetch an external image and re-serve it with CORS allowed.
 
     Used by the canvas editor to load arbitrary CDN images without tainting
     the canvas (so PNG export still works). SSRF-safe: rejects private IPs.
+    `w` downscales to that width (disk-cached) — list thumbnails pass it so a
+    multi-MB CDN original isn't shipped at 56px display size.
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
@@ -140,17 +190,7 @@ async def proxy_external_image(url: str = Query(..., min_length=8)):
     cache_key = hashlib.sha1(url.encode("utf-8")).hexdigest()
     cached_files = list(_PROXY_CACHE_DIR.glob(f"{cache_key}.*"))
     if cached_files:
-        cached = cached_files[0]
-        media_type = mimetypes.guess_type(cached.name)[0] or "image/jpeg"
-        return Response(
-            content=cached.read_bytes(),
-            media_type=media_type,
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Cache-Control": "public, max-age=86400",
-                "X-Proxy-Source": "cache",
-            },
-        )
+        return await _proxy_serve(cached_files[0], cache_key, w, "cache")
 
     headers = {
         "User-Agent": (
@@ -207,20 +247,23 @@ async def proxy_external_image(url: str = Query(..., min_length=8)):
 
     # Persist to cache so a future 404 from the origin doesn't kill the editor view
     ext = mimetypes.guess_extension(media_type.split(";")[0].strip()) or ".jpg"
+    original_path = _PROXY_CACHE_DIR / f"{cache_key}{ext}"
     try:
-        (_PROXY_CACHE_DIR / f"{cache_key}{ext}").write_bytes(r.content)
+        original_path.write_bytes(r.content)
     except Exception as e:
         logger.warning(f"[proxy] cache write failed: {e}")
+        # Couldn't cache — serve the original bytes as-is (resize reads the file).
+        return Response(
+            content=r.content,
+            media_type=media_type,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "public, max-age=86400",
+                "X-Proxy-Source": "origin",
+            },
+        )
 
-    return Response(
-        content=r.content,
-        media_type=media_type,
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Cache-Control": "public, max-age=86400",
-            "X-Proxy-Source": "origin",
-        },
-    )
+    return await _proxy_serve(original_path, cache_key, w, "origin")
 
 
 @router.get("/raw/{post_id}/{filename}")

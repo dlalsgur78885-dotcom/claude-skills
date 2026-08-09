@@ -44,6 +44,21 @@ export function proxiedImageUrl(url: string): string {
   return `${API_BASE}/images/proxy?url=${encodeURIComponent(url)}`;
 }
 
+/** Thumbnail URL for a post image that may be a remote CDN link or a local
+ *  `/api/images/*` path. Remote URLs go through the proxy with `w=`, which
+ *  downscales + disk-caches (and dodges Instagram's hotlink/IP blocks) so a
+ *  multi-MB original isn't shipped at thumbnail size. Local paths use the
+ *  existing `?w=` resize route via thumbnailUrl. */
+export function proxiedThumbnailUrl(url: string, width: number): string {
+  if (!url) return "";
+  if (url.startsWith("http")) {
+    if (API_ORIGIN && url.startsWith(API_ORIGIN)) return url;
+    if (url.includes("/api/images/proxy?")) return url;
+    return `${API_BASE}/images/proxy?url=${encodeURIComponent(url)}&w=${width}`;
+  }
+  return thumbnailUrl(url, width);
+}
+
 class ApiClient {
   private token: string | null = null;
 
@@ -198,7 +213,7 @@ class ApiClient {
     channelId?: number,
     limit = 20,
     offset = 0,
-    filters?: { minLikes?: number; maxLikes?: number; minComments?: number; maxComments?: number; minSlides?: number; maxSlides?: number; dateFrom?: string; dateTo?: string; q?: string },
+    filters?: { minLikes?: number; maxLikes?: number; minComments?: number; maxComments?: number; minSlides?: number; maxSlides?: number; isVideo?: boolean; category?: string; dateFrom?: string; dateTo?: string; q?: string },
   ) {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (channelId) params.set("channel_id", String(channelId));
@@ -208,6 +223,8 @@ class ApiClient {
     if (filters?.maxComments != null) params.set("max_comments", String(filters.maxComments));
     if (filters?.minSlides != null) params.set("min_slides", String(filters.minSlides));
     if (filters?.maxSlides != null) params.set("max_slides", String(filters.maxSlides));
+    if (filters?.isVideo != null) params.set("is_video", String(filters.isVideo));
+    if (filters?.category) params.set("category", filters.category);
     if (filters?.dateFrom) params.set("date_from", filters.dateFrom);
     if (filters?.dateTo) params.set("date_to", filters.dateTo);
     if (filters?.q) params.set("q", filters.q);

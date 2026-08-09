@@ -64,6 +64,7 @@ export interface Post {
   like_count: number;
   comment_count: number;
   slide_count: number;
+  is_video: boolean;
   collected_at: string;
   saved_at: string | null;
   images: PostImage[];

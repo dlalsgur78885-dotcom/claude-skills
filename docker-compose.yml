@@ -1,0 +1,53 @@
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      ENV: production
+      DATA_DIR: /app/data
+      DATABASE_URL: sqlite+aiosqlite:////app/data/db.sqlite3
+      SECRET_KEY: ${SECRET_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      HIKER_API_KEY: ${HIKER_API_KEY}
+      FAL_KEY: ${FAL_KEY:-}
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      PIXABAY_API_KEY: ${PIXABAY_API_KEY:-}
+      UNSPLASH_ACCESS_KEY: ${UNSPLASH_ACCESS_KEY:-}
+      SCRAPING_PROXY_URLS: ${SCRAPING_PROXY_URLS:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://${DOMAIN}}
+    volumes:
+      - /var/app/data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Same-origin /api — nginx routes /api/* to backend on this host
+        NEXT_PUBLIC_API_URL: /api
+    restart: unless-stopped
+    expose:
+      - "3000"
+    depends_on:
+      - backend
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot:ro
+    depends_on:
+      - backend
+      - frontend

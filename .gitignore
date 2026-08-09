@@ -16,3 +16,14 @@ venv/
 *.gif
 .mcp.json
 .claude/settings.local.json
+
+# SSH/TLS 개인키 — 절대 커밋 금지 (prod 접속 키가 레포 루트에 있음)
+*.pem
+*.key
+
+# 피드백 원본 자료 및 압축 해제 스크래치 (수십 MB 바이너리)
+*.pptx
+_pptx_check*/
+
+# 로컬 실행 로그
+*.log

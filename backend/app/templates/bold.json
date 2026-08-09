@@ -1,0 +1,28 @@
+{
+  "id": "bold",
+  "name": "볼드",
+  "canvas": {"width": 1080, "height": 1080},
+  "slides": {
+    "cover": {
+      "background": "#FF6B35",
+      "objects": [
+        {"type": "textbox", "role": "headline", "left": 80, "top": 350, "width": 920, "fontSize": 64, "fontFamily": "Pretendard", "fontWeight": "900", "fill": "#FFFFFF", "textAlign": "center"},
+        {"type": "textbox", "role": "subtext", "left": 80, "top": 500, "width": 920, "fontSize": 28, "fontFamily": "Pretendard", "fill": "#FFE0D0", "textAlign": "center"}
+      ]
+    },
+    "content": {
+      "background": "#1A1A2E",
+      "objects": [
+        {"type": "textbox", "role": "headline", "left": 80, "top": 80, "width": 920, "fontSize": 42, "fontFamily": "Pretendard", "fontWeight": "bold", "fill": "#FF6B35"},
+        {"type": "textbox", "role": "body", "left": 80, "top": 200, "width": 920, "fontSize": 26, "fontFamily": "Pretendard", "fill": "#E0E0E0", "lineHeight": 1.5}
+      ]
+    },
+    "cta": {
+      "background": "#FF6B35",
+      "objects": [
+        {"type": "textbox", "role": "headline", "left": 80, "top": 350, "width": 920, "fontSize": 48, "fontFamily": "Pretendard", "fontWeight": "bold", "fill": "#FFFFFF", "textAlign": "center"},
+        {"type": "textbox", "role": "cta_text", "left": 80, "top": 480, "width": 920, "fontSize": 28, "fontFamily": "Pretendard", "fill": "#FFE0D0", "textAlign": "center"}
+      ]
+    }
+  }
+}

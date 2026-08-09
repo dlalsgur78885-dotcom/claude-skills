@@ -56,9 +56,9 @@ PERMANENT_FOLDERS: set[str] = set(NEVER_DELETE_FOLDERS) | {"proxy_cache"}
 LONG_LIVED_DAYS = 7
 
 
-async def scrape_job():
+async def scrape_job(shard: int | None = None):
     from app.services.scrape_job import run_all_channels
-    await run_all_channels()
+    await run_all_channels(shard=shard)
 
 
 async def expire_posts_job():
@@ -75,22 +75,15 @@ def _is_under(path: Path, parents: set[str]) -> bool:
     return any(p.name in parents for p in path.parents)
 
 
-async def cleanup_images():
-    """3시간 지난 ephemeral 이미지 삭제 + 용량 초과 시 강제 정리.
+def _sweep_images_blocking(data_dir: Path, cutoff: datetime, live_slugs: set[str] | None) -> tuple[int, int]:
+    """Synchronous filesystem sweep — the heavy body of cleanup_images.
 
-    삭제 대상:
-      - data/images/raw, processed, sourced, pool
-      - data/template_studio_cache/<slug>/slide_*.webp
-    (restyled 는 ephemeral 이 아님 — LONG_LIVED 7일 룰로 별도 관리)
-
-    보존 대상:
-      - data/images/logos/  (브랜드 로고)
-      - data/images/output/ (최종 산출물)
-      - data/db.sqlite3
-    """
-    data_dir = settings.DATA_DIR
-    now = datetime.now()
-    cutoff = now - timedelta(hours=EPHEMERAL_HOURS)
+    Walks/stats/unlinks ephemeral image files and (twice) rglob's the whole
+    images dir for the size cap. This has no awaits and, run on the event loop,
+    would freeze the single-worker server for seconds every 30 min — every
+    concurrent request stalls behind it. Must be called via asyncio.to_thread.
+    `live_slugs` is resolved by the async caller (None = skip studio sweep).
+    Returns (deleted, freed_bytes)."""
     deleted = 0
     freed = 0
 
@@ -121,15 +114,10 @@ async def cleanup_images():
     # template_studio_cache/<slug>/ — 저장된 템플릿의 "원본 예시" 슬라이드.
     # 미리보기 모달이 템플릿이 사는 동안 참조하므로(피드백 13-1) 살아있는
     # slug 폴더는 보존하고, 고아 폴더(실패/중단된 추출)만 3h 룰로 정리한다.
-    # slug 조회가 실패하면 안전하게 이번 회차는 건너뛴다.
+    # live_slugs is None → 조회 실패/캐시 없음, 안전하게 이번 회차는 건너뛴다.
     studio = data_dir / "template_studio_cache"
-    if studio.exists():
+    if live_slugs is not None and studio.exists():
         try:
-            from sqlalchemy import select
-            from app.database import async_session
-            from app.models.template import CarouselTemplate
-            async with async_session() as db:
-                live_slugs = set((await db.scalars(select(CarouselTemplate.slug))).all())
             for sub in studio.iterdir():
                 if not sub.is_dir() or sub.name in live_slugs:
                     continue
@@ -177,6 +165,45 @@ async def cleanup_images():
                     deleted += 1
                 except Exception:
                     pass
+
+    return deleted, freed
+
+
+async def cleanup_images():
+    """3시간 지난 ephemeral 이미지 삭제 + 용량 초과 시 강제 정리.
+
+    삭제 대상:
+      - data/images/raw, processed, sourced, pool
+      - data/template_studio_cache/<slug>/slide_*.webp
+    (restyled 는 ephemeral 이 아님 — LONG_LIVED 7일 룰로 별도 관리)
+
+    보존 대상:
+      - data/images/logos/  (브랜드 로고)
+      - data/images/output/ (최종 산출물)
+      - data/db.sqlite3
+
+    The actual filesystem sweep is blocking, so it runs in a worker thread —
+    on the single-worker event loop it would freeze every request for the
+    duration (rglob over up to MAX_TOTAL_MB of files).
+    """
+    data_dir = settings.DATA_DIR
+    cutoff = datetime.now() - timedelta(hours=EPHEMERAL_HOURS)
+
+    # Resolve live template slugs up front (async DB) so the sweep can run
+    # entirely off the event loop. None → cache missing or query failed; the
+    # sweep then skips the studio-cache dir to avoid orphaning live previews.
+    live_slugs: set[str] | None = None
+    if (data_dir / "template_studio_cache").exists():
+        try:
+            from sqlalchemy import select
+            from app.database import async_session
+            from app.models.template import CarouselTemplate
+            async with async_session() as db:
+                live_slugs = set((await db.scalars(select(CarouselTemplate.slug))).all())
+        except Exception as e:
+            logger.warning(f"[Cleanup] studio-cache slug lookup failed, skipping that sweep: {e}")
+
+    deleted, freed = await asyncio.to_thread(_sweep_images_blocking, data_dir, cutoff, live_slugs)
 
     if deleted:
         logger.info(f"[Cleanup] removed {deleted} files, freed {freed / 1024 / 1024:.1f}MB (>{EPHEMERAL_HOURS}h old)")
@@ -341,16 +368,21 @@ def schedule_vacuum_soon(reason: str = "post-delete") -> None:
 
 
 def start_scheduler():
-    # 소재 수집: 매일 09:00, 21:00 KST (하루 2회) — 회차당 최대 50개 NEW post.
-    # 한 번 수집한 instagram_post_id는 row가 expire되어도 영구 dedupe.
-    scheduler.add_job(
-        scrape_job,
-        trigger=CronTrigger(hour="9,21", minute=0, timezone="Asia/Seoul"),
-        id="scrape_rolling",
-        name="하루 2회 소재 수집 (09:00 / 21:00 KST)",
-        replace_existing=True,
-        misfire_grace_time=3600,
-    )
+    # 소재 수집: 채널을 id 홀짝으로 2등분해 4시간 엇갈리게 돌린다. 채널당 횟수는
+    # 하루 2회로 종전과 같고, 한 회차 길이만 절반이 된다 — 긴 스윕일수록 후반부에
+    # GramSnap 실패가 몰렸기 때문(프록시가 세션을 오래 물고 있으면 지친다).
+    # 회차당 최대 50개 NEW post. 한 번 수집한 instagram_post_id는 row가
+    # expire되어도 영구 dedupe.
+    for shard, hours in ((0, "5,17"), (1, "9,21")):
+        scheduler.add_job(
+            scrape_job,
+            trigger=CronTrigger(hour=hours, minute=0, timezone="Asia/Seoul"),
+            kwargs={"shard": shard},
+            id=f"scrape_rolling_s{shard}",
+            name=f"소재 수집 shard {shard} ({hours.replace(',', ':00 / ')}:00 KST)",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
 
     # 5일 지난 post 본문/이미지 정리 (instagram_post_id는 보존 → 영구 dedupe).
     # 수집 1시간 전 (08:00, 20:00 KST)에 돌려 늘 가장 신선한 데이터를 보여줌.
@@ -386,7 +418,7 @@ def start_scheduler():
 
     scheduler.start()
     logger.info(
-        f"[Scheduler] Started — scrape 09/21 KST, post expiry 08/20 KST (5d TTL), "
+        f"[Scheduler] Started — scrape s0 05/17 + s1 09/21 KST, post expiry 08/20 KST (5d TTL), "
         f"image cleanup every 30min (3h), long-lived cleanup daily 03:30 KST ({LONG_LIVED_DAYS}d)"
     )
 

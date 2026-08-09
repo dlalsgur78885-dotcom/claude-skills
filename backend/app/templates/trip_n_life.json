@@ -1,0 +1,93 @@
+{
+  "id": "trip_n_life",
+  "name": "트립앤라이프 스타일",
+  "canvas": {"width": 1080, "height": 1080},
+  "brand": {
+    "primary_color": "#0F8B8B",
+    "background_color": "#0A0A0A",
+    "font_family": "Pretendard"
+  },
+  "created_by": "manual",
+  "source_post_url": "https://www.instagram.com/p/DXItkDNEZTj/",
+  "layouts": {
+    "fullbg_overlay": {
+      "background": {
+        "type": "image_keyword",
+        "value": "yakiniku grill flame",
+        "overlay_color": "#000000",
+        "overlay_opacity": 0.35
+      },
+      "decorations": [
+        {"kind": "logo", "position": {"x": 540, "y": 80, "anchor": "top-center"}, "size": {"width": 240, "height": 70}}
+      ],
+      "text_slots": [
+        {
+          "role": "tag",
+          "position": {"x": 80, "y": 700, "anchor": "top-left"},
+          "size": {"width": 180, "height": 50},
+          "style": {"font_size": 22, "font_weight": "600", "fill": "#0A0A0A", "text_align": "center"}
+        },
+        {
+          "role": "headline",
+          "position": {"x": 80, "y": 770, "anchor": "top-left"},
+          "size": {"width": 920, "height": 200},
+          "style": {"font_size": 56, "font_weight": "800", "fill": "#FFFFFF", "text_align": "left", "line_height": 1.25}
+        }
+      ]
+    },
+    "grid_2x2": {
+      "background": {
+        "type": "image_keyword",
+        "value": "yakiniku grill dark",
+        "overlay_color": "#000000",
+        "overlay_opacity": 0.55
+      },
+      "decorations": [
+        {"kind": "logo", "position": {"x": 540, "y": 50, "anchor": "top-center"}, "size": {"width": 200, "height": 56}}
+      ],
+      "text_slots": [],
+      "grid": {
+        "rows": 2,
+        "cols": 2,
+        "cell_size": {"width": 460, "height": 420},
+        "gap_x": 40,
+        "gap_y": 40,
+        "origin": {"x": 60, "y": 150, "anchor": "top-left"},
+        "item_box": {
+          "image_area": {"x": 80, "y": 0, "width": 300, "height": 200, "border_radius": 8},
+          "title_style": {"font_size": 30, "font_weight": "700", "fill": "#FFFFFF", "text_align": "center"},
+          "title_offset_y": 220,
+          "subtitle_style": {"font_size": 22, "font_weight": "400", "fill": "#CCCCCC", "text_align": "center"},
+          "subtitle_offset_y": 260,
+          "description_style": {"font_size": 18, "font_weight": "400", "fill": "#E0E0E0", "text_align": "center", "line_height": 1.5},
+          "description_offset_y": 310
+        }
+      }
+    },
+    "phone_mockup": {
+      "background": {
+        "type": "image_keyword",
+        "value": "yakiniku grill dark",
+        "overlay_color": "#000000",
+        "overlay_opacity": 0.55
+      },
+      "decorations": [
+        {"kind": "logo", "position": {"x": 540, "y": 180, "anchor": "top-center"}, "size": {"width": 480, "height": 130}}
+      ],
+      "text_slots": [
+        {
+          "role": "subheadline",
+          "position": {"x": 540, "y": 340, "anchor": "top-center"},
+          "size": {"width": 800, "height": 60},
+          "style": {"font_size": 24, "font_weight": "500", "fill": "#0A0A0A", "text_align": "center"}
+        },
+        {
+          "role": "headline",
+          "position": {"x": 540, "y": 440, "anchor": "top-center"},
+          "size": {"width": 900, "height": 180},
+          "style": {"font_size": 44, "font_weight": "700", "fill": "#FFFFFF", "text_align": "center", "line_height": 1.4}
+        }
+      ]
+    }
+  }
+}

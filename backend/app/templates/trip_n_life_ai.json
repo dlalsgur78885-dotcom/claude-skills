@@ -1,0 +1,270 @@
+{
+  "id": "trip_n_life_ai",
+  "name": "트립앤라이프 (AI생성)",
+  "canvas": {
+    "width": 1080,
+    "height": 1080
+  },
+  "brand": {
+    "primary_color": "#F5D071",
+    "background_color": "#111111",
+    "font_family": "Pretendard",
+    "logo_path": null
+  },
+  "layouts": {
+    "fullbg_overlay": {
+      "background": {
+        "type": "image_keyword",
+        "value": "yakiniku grill flame",
+        "overlay_color": "#000000",
+        "overlay_opacity": 0.4
+      },
+      "decorations": [
+        {
+          "kind": "logo",
+          "position": {
+            "x": 540,
+            "y": 100,
+            "anchor": "top-center"
+          },
+          "size": {
+            "width": 260,
+            "height": 65
+          },
+          "src": null,
+          "fill": null
+        },
+        {
+          "kind": "shape",
+          "position": {
+            "x": 80,
+            "y": 600,
+            "anchor": "top-left"
+          },
+          "size": {
+            "width": 200,
+            "height": 50
+          },
+          "src": null,
+          "fill": "#FFFFFF"
+        }
+      ],
+      "text_slots": [
+        {
+          "role": "tag",
+          "position": {
+            "x": 180,
+            "y": 625,
+            "anchor": "center"
+          },
+          "size": {
+            "width": 180,
+            "height": 50
+          },
+          "style": {
+            "font_size": 24,
+            "font_family": "Pretendard",
+            "font_weight": "700",
+            "fill": "#000000",
+            "text_align": "center",
+            "line_height": 1.0
+          }
+        },
+        {
+          "role": "headline",
+          "position": {
+            "x": 80,
+            "y": 680,
+            "anchor": "top-left"
+          },
+          "size": {
+            "width": 920,
+            "height": 200
+          },
+          "style": {
+            "font_size": 64,
+            "font_family": "Pretendard",
+            "font_weight": "800",
+            "fill": "#FFFFFF",
+            "text_align": "left",
+            "line_height": 1.3
+          }
+        }
+      ],
+      "grid": null
+    },
+    "grid_2x2": {
+      "background": {
+        "type": "image_keyword",
+        "value": "yakiniku grill flame",
+        "overlay_color": "#000000",
+        "overlay_opacity": 0.85
+      },
+      "decorations": [
+        {
+          "kind": "logo",
+          "position": {
+            "x": 540,
+            "y": 60,
+            "anchor": "top-center"
+          },
+          "size": {
+            "width": 200,
+            "height": 50
+          },
+          "src": null,
+          "fill": null
+        }
+      ],
+      "text_slots": [],
+      "grid": {
+        "rows": 2,
+        "cols": 2,
+        "cell_size": {
+          "width": 440,
+          "height": 420
+        },
+        "gap_x": 60,
+        "gap_y": 40,
+        "origin": {
+          "x": 70,
+          "y": 150,
+          "anchor": "top-left"
+        },
+        "item_box": {
+          "image_area": {
+            "x": 0,
+            "y": 0,
+            "width": 440,
+            "height": 250,
+            "border_radius": 0
+          },
+          "title_style": {
+            "font_size": 32,
+            "font_family": "Pretendard",
+            "font_weight": "700",
+            "fill": "#FFFFFF",
+            "text_align": "center",
+            "line_height": 1.2
+          },
+          "title_offset_y": 280,
+          "subtitle_style": {
+            "font_size": 22,
+            "font_family": "Pretendard",
+            "font_weight": "400",
+            "fill": "#DDDDDD",
+            "text_align": "center",
+            "line_height": 1.4
+          },
+          "subtitle_offset_y": 340,
+          "description_style": {
+            "font_size": 22,
+            "font_family": "Pretendard",
+            "font_weight": "400",
+            "fill": "#DDDDDD",
+            "text_align": "center",
+            "line_height": 1.4
+          },
+          "description_offset_y": 380
+        }
+      }
+    },
+    "phone_mockup": {
+      "background": {
+        "type": "image_keyword",
+        "value": "yakiniku grill flame",
+        "overlay_color": "#000000",
+        "overlay_opacity": 0.85
+      },
+      "decorations": [
+        {
+          "kind": "logo",
+          "position": {
+            "x": 540,
+            "y": 100,
+            "anchor": "top-center"
+          },
+          "size": {
+            "width": 450,
+            "height": 110
+          },
+          "src": null,
+          "fill": null
+        },
+        {
+          "kind": "shape",
+          "position": {
+            "x": 540,
+            "y": 250,
+            "anchor": "center"
+          },
+          "size": {
+            "width": 600,
+            "height": 50
+          },
+          "src": null,
+          "fill": "#FFFFFF"
+        },
+        {
+          "kind": "image",
+          "position": {
+            "x": 540,
+            "y": 1080,
+            "anchor": "bottom-center"
+          },
+          "size": {
+            "width": 700,
+            "height": 600
+          },
+          "src": null,
+          "fill": null
+        }
+      ],
+      "text_slots": [
+        {
+          "role": "tag",
+          "position": {
+            "x": 540,
+            "y": 250,
+            "anchor": "center"
+          },
+          "size": {
+            "width": 580,
+            "height": 50
+          },
+          "style": {
+            "font_size": 24,
+            "font_family": "Pretendard",
+            "font_weight": "700",
+            "fill": "#000000",
+            "text_align": "center",
+            "line_height": 1.0
+          }
+        },
+        {
+          "role": "headline",
+          "position": {
+            "x": 540,
+            "y": 320,
+            "anchor": "top-center"
+          },
+          "size": {
+            "width": 900,
+            "height": 150
+          },
+          "style": {
+            "font_size": 52,
+            "font_family": "Pretendard",
+            "font_weight": "700",
+            "fill": "#FFFFFF",
+            "text_align": "center",
+            "line_height": 1.4
+          }
+        }
+      ],
+      "grid": null
+    }
+  },
+  "source_post_url": "https://www.instagram.com/p/DXItkDNEZTj/",
+  "created_by": "gemini_vision"
+}

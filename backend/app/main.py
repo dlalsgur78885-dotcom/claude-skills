@@ -33,7 +33,10 @@ async def lifespan(app: FastAPI):
         from app.services.settings_provider import apply_to_environ
         await apply_to_environ()
     except Exception as e:
-        import logging
+        # NOTE: 여기 있던 지역 `import logging` 을 제거했다. 함수 안에 지역 import 가
+        # 하나라도 있으면 `logging` 이 함수 전체에서 지역변수가 되어, 이 except 를
+        # 타지 않은 경로에서 logging 을 쓰면 UnboundLocalError 가 난다.
+        # (모듈 최상단에서 이미 import 하고 있으므로 지역 import 는 불필요했다.)
         logging.getLogger(__name__).warning(f"[startup] apply_to_environ failed: {e}")
     if settings.ENABLE_SCHEDULER:
         start_scheduler()

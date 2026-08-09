@@ -24,7 +24,10 @@ config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False 필수. 기본값(True)이면 이 시점에 이미 살아있는
+    # uvicorn/앱 로거가 전부 죽어서, 기동 중 발생하는 예외 트레이스백이 통째로
+    # 삼켜진다(컨테이너가 exit 3 으로 죽는데 로그에 아무것도 안 남음).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

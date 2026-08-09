@@ -23,6 +23,12 @@ COPY app ./app
 COPY cli ./cli
 COPY gramnsap ./gramnsap
 
+# 스키마 부트스트랩(app/db_migrations.py)이 기동 시 /app/alembic{,.ini} 를 읽는다.
+# 빠뜨리면 컨테이너가 startup 에서 CommandError: Path doesn't exist: '/app/alembic'
+# 로 죽는다.
+COPY alembic ./alembic
+COPY alembic.ini .
+
 # Data dir is mounted as a volume from host (/var/app/data → /app/data)
 ENV DATA_DIR=/app/data
 ENV PYTHONUNBUFFERED=1

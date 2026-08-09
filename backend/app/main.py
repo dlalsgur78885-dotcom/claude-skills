@@ -35,10 +35,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning(f"[startup] apply_to_environ failed: {e}")
-    start_scheduler()
+    if settings.ENABLE_SCHEDULER:
+        start_scheduler()
+    else:
+        logging.getLogger(__name__).warning(
+            "[startup] ENABLE_SCHEDULER=false — 백그라운드 잡 비활성 (수집/정리/만료 안 돎)"
+        )
     yield
     # Shutdown
-    stop_scheduler()
+    if settings.ENABLE_SCHEDULER:
+        stop_scheduler()
 
 
 app = FastAPI(

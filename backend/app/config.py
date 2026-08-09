@@ -6,6 +6,11 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/db.sqlite3"
 
+    # Background jobs: 소재 수집 / 이미지 정리 / post 만료 / VACUUM.
+    # 같은 코드로 인스턴스를 하나 더 띄울 때(dev 등) 반드시 False 로 둘 것 —
+    # 스케줄러가 둘이면 채널을 회차당 두 번 긁고, 정리·만료 잡이 중복 실행된다.
+    ENABLE_SCHEDULER: bool = True
+
     # JWT — MUST override in production via env (.env or platform secret).
     # Dev default exists only so local runs don't error out.
     SECRET_KEY: str = "dev-only-change-me"

@@ -11,6 +11,8 @@ export default function ChannelsPage() {
   const [mode, setMode] = useState<"none" | "single" | "bulk">("none");
   const [handle, setHandle] = useState("");
   const [category, setCategory] = useState("");
+  // 목록을 그룹으로 걸러 본다. "" = 전체, "__none__" = 그룹 미지정만.
+  const [filterGroup, setFilterGroup] = useState("");
   const [groups, setGroups] = useState<Category[]>([]);
   const [bulk, setBulk] = useState("");
   const [adding, setAdding] = useState(false);
@@ -105,9 +107,15 @@ export default function ChannelsPage() {
     });
   }
 
+  // 그룹 필터가 걸린 목록. 아래의 개수·전체선택·표 렌더가 모두 이걸 기준으로 돈다 —
+  // 필터를 걸어두고 "전체 선택"을 눌렀는데 화면에 없는 채널까지 선택되면 곤란하다.
+  const visible = filterGroup
+    ? channels.filter((c) => (filterGroup === "__none__" ? !c.category : c.category === filterGroup))
+    : channels;
+
   function toggleSelectAll() {
     setSelectedIds((prev) =>
-      prev.size === channels.length ? new Set() : new Set(channels.map((c) => c.id))
+      prev.size === visible.length ? new Set() : new Set(visible.map((c) => c.id))
     );
   }
 
@@ -153,10 +161,34 @@ export default function ChannelsPage() {
           </h1>
           <p style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 4 }}>
             모니터링할 인스타그램 채널 관리
-            {!loading && <span style={{ marginLeft: 8, color: "var(--text-secondary)" }}>{channels.length}개</span>}
+            {!loading && (
+              <span style={{ marginLeft: 8, color: "var(--text-secondary)" }}>
+                {filterGroup ? `${visible.length}개 / 전체 ${channels.length}개` : `${channels.length}개`}
+              </span>
+            )}
           </p>
         </div>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          {/* 그룹으로 걸러 보기. 소재 목록(/posts·/reels)의 그룹 필터와 같은 기준이라
+              여기서 그룹을 정리한 뒤 저쪽에서 바로 써먹을 수 있다. */}
+          <select
+            value={filterGroup}
+            onChange={(e) => { setFilterGroup(e.target.value); setSelectedIds(new Set()); }}
+            title="그룹으로 걸러 보기"
+            style={{
+              padding: "6px 10px", fontSize: 12, borderRadius: 6, cursor: "pointer",
+              background: filterGroup ? "var(--accent-muted)" : "var(--bg-elevated)",
+              color: filterGroup ? "var(--accent-text)" : "var(--text-secondary)",
+              border: `1px solid ${filterGroup ? "var(--accent)" : "var(--border)"}`,
+              outline: "none",
+            }}
+          >
+            <option value="">전체 그룹</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.name}>{g.name}</option>
+            ))}
+            <option value="__none__">그룹 미지정</option>
+          </select>
           {selectedIds.size > 0 && (
             <button onClick={bulkDelete} disabled={bulkDeleting}
               style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", fontSize: 12, fontWeight: 500, color: "var(--red)", background: "var(--red-muted)", border: "1px solid var(--red)", borderRadius: 6, cursor: bulkDeleting ? "default" : "pointer", opacity: bulkDeleting ? 0.6 : 1 }}>
@@ -252,10 +284,28 @@ export default function ChannelsPage() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", paddingTop: 80 }}>
           <div className="spinner" />
         </div>
-      ) : channels.length === 0 ? (
+      ) : visible.length === 0 ? (
+        // 채널이 아예 없는 경우와, 필터에 걸려 안 보이는 경우를 구분해서 안내한다.
+        // 구분하지 않으면 필터를 걸어둔 걸 잊고 "채널이 다 사라졌다"고 오해하게 된다.
         <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "60px 24px", textAlign: "center", background: "var(--bg-subtle)" }}>
-          <p style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 500, margin: 0 }}>등록된 채널이 없습니다</p>
-          <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 4 }}>채널 추가 또는 대량 추가 버튼으로 채널을 등록하세요</p>
+          {channels.length === 0 ? (
+            <>
+              <p style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 500, margin: 0 }}>등록된 채널이 없습니다</p>
+              <p style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 4 }}>채널 추가 또는 대량 추가 버튼으로 채널을 등록하세요</p>
+            </>
+          ) : (
+            <>
+              <p style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 500, margin: 0 }}>
+                {filterGroup === "__none__" ? "그룹이 지정되지 않은 채널이 없습니다" : `‘${filterGroup}’ 그룹에 채널이 없습니다`}
+              </p>
+              <button
+                onClick={() => setFilterGroup("")}
+                style={{ marginTop: 10, padding: "5px 12px", fontSize: 12, background: "var(--bg-elevated)", color: "var(--text-secondary)", border: "1px solid var(--border)", borderRadius: 5, cursor: "pointer" }}
+              >
+                전체 {channels.length}개 보기
+              </button>
+            </>
+          )}
         </div>
       ) : (
         <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
@@ -265,9 +315,9 @@ export default function ChannelsPage() {
                 <th style={{ padding: "10px 0 10px 16px", width: 36 }}>
                   <input
                     type="checkbox"
-                    checked={channels.length > 0 && selectedIds.size === channels.length}
+                    checked={visible.length > 0 && selectedIds.size === visible.length}
                     ref={(el) => {
-                      if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < channels.length;
+                      if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < visible.length;
                     }}
                     onChange={toggleSelectAll}
                     style={{ cursor: "pointer", accentColor: "var(--accent)" }}
@@ -280,7 +330,7 @@ export default function ChannelsPage() {
               </tr>
             </thead>
             <tbody>
-              {channels.map((ch) => (
+              {visible.map((ch) => (
                 <tr key={ch.id}
                   style={{ borderBottom: "1px solid var(--border)", transition: "background 0.12s", background: selectedIds.has(ch.id) ? "var(--accent-muted)" : "transparent" }}
                   onMouseEnter={(e) => { if (!selectedIds.has(ch.id)) e.currentTarget.style.background = "var(--bg-subtle)"; }}

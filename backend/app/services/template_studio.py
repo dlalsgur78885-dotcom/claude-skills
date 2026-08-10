@@ -22,6 +22,7 @@ from app.models.template import CarouselTemplate
 from app.schemas.carousel_blueprint import LayoutType
 from app.schemas.template_spec import Template
 from app.services.instagram import InstagramAPI
+from app.services.layout_classify import classify, describe, grid_size
 from app.services.template_validator import (
     snap_canvas_to_instagram_preset,
     validate_and_fix_template,
@@ -829,6 +830,47 @@ async def list_templates_db(db: AsyncSession, user_id: int) -> list[dict]:
         .order_by(CarouselTemplate.created_at.desc())
     )
     return [template_row_summary(r) for r in result.scalars().all()]
+
+
+def layout_catalog_entries(row: CarouselTemplate) -> list[dict]:
+    """템플릿 한 개를 낱장 목록으로 펼친다.
+
+    카드에 커버 한 장만 보여서 클릭해야 속을 아는 문제 + `썸네일`·`CTA` 같은 공통
+    장면이 세트마다 중복되는 문제를 풀기 위한 것. 세트 선택은 그대로 두고 낱장
+    선택을 병렬로 제공한다(원본 템플릿은 건드리지 않는다).
+
+    낱장의 신원은 `(template_id, layout_key)` 다 — 레이아웃 키는 한 템플릿 안에서만
+    유일하므로 템플릿 id 와 묶어야 전역에서 유일해진다.
+    """
+    entries: list[dict] = []
+    for key, spec in (row.layouts or {}).items():
+        if not isinstance(spec, dict):
+            continue  # 스키마가 깨진 항목은 조용히 건너뛴다 (목록 전체를 죽이지 않게)
+        size = grid_size(spec)
+        entries.append({
+            "template_id": row.id,
+            "template_name": row.name or row.slug,
+            "layout_key": key,
+            "category": classify(spec),
+            "label": describe(spec),
+            "grid_rows": size[0] if size else None,
+            "grid_cols": size[1] if size else None,
+            "is_system": row.user_id is None,
+        })
+    return entries
+
+
+async def list_layout_catalog(db: AsyncSession, user_id: int) -> list[dict]:
+    """사용자에게 보이는 모든 템플릿을 낱장으로 펼친 카탈로그.
+
+    가시성 규칙은 list_templates_db 와 동일하다(본인 것 + 시스템 것).
+    """
+    result = await db.execute(
+        select(CarouselTemplate)
+        .where((CarouselTemplate.user_id == user_id) | (CarouselTemplate.user_id.is_(None)))
+        .order_by(CarouselTemplate.created_at.desc())
+    )
+    return [e for row in result.scalars().all() for e in layout_catalog_entries(row)]
 
 
 async def list_channel_templates(db: AsyncSession, channel_id: int) -> list[dict]:

@@ -18,6 +18,7 @@ from app.services.template_studio import (
     delete_template,
     generate_and_save_template,
     get_template,
+    list_layout_catalog,
     list_templates_db,
     template_row_summary,
     template_row_to_dict,
@@ -72,6 +73,22 @@ async def list_all_templates(
 ):
     """List all templates visible to the current user (own + system)."""
     return {"templates": await list_templates_db(db, user.id)}
+
+
+@router.get("/layouts")
+async def list_layouts(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """템플릿을 낱장(레이아웃 하나)으로 펼친 카탈로그.
+
+    세트 선택(`GET /`)은 그대로 두고 낱장 선택을 병렬로 제공한다. 분류는 키 이름이
+    아니라 구조로 매긴다 — layout_classify 참고.
+
+    ⚠ 이 라우트는 `/{template_id}` 보다 **먼저** 등록돼야 한다. 뒤에 두면 "layouts"
+    가 template_id 로 잡혀 422 가 난다.
+    """
+    return {"layouts": await list_layout_catalog(db, user.id)}
 
 
 @router.post("/preview-slides")

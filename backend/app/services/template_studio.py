@@ -882,6 +882,74 @@ async def list_layout_catalog(db: AsyncSession, user_id: int) -> list[dict]:
     return entries
 
 
+# 다른 템플릿에서 빌려온 낱장을 가리키는 override 값의 형식: "@<template_id>:<layout_key>"
+# 앞의 "@" 가 표식이다. 레이아웃 키는 사용자가 자유 작명하므로 "2:3 비율" 같은 이름이
+# 있을 수 있는데, 표식 없이 "42:썸네일" 형태로 파싱하면 그런 로컬 키를 빌린 것으로
+# 오인한다. "@" 로 시작하는 키는 사실상 없으므로 이 표식이면 충돌하지 않는다.
+BORROWED_PREFIX = "@"
+
+
+def parse_borrowed(value: str) -> tuple[int, str] | None:
+    """"@42:썸네일" → (42, "썸네일"). 빌린 참조가 아니면 None."""
+    if not isinstance(value, str) or not value.startswith(BORROWED_PREFIX):
+        return None
+    tid, sep, key = value[len(BORROWED_PREFIX):].partition(":")
+    if not sep or not key or not tid.isdigit():
+        return None
+    return int(tid), key
+
+
+async def resolve_borrowed_layouts(
+    db: AsyncSession,
+    user_id: int,
+    layouts: dict,
+    overrides: dict[int, str],
+) -> tuple[dict, dict[int, str]]:
+    """슬라이드별 override 가 가리키는 남의 낱장을 layouts 에 합쳐서 돌려준다.
+
+    렌더러는 override 를 `template_layouts` 안의 키로만 찾는다(carousel_renderer 의
+    `override in template_layouts` 검사). 그래서 렌더러를 고치는 대신, 여기서 빌려온
+    레이아웃을 **원래 이름 그대로의 합성 키**로 미리 합쳐 넣는다. 그러면 그 검사가
+    자연스럽게 통과하고 렌더러는 아무것도 몰라도 된다.
+
+    가시성은 get_template 이 강제한다(본인 것 + 시스템 것만). 남의 템플릿을 가리키면
+    조용히 무시되고, 렌더러의 자동 선택으로 떨어진다.
+
+    ⚠ 빌려온 레이아웃은 원래 템플릿의 canvas 크기를 전제로 좌표가 잡혀 있다. 캔버스가
+      다른 템플릿끼리 섞으면 요소 위치가 어긋날 수 있다. 사용자가 "스타일 혼용 허용"을
+      택했으므로 막지 않고 허용하되, 이 한계는 알고 있어야 한다.
+
+    반환: (합쳐진 layouts, 정리된 overrides)
+    """
+    merged = dict(layouts or {})
+    resolved: dict[int, str] = {}
+    cache: dict[int, CarouselTemplate | None] = {}
+
+    for sidx, value in overrides.items():
+        ref = parse_borrowed(value)
+        if ref is None:
+            resolved[sidx] = value  # 이 템플릿 안의 평범한 키 — 그대로 둔다
+            continue
+
+        tid, key = ref
+        if tid not in cache:
+            cache[tid] = await get_template(db, tid, user_id)
+        src = cache[tid]
+        if src is None:
+            logger.warning(f"[layouts] 슬라이드 {sidx}: 템플릿 {tid} 을 볼 수 없음 — 자동 선택으로")
+            continue
+
+        spec = (src.layouts or {}).get(key)
+        if not isinstance(spec, dict):
+            logger.warning(f"[layouts] 슬라이드 {sidx}: 템플릿 {tid} 에 '{key}' 없음 — 자동 선택으로")
+            continue
+
+        merged[value] = spec      # 합성 키 = override 값 자체
+        resolved[sidx] = value
+
+    return merged, resolved
+
+
 async def list_channel_templates(db: AsyncSession, channel_id: int) -> list[dict]:
     result = await db.execute(
         select(CarouselTemplate)

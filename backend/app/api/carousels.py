@@ -468,10 +468,19 @@ async def render_carousel_endpoint(
         except (TypeError, ValueError):
             continue
 
+    from app.services.template_studio import resolve_borrowed_layouts
+
+    # 다른 템플릿에서 빌려온 낱장("@42:썸네일")을 이 템플릿의 layouts 에 합쳐 넣는다.
+    # 렌더러는 override 를 template_layouts 안에서만 찾으므로, 경계에서 미리 합쳐두면
+    # 렌더러를 고치지 않고도 세트를 넘나드는 혼용이 된다.
+    merged_layouts, layout_overrides = await resolve_borrowed_layouts(
+        db, user.id, template.layouts or {}, layout_overrides
+    )
+
     canvas_slides = await render_carousel(
         template_canvas=template.canvas or {},
         template_brand=template.brand or {},
-        template_layouts=template.layouts or {},
+        template_layouts=merged_layouts,
         slides=slides,
         brand_overrides=brand_overrides,
         user_image_urls=user_image_urls,

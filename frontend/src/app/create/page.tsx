@@ -6,6 +6,7 @@ import { api, resolveImageUrl, proxiedImageUrl } from "@/lib/api";
 import type { Post, TemplateSummary } from "@/lib/types";
 import { TemplateThumbnail } from "@/components/template-editor/TemplateThumbnail";
 import { displayLayoutName } from "@/components/template-editor/types";
+import { LayoutCatalog } from "@/components/template-editor/LayoutCatalog";
 import { HoverZoomImage } from "@/components/HoverZoomImage";
 import { HoverZoomTemplate } from "@/components/HoverZoomTemplate";
 import { CellSearchOptions, type CellSearchState } from "./CellSearchOptions";
@@ -85,6 +86,17 @@ function autoPickLayout(slide: Slide, templateLayouts: string[]): string | null 
 
 // Cell count a layout renders. Grid layouts are named `grid_RxC` (mirrors the
 // backend LayoutType enum); everything else is a single-image layout.
+/** 다른 템플릿에서 빌려온 낱장 참조 — 백엔드 template_studio.parse_borrowed 와 같은 형식.
+ *  "@42:썸네일". 앞의 "@" 가 표식이라 사용자가 지은 로컬 키("2:3 비율")와 섞이지 않는다. */
+function isBorrowedLayout(value: string): boolean {
+  return typeof value === "string" && value.startsWith("@") && value.slice(1).includes(":");
+}
+
+function borrowedLabel(value: string): string {
+  const key = value.slice(value.indexOf(":") + 1);
+  return `${displayLayoutName(key)} (다른 세트)`;
+}
+
 function layoutCellCount(layoutName: string): number {
   const m = /grid[_-]?(\d+)\s*x\s*(\d+)/i.exec(layoutName || "");
   if (m) return Math.max(1, parseInt(m[1], 10) * parseInt(m[2], 10));
@@ -214,6 +226,8 @@ export default function CreatePage() {
 
   // Template picker popover
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  // 낱장 고르기 모달을 띄운 슬라이드 index. null 이면 닫힘.
+  const [borrowFor, setBorrowFor] = useState<number | null>(null);
   const templatePickerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!templatePickerOpen) return;
@@ -922,7 +936,10 @@ export default function CreatePage() {
   // so the picker still showed Vision's original cell count regardless of the
   // chosen layout. autoName is the auto-matched layout — passing the same
   // value clears the override.
-  function setSlideLayout(slideIndex: number, layoutName: string, autoName: string) {
+  /** `cellCountHint` — 다른 세트에서 빌려온 낱장("@42:2x2")은 이름만으로 격자 크기를
+   *  못 읽는다(layoutCellCount 는 "grid" 접두어를 요구한다). 카탈로그가 행·열을
+   *  알려주므로 그 값을 넘겨 셀이 안 채워진 빈 격자를 막는다(피드백 14-2 와 같은 증상). */
+  function setSlideLayout(slideIndex: number, layoutName: string, autoName: string, cellCountHint?: number) {
     setLayoutOverrides((prev) => {
       const next = { ...prev };
       if (!layoutName || layoutName === autoName) delete next[slideIndex];
@@ -930,7 +947,7 @@ export default function CreatePage() {
       return next;
     });
     const effective = layoutName || autoName;
-    const n = layoutCellCount(effective);
+    const n = cellCountHint && cellCountHint > 0 ? cellCountHint : layoutCellCount(effective);
     const slide = slides.find((s) => s.index === slideIndex);
     // The renderer only draws grid cells from slide.items, and the per-cell
     // 제목/설명 fields only render when items exist — switching a "single"
@@ -1466,12 +1483,29 @@ export default function CreatePage() {
                             }}
                             title={`자동 매치: ${auto ? displayLayoutName(auto) : "(없음)"}\n다른 레이아웃 선택 시 백엔드 폴백 무시`}
                           >
+                            {/* 다른 세트에서 빌려온 낱장은 이 템플릿의 목록에 없다.
+                                항목을 하나 끼워야 select 가 빈칸으로 보이지 않는다. */}
+                            {isBorrowedLayout(current) && (
+                              <option value={current}>{borrowedLabel(current)}</option>
+                            )}
                             {tplLayouts.map((l) => (
                               <option key={l} value={l}>
                                 {displayLayoutName(l)}{l === auto ? " (자동)" : ""}
                               </option>
                             ))}
                           </select>
+                          <button
+                            type="button"
+                            onClick={() => setBorrowFor(slide.index)}
+                            title="다른 템플릿의 낱장을 이 슬라이드에 쓴다"
+                            style={{
+                              width: "100%", marginTop: 4, padding: "3px 6px", fontSize: 10,
+                              background: "transparent", color: "var(--text-secondary)",
+                              border: "1px solid var(--border)", borderRadius: 4, cursor: "pointer",
+                            }}
+                          >
+                            다른 세트에서…
+                          </button>
                           {slides.some((s) => s.index > slide.index) && (
                             <button
                               type="button"
@@ -2338,6 +2372,55 @@ export default function CreatePage() {
               style={{ padding: "10px 20px", fontSize: 13, color: "var(--text-secondary)", background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: 8, cursor: "pointer" }}>
               새로 만들기
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 다른 세트의 낱장 고르기. /templates 의 낱장 보기와 같은 컴포넌트를 쓴다 —
+          분류 필터·미리보기·숨김이 그대로 따라온다. 고르면 "@<템플릿id>:<키>" 로
+          override 에 박히고, 백엔드가 렌더 직전에 그 레이아웃을 합쳐 넣는다. */}
+      {borrowFor !== null && (
+        <div
+          onClick={() => setBorrowFor(null)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.6)",
+            display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "var(--bg-base)", border: "1px solid var(--border)", borderRadius: 10,
+              width: "min(1100px, 100%)", maxHeight: "85vh", overflowY: "auto", padding: 20,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
+                슬라이드 #{borrowFor} 에 쓸 낱장 고르기
+              </h3>
+              <button
+                onClick={() => setBorrowFor(null)}
+                style={{
+                  padding: "5px 12px", fontSize: 12, background: "var(--bg-elevated)",
+                  color: "var(--text-secondary)", border: "1px solid var(--border)",
+                  borderRadius: 5, cursor: "pointer",
+                }}
+              >
+                닫기
+              </button>
+            </div>
+            <LayoutCatalog
+              onPick={(item) => {
+                const slideIndex = borrowFor;
+                if (slideIndex === null) return;
+                const cells =
+                  item.grid_rows && item.grid_cols ? item.grid_rows * item.grid_cols : undefined;
+                // autoName 을 빈 문자열로 넘겨야 override 가 지워지지 않는다
+                // (setSlideLayout 은 layoutName === autoName 이면 지운다).
+                setSlideLayout(slideIndex, `@${item.template_id}:${item.layout_key}`, "", cells);
+                setBorrowFor(null);
+              }}
+            />
           </div>
         </div>
       )}

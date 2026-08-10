@@ -111,6 +111,12 @@ export default function EditorPage() {
         template_id: templateId,
         slides: sourceSlides,
         user_image_urls: carouselMeta.user_image_urls || {},
+        // 이 둘을 안 넘기면 /create 에서 고른 슬라이드별 레이아웃과 격자 셀 이미지가
+        // 템플릿을 바꾸는 순간 조용히 사라진다(저장은 그대로 되면서 렌더에만 빠져
+        // 화면과 저장값이 어긋났다). 새 템플릿에 없는 키는 렌더러가 자동 선택으로
+        // 넘기므로 그대로 넘겨도 안전하다.
+        user_item_image_urls: carouselMeta.user_item_image_urls || {},
+        layout_overrides: carouselMeta.layout_overrides || {},
       });
       const newSlides = rendered.canvas_slides as unknown as SlideData[];
       setCarouselMeta((m) => ({ ...m, template_db_id: templateId }));
@@ -130,6 +136,60 @@ export default function EditorPage() {
       return newSlides;
     } catch (err) {
       alert(err instanceof Error ? err.message : "템플릿 적용 실패");
+      return null;
+    }
+  }
+
+  /** 슬라이드 한 장의 레이아웃만 바꾼다 (피드백 슬라이드 7).
+   *
+   *  템플릿 교체(handleReapplyTemplate)와 다른 점은 **어느 템플릿을 쓰는지는 그대로**
+   *  두고 해당 슬라이드의 layout_override 만 바꾼다는 것이다. `layoutRef` 는 이 템플릿
+   *  안의 키이거나, 다른 세트에서 빌려온 "@<템플릿id>:<키>" 형식이다 — 백엔드가 렌더
+   *  직전에 빌려온 레이아웃을 합쳐 넣는다(template_studio.resolve_borrowed_layouts).
+   *
+   *  렌더는 전체 슬라이드를 다시 그려 돌려주지만, 호출부(CanvasEditor)가 해당 인덱스
+   *  한 장만 교체하므로 다른 슬라이드의 수동 편집은 보존된다.
+   */
+  async function handleChangeSlideLayout(
+    slideIndex: number,
+    layoutRef: string,
+  ): Promise<SlideData[] | null> {
+    const sourceSlides = carouselMeta.source_slides;
+    if (!sourceSlides || !Array.isArray(sourceSlides) || sourceSlides.length === 0) {
+      alert("이 캐러셀에는 원본 슬라이드 데이터가 없어 레이아웃을 바꿀 수 없습니다.");
+      return null;
+    }
+    const templateId = carouselMeta.template_db_id;
+    if (!templateId) {
+      alert("템플릿 정보가 없어 레이아웃을 바꿀 수 없습니다.");
+      return null;
+    }
+    const nextOverrides = { ...(carouselMeta.layout_overrides || {}), [slideIndex]: layoutRef };
+    try {
+      const rendered = await api.renderCarousel({
+        template_id: templateId,
+        slides: sourceSlides,
+        user_image_urls: carouselMeta.user_image_urls || {},
+        user_item_image_urls: carouselMeta.user_item_image_urls || {},
+        layout_overrides: nextOverrides,
+      });
+      const newSlides = rendered.canvas_slides as unknown as SlideData[];
+      setCarouselMeta((m) => ({ ...m, layout_overrides: nextOverrides }));
+      await api.updateCarousel(id, {
+        canvas_data: {
+          canvas_slides: newSlides,
+          source_slides: sourceSlides,
+          user_image_urls: carouselMeta.user_image_urls || {},
+          user_item_image_urls: carouselMeta.user_item_image_urls || {},
+          layout_overrides: nextOverrides,
+          template_db_id: templateId,
+          caption: carouselMeta.caption,
+          hashtags: carouselMeta.hashtags,
+        },
+      });
+      return newSlides;
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "레이아웃 변경 실패");
       return null;
     }
   }
@@ -173,6 +233,7 @@ export default function EditorPage() {
         currentTemplateId={carouselMeta.template_db_id || null}
         canReapplyTemplate={!!carouselMeta.source_slides}
         onReapplyTemplate={handleReapplyTemplate}
+        onChangeSlideLayout={handleChangeSlideLayout}
         isFinalized={status === "finalized"}
         onToggleFinalized={toggleFinalized}
         title={title}

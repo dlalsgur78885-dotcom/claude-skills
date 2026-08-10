@@ -11,6 +11,7 @@ import { api, proxiedImageUrl, resolveImageUrl } from "@/lib/api";
 import { getFabric } from "@/lib/fabric";
 import { loadAllUserFonts, loadUserFont, type UserFont } from "@/lib/fonts";
 import { CanvasSizeSelector } from "@/components/CanvasSizeSelector";
+import { LayoutCatalog } from "@/components/template-editor/LayoutCatalog";
 import type { SlideData, TemplateSummary } from "@/lib/types";
 
 const DISPLAY_MAX = 700;
@@ -252,6 +253,9 @@ interface CanvasEditorProps {
   currentTemplateId?: number | null;
   canReapplyTemplate?: boolean;
   onReapplyTemplate?: (templateId: number) => Promise<SlideData[] | null>;
+  /** 슬라이드 한 장만 다른 레이아웃으로 다시 그린다 (피드백 슬라이드 7).
+   *  layoutRef 는 이 템플릿의 키이거나 다른 세트에서 빌려온 "@<템플릿id>:<키>". */
+  onChangeSlideLayout?: (slideIndex: number, layoutRef: string) => Promise<SlideData[] | null>;
   // When the parent owns finalization state (e.g. the /editor/[id] page), it
   // can pass the current value and a setter so the header surfaces a "✓ 완성"
   // toggle next to the save button.
@@ -281,6 +285,7 @@ export function CanvasEditor({
   currentTemplateId,
   canReapplyTemplate,
   onReapplyTemplate,
+  onChangeSlideLayout,
   isFinalized,
   onToggleFinalized,
   title,
@@ -632,6 +637,8 @@ export function CanvasEditor({
   // Template re-apply (header dropdown)
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [applyingTemplate, setApplyingTemplate] = useState(false);
+  // 이 슬라이드만 다른 레이아웃으로 바꾸는 낱장 고르기 모달 (피드백 슬라이드 7)
+  const [slideLayoutPickerOpen, setSlideLayoutPickerOpen] = useState(false);
   // Load the template list ONCE on mount. onReapplyTemplate is an inline parent
   // callback (new identity each render), so keeping it in the deps re-fired this
   // on every re-render — same GET-flood anti-pattern as the CTA effect.
@@ -647,7 +654,10 @@ export function CanvasEditor({
       alert("이 캐러셀은 원본 데이터가 없어 템플릿을 바꿀 수 없습니다.\n캐러셀 만들기에서 다시 만들어 주세요.");
       return;
     }
-    if (!confirm("다른 템플릿을 적용하면 현재 슬라이드가 새로 그려집니다. 진행할까요?")) return;
+    // 문구를 정확히 — 실제로는 전체 슬라이드를 다시 그리고 1번으로 돌아간다.
+    // 예전 문구("현재 슬라이드가 새로 그려집니다")는 한 장만 바뀌는 것처럼 읽혀서,
+    // 손으로 편집해 둔 다른 슬라이드가 날아가는 걸 예고하지 못했다.
+    if (!confirm("템플릿을 바꾸면 모든 슬라이드가 새로 그려지고 직접 편집한 내용은 사라집니다.\n한 장만 바꾸려면 옆의 '이 슬라이드 레이아웃'을 쓰세요.\n\n진행할까요?")) return;
     setApplyingTemplate(true);
     try {
       const newSlides = await onReapplyTemplate(templateId);
@@ -661,6 +671,27 @@ export function CanvasEditor({
       }
     } finally {
       setApplyingTemplate(false);
+    }
+  }
+
+  /** 보고 있는 슬라이드 한 장만 다른 레이아웃으로 다시 그린다 (피드백 슬라이드 7).
+   *  렌더는 전체를 돌려주지만 **해당 인덱스 한 장만** 갈아끼워, 다른 슬라이드에
+   *  해 둔 수동 편집을 보존한다. 보고 있던 위치도 그대로 유지한다. */
+  async function applySlideLayout(layoutRef: string) {
+    if (!onChangeSlideLayout) return;
+    const idx = currentSlideIndex;
+    setApplyingTemplate(true);
+    try {
+      const rendered = await onChangeSlideLayout(idx, layoutRef);
+      if (rendered && rendered[idx] && fabricRef.current) {
+        setSlides((prev) => prev.map((s, i) => (i === idx ? rendered[idx] : s)));
+        loadSlide(idx);
+        setUndoStack([]);
+        setRedoStack([]);
+      }
+    } finally {
+      setApplyingTemplate(false);
+      setSlideLayoutPickerOpen(false);
     }
   }
 
@@ -5155,6 +5186,25 @@ export function CanvasEditor({
                   </option>
                 ))}
               </select>
+              {onChangeSlideLayout && (
+                <button
+                  onClick={() => setSlideLayoutPickerOpen(true)}
+                  disabled={applyingTemplate || !canReapplyTemplate}
+                  title={canReapplyTemplate
+                    ? "보고 있는 슬라이드 한 장만 다른 레이아웃으로 다시 그린다"
+                    : "원본 데이터 없음 — 변경 불가"}
+                  style={{
+                    padding: "4px 10px", fontSize: 11,
+                    background: "var(--bg-overlay)", color: "var(--text-primary)",
+                    border: "1px solid var(--border)", borderRadius: 5,
+                    cursor: canReapplyTemplate ? "pointer" : "not-allowed",
+                    opacity: canReapplyTemplate ? 1 : 0.55,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  이 슬라이드 레이아웃
+                </button>
+              )}
               {applyingTemplate && (
                 <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>적용 중…</span>
               )}
@@ -5804,6 +5854,55 @@ export function CanvasEditor({
         onRemove={removeSlide}
         onReorder={reorderSlides}
       />
+
+      {/* 이 슬라이드만 레이아웃 교체 (피드백 슬라이드 7).
+          /templates·/create 와 같은 LayoutCatalog 를 쓴다 — 분류 필터·미리보기·숨김이
+          그대로 따라오고, 다른 세트의 낱장도 고를 수 있다. */}
+      {slideLayoutPickerOpen && (
+        <div
+          onClick={() => !applyingTemplate && setSlideLayoutPickerOpen(false)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.65)",
+            display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "var(--bg-base)", border: "1px solid var(--border)", borderRadius: 10,
+              width: "min(1100px, 100%)", maxHeight: "85vh", overflowY: "auto", padding: 20,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
+                슬라이드 {currentSlideIndex + 1} 의 레이아웃 바꾸기
+              </h3>
+              <button
+                onClick={() => setSlideLayoutPickerOpen(false)}
+                disabled={applyingTemplate}
+                style={{
+                  padding: "5px 12px", fontSize: 12, background: "var(--bg-elevated)",
+                  color: "var(--text-secondary)", border: "1px solid var(--border)",
+                  borderRadius: 5, cursor: applyingTemplate ? "default" : "pointer",
+                  opacity: applyingTemplate ? 0.5 : 1,
+                }}
+              >
+                닫기
+              </button>
+            </div>
+            <p style={{ fontSize: 12, color: "var(--text-tertiary)", margin: "0 0 14px" }}>
+              이 슬라이드만 다시 그려집니다. 다른 슬라이드에 직접 편집한 내용은 그대로 남습니다.
+              {applyingTemplate && <span style={{ color: "var(--accent-text)" }}> · 적용 중…</span>}
+            </p>
+            <LayoutCatalog
+              onPick={(item) => {
+                if (applyingTemplate) return;
+                void applySlideLayout(`@${item.template_id}:${item.layout_key}`);
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

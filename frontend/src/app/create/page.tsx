@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api, resolveImageUrl, proxiedImageUrl } from "@/lib/api";
+import { createBlankCarousel } from "@/lib/new-carousel";
 import type { Post, TemplateSummary } from "@/lib/types";
 import { TemplateThumbnail } from "@/components/template-editor/TemplateThumbnail";
 import { displayLayoutName } from "@/components/template-editor/types";
@@ -111,6 +112,7 @@ const STEPS_REF = ["템플릿 선택", "콘텐츠 확인", "이미지 선택", "
 const STEPS_URL = ["경쟁사 URL 입력", "콘텐츠 확인", "이미지 선택", "완성"];
 
 export default function CreatePage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const refParam = searchParams.get("refs");
   const refIds = refParam ? refParam.split(",").map(Number).filter(Boolean) : [];
@@ -141,6 +143,8 @@ export default function CreatePage() {
   const [searching, setSearching] = useState(false);
   // 첨부 업로드 중인 칸 (피드백 6). null 이면 진행 중인 업로드 없음.
   const [uploadingKey, setUploadingKey] = useState<ImageKey | null>(null);
+  // 빈 문서 만드는 중 (피드백 1) — 중복 클릭으로 캐러셀이 여러 개 생기는 걸 막는다.
+  const [creatingBlank, setCreatingBlank] = useState(false);
 
   // Per-cell search-option state — carousel studio feedback #15-16. Each cell
   // can override which modifier types its queries are biased toward (음식/외관
@@ -358,6 +362,22 @@ export default function CreatePage() {
     setSlideImages(results);
     setSearching(false);
     setStep(2);
+  }
+
+  /** 빈 캐러셀을 만들어 에디터로 보낸다 (피드백 1).
+   *  실패하면 이 화면에 그대로 남는다 — URL 흐름을 계속 쓸 수 있어야 하므로. */
+  async function startBlankCarousel() {
+    if (creatingBlank) return;
+    setCreatingBlank(true);
+    try {
+      const newId = await createBlankCarousel();
+      router.push(`/editor/${newId}`);
+    } catch (e) {
+      setCreatingBlank(false);
+      alert(e instanceof Error ? e.message : "새 파일을 만들지 못했습니다");
+    }
+    // 성공 시엔 화면을 떠나므로 creatingBlank 를 되돌리지 않는다 —
+    // 이동 중에 버튼이 다시 눌려 캐러셀이 두 개 생기는 걸 막는다.
   }
 
   /** 직접 첨부한 이미지를 올리고 그 칸의 선택으로 잡는다 (피드백 6).
@@ -1333,6 +1353,43 @@ export default function CreatePage() {
               ? `선택한 ${refIds.length}개 포스트를 레퍼런스로 콘텐츠를 생성합니다`
               : "경쟁사 게시글 URL을 붙여넣으면 자동 분석 후 슬라이드/이미지 키워드를 생성합니다"}
           </p>
+
+          {/* 참고할 게시글이 없어도 시작할 수 있는 길 (피드백 1). URL 이 필수라
+              아무것도 못 하던 상태를 푼다. 누르면 빈 캐러셀을 만들어 에디터로 보낸다. */}
+          {refIds.length === 0 && (
+            <div
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                gap: 16, flexWrap: "wrap",
+                padding: "12px 16px", marginBottom: 28,
+                background: "var(--bg-elevated)", border: "1px solid var(--border)",
+                borderRadius: 8,
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>
+                  참고할 게시글이 없나요?
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
+                  빈 문서로 시작해 에디터에서 직접 만들 수 있습니다
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={startBlankCarousel}
+                disabled={creatingBlank}
+                style={{
+                  padding: "8px 16px", fontSize: 13, fontWeight: 500, whiteSpace: "nowrap",
+                  background: "var(--bg-overlay)", color: "var(--text-primary)",
+                  border: "1px solid var(--border)", borderRadius: 6,
+                  cursor: creatingBlank ? "default" : "pointer",
+                  opacity: creatingBlank ? 0.6 : 1,
+                }}
+              >
+                {creatingBlank ? "만드는 중…" : "새 파일 만들기"}
+              </button>
+            </div>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div>
               <label style={{ display: "block", fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 500 }}>

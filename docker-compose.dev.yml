@@ -1,0 +1,87 @@
+# dev 전용 스택 — prod(/opt/carousel)와 완전히 분리되어 있다.
+#
+#   프로젝트명 : cdev            (prod 는 carousel)
+#   포트       : 3001            (prod 는 80/443 — prod nginx 는 건드리지 않는다)
+#   DB         : /var/app/data-dev  (prod 는 /var/app/data)
+#
+# 구성: 자체 nginx 가 3001 한 포트로 프론트(/)와 API(/api)를 함께 낸다.
+#       prod 와 같은 same-origin 구조라 프론트 번들의 NEXT_PUBLIC_API_URL 이 "/api" 로
+#       고정되고, 밖으로 열 포트도 하나뿐이다.
+#
+# 접근:  ssh -L 3001:127.0.0.1:3001 ubuntu@3.35.18.166  →  http://localhost:3001
+#        (Lightsail 방화벽에서 3001 을 열면 http://3.35.18.166:3001 로 직접도 가능)
+#
+# 철거(롤백):
+#   sudo docker compose -p cdev -f /opt/carousel-dev/docker-compose.dev.yml down -v
+#   sudo rm -rf /opt/carousel-dev /var/app/data-dev
+#   → prod 는 아무것도 바뀌지 않으므로 복구할 것이 없다.
+
+services:
+  backend:
+    image: carousel-backend:latest   # prod 이미지 재사용 (재빌드 금지 — 11.5GB)
+    container_name: cdev-backend
+    restart: "no"                    # 상시 아님. 작업할 때 up, 끝나면 down
+    mem_limit: 512m                  # 초과 시 dev 만 죽는다. prod 는 보호됨
+    memswap_limit: 1g
+    ports:
+      # 8001 은 백엔드 직접 접근용으로 남겨둔다(디버깅·스크립트). 화면은 nginx(3001)로 본다.
+      - "127.0.0.1:8001:8000"
+    env_file:
+      - /opt/carousel/.env           # prod API 키 재사용 (읽기만)
+    environment:
+      ENV: development
+      DATA_DIR: /app/data
+      DATABASE_URL: sqlite+aiosqlite:////app/data/db.sqlite3
+      # ★ 이것이 없으면 스케줄러가 둘이 되어 채널을 하루 4번 더 긁는다
+      ENABLE_SCHEDULER: "false"
+      # 프론트는 로컬에서 도므로 localhost 를 허용
+      ALLOWED_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
+    volumes:
+      - /var/app/data-dev:/app/data                          # dev 전용 DB/이미지
+      - /opt/carousel-dev/backend/app:/app/app:ro            # 소스 오버레이
+      - /opt/carousel-dev/backend/gramnsap:/app/gramnsap:ro
+      # db_migrations.py 가 /app/alembic{,.ini} 을 요구한다. prod 이미지에는
+      # 둘 다 없어서(Dockerfile 이 COPY 안 함) 마운트로 채워준다.
+      - /opt/carousel-dev/backend/alembic:/app/alembic:ro
+      - /opt/carousel-dev/backend/alembic.ini:/app/alembic.ini:ro
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app/app
+
+  frontend:
+    # ⚠ 이미지 이름을 명시한다. prod 의 carousel-frontend:latest 를 덮어쓰면 안 된다.
+    image: cdev-frontend:latest
+    build:
+      context: ./frontend
+      args:
+        # nginx 가 같은 오리진으로 /api 를 프록시하므로 상대경로면 충분하다.
+        NEXT_PUBLIC_API_URL: /api
+    container_name: cdev-frontend
+    restart: "no"
+    mem_limit: 300m          # standalone 프로덕션 빌드라 실사용은 ~50MB
+    expose:
+      - "3000"
+    depends_on:
+      - backend
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: cdev-nginx
+    restart: "no"
+    mem_limit: 64m
+    ports:
+      # 0.0.0.0 이지만 Lightsail 방화벽이 기본 차단이라 밖에서는 안 열린다.
+      # 터널로 접근하거나, 콘솔에서 3001 을 열면 직접 접근이 된다.
+      - "3001:80"
+    volumes:
+      - /opt/carousel-dev/nginx.dev.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend

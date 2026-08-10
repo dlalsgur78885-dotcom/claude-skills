@@ -110,7 +110,7 @@ export default function Dashboard() {
         <StatCard
           label="생성된 캐러셀"
           value={loading ? "—" : String(carousels.length)}
-          href="/editor/new"
+          href="/create"
           sub="새로 만들기"
           icon={
             <svg width="15" height="15" fill="none" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor">
@@ -136,7 +136,7 @@ export default function Dashboard() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <h2 style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", margin: 0 }}>최근 캐러셀</h2>
           <Link
-            href="/editor/new"
+            href="/create"
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -186,7 +186,7 @@ export default function Dashboard() {
               첫 캐러셀을 만들어 시작해보세요
             </p>
             <Link
-              href="/editor/new"
+              href="/create"
               style={{
                 display: "inline-flex",
                 alignItems: "center",

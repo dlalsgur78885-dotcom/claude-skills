@@ -552,6 +552,19 @@ class ApiClient {
     return this.fetch<{ templates: import("./types").TemplateSummary[] }>("/templates/");
   }
 
+  /** 템플릿을 레이아웃 낱장으로 펼친 카탈로그. 숨긴 낱장도 hidden=true 로 함께 온다. */
+  async listLayoutCatalog() {
+    return this.fetch<{ layouts: import("./types").LayoutCatalogItem[] }>("/templates/layouts");
+  }
+
+  /** 낱장 목록에서만 숨긴다 — 템플릿 원본은 바뀌지 않아 세트 선택은 계속 동작한다. */
+  async setLayoutHidden(templateId: number, layoutKey: string, hidden: boolean) {
+    return this.fetch<{ hidden_count: number }>("/templates/layouts/hidden", {
+      method: "POST",
+      body: JSON.stringify({ template_id: templateId, layout_key: layoutKey, hidden }),
+    });
+  }
+
   async previewSlides(postUrl: string) {
     return this.fetch<{ slide_urls: string[] }>("/templates/preview-slides", {
       method: "POST",

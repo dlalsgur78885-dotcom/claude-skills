@@ -7,6 +7,7 @@ import { api, type LayoutHint } from "@/lib/api";
 import type { TemplateSummary } from "@/lib/types";
 import { TemplateThumbnail } from "@/components/template-editor/TemplateThumbnail";
 import { TemplatePreviewModal } from "@/components/template-editor/TemplatePreviewModal";
+import { LayoutCatalog } from "@/components/template-editor/LayoutCatalog";
 import { displayLayoutName } from "@/components/template-editor/types";
 import { SlideClassifier } from "@/components/template-editor/SlideClassifier";
 
@@ -14,6 +15,8 @@ export default function TemplatesPage() {
   const router = useRouter();
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  // 세트 = 템플릿 통째로 고르는 기존 방식. 낱장 = 레이아웃 한 장씩. 둘은 병렬이다.
+  const [view, setView] = useState<"set" | "layout">("set");
 
   const [postUrl, setPostUrl] = useState("");
   const [name, setName] = useState("");
@@ -392,10 +395,30 @@ export default function TemplatesPage() {
       {/* List */}
       <div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
-          <h2 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>
-            저장된 템플릿 {templates.length > 0 && `(${templates.length})`}
-          </h2>
-          {templates.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <h2 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>
+              저장된 템플릿 {templates.length > 0 && `(${templates.length})`}
+            </h2>
+            {/* 세트 = 기존 방식(템플릿 통째로). 낱장 = 레이아웃 한 장씩. */}
+            <div style={{ display: "flex", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }}>
+              {([["set", "세트"], ["layout", "낱장"]] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setView(key)}
+                  style={{
+                    padding: "4px 12px", fontSize: 12,
+                    fontWeight: view === key ? 600 : 400,
+                    background: view === key ? "var(--text-primary)" : "transparent",
+                    color: view === key ? "var(--bg-base)" : "var(--text-secondary)",
+                    border: "none", cursor: "pointer",
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {view === "set" && templates.length > 0 && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
               {selectedIds.size > 0 ? (
                 <>
@@ -446,7 +469,9 @@ export default function TemplatesPage() {
           )}
         </div>
 
-        {loading ? (
+        {view === "layout" ? (
+          <LayoutCatalog />
+        ) : loading ? (
           <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>로딩 중...</p>
         ) : templates.length === 0 ? (
           <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>

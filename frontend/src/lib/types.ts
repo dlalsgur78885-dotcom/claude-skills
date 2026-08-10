@@ -41,6 +41,23 @@ export interface TemplateSummary {
   created_at: string | null;
 }
 
+/** 템플릿을 낱장으로 펼친 항목. 신원은 (template_id, layout_key) 쌍이다 —
+ *  레이아웃 키는 한 템플릿 안에서만 유일하다. */
+export interface LayoutCatalogItem {
+  template_id: number;
+  template_name: string;
+  layout_key: string;
+  /** 구조로 매긴 분류 (키 이름이 아니라 구조 기준) */
+  category: "cover" | "grid" | "cta" | "body";
+  /** 화면에 그대로 쓰는 한글 라벨. 격자는 "격자 2×2" 처럼 크기까지 들어있다. */
+  label: string;
+  grid_rows: number | null;
+  grid_cols: number | null;
+  is_system: boolean;
+  /** 낱장 목록에서만 숨긴 상태. 템플릿 원본과는 무관하다. */
+  hidden: boolean;
+}
+
 export interface PostImage {
   id: number;
   slide_index: number;

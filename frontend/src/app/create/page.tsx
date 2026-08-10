@@ -1040,9 +1040,13 @@ export default function CreatePage() {
         ))}
       </div>
 
-      {/* 템플릿 선택 dropdown — Step 0부터 보이되, refIds 모드 Step 0는
-          이미 본문에서 큰 카드 그리드로 템플릿을 보여주므로 중복을 피해 숨김. */}
-      {step < 3 && !(step === 0 && refIds.length > 0) && (
+      {/* 전체 스타일(기준 템플릿) 선택 — Step 1(콘텐츠 확인)부터 보인다.
+          Step 0 에서는 감춘다(피드백 3): URL 을 넣는 자리에서 디자인부터 고르라고 하면
+          아직 뭐가 나올지도 모르는 상태에서 정해야 했다. 내용을 본 다음 고르는 순서로
+          옮겼고, 슬라이드마다 낱장을 바꾸는 것도 같은 Step 1 에서 이어진다(피드백 4).
+          기준 템플릿 자체는 마운트 시 자동으로 잡히므로(본인 최신 → 없으면 시스템)
+          안 골라도 진행에는 지장이 없다 — 캔버스 크기와 브랜드가 거기서 온다. */}
+      {step >= 1 && step < 3 && (
         <div
           style={{
             display: "flex",
@@ -1055,8 +1059,11 @@ export default function CreatePage() {
             borderRadius: 8,
           }}
         >
-          <span style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 500, whiteSpace: "nowrap" }}>
-            템플릿
+          <span
+            title="캔버스 크기와 브랜드 색이 여기서 정해집니다. 슬라이드마다 다른 레이아웃을 쓰려면 아래 각 슬라이드의 레이아웃을 바꾸세요."
+            style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 500, whiteSpace: "nowrap" }}
+          >
+            전체 스타일
           </span>
           <div ref={templatePickerRef} style={{ position: "relative", flex: 1 }}>
             {(() => {

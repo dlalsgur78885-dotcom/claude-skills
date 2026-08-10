@@ -14,6 +14,16 @@ router = APIRouter(prefix="/categories", tags=["categories"])
 
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
+    """관리자 전용 게이트. 여기 정의돼 있지만 **이 파일의 라우트는 쓰지 않는다** —
+    사용자 관리(users.py)가 임포트해서 쓰므로 남겨둔다.
+
+    카테고리(채널 그룹)는 admin 을 요구하지 않는다. 그룹은 채널을 분류하는 작업용
+    도구지 관리자 설정이 아닌데, 실제로 일하는 계정이 전부 worker 라서(로그인 134회의
+    junhyeok 포함) 만들 통로 자체가 없었다 — 그래서 카테고리 0개, 그룹 지정 채널 0/86
+    상태로 기능이 잠겨 있었다.
+
+    ⚠ 그룹은 소유자 없이 전원이 공유한다. 누구나 만들고 **누구나 지울 수 있다.**
+    """
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다")
     return user
@@ -33,7 +43,7 @@ async def list_categories(
 @router.post("/", response_model=CategoryResponse, status_code=201)
 async def create_category(
     data: CategoryCreate,
-    user: User = Depends(require_admin),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -53,7 +63,7 @@ async def create_category(
 async def update_category(
     category_id: int,
     data: CategoryUpdate,
-    user: User = Depends(require_admin),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -74,7 +84,7 @@ async def update_category(
 @router.delete("/{category_id}", status_code=204)
 async def delete_category(
     category_id: int,
-    user: User = Depends(require_admin),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(

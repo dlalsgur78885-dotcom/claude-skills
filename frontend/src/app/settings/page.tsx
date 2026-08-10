@@ -53,7 +53,7 @@ export default function SettingsPage() {
           설정
         </h1>
         <p style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 4 }}>
-          {isAdmin ? "관리자 설정 — API, 카테고리, 사용자 관리" : "API 키 및 스케줄러를 설정하세요"}
+          {isAdmin ? "API·채널 그룹·사용자 관리" : "API 키와 채널 그룹을 설정하세요"}
         </p>
       </div>
 
@@ -122,7 +122,10 @@ export default function SettingsPage() {
         </section>
 
         {/* Admin sections */}
-        {isAdmin && <CategoryManager />}
+        {/* 채널 그룹은 작업자도 만든다. admin 전용으로 두었더니 실제로 일하는 계정이
+            전부 worker 라 만들 통로가 없었고, 그래서 그룹이 하나도 안 만들어졌다.
+            사용자 관리는 admin 전용 그대로. */}
+        <CategoryManager />
         {isAdmin && <UserManager currentUserId={me?.id ?? 0} />}
 
         <button

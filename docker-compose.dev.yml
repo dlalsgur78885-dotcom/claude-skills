@@ -77,11 +77,15 @@ services:
     restart: "no"
     mem_limit: 64m
     ports:
-      # 0.0.0.0 이지만 Lightsail 방화벽이 기본 차단이라 밖에서는 안 열린다.
-      # 터널로 접근하거나, 콘솔에서 3001 을 열면 직접 접근이 된다.
-      - "3001:80"
+      # HTTP 는 로컬바인딩 — SSH 터널로만 닿는다. 실수로 방화벽을 열어도 노출되지 않는다.
+      - "127.0.0.1:3001:80"
+      # HTTPS 는 직접 접근용. Lightsail 방화벽에서 3443 을 (내 IP 로 제한해) 열면
+      # https://3-35-18-166.sslip.io:3443 로 붙는다.
+      - "3443:443"
     volumes:
       - /opt/carousel-dev/nginx.dev.conf:/etc/nginx/conf.d/default.conf:ro
+      # prod 가 발급해 둔 인증서를 읽기 전용으로 공유. prod 설정은 건드리지 않는다.
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       - backend
       - frontend

@@ -6,6 +6,7 @@ import ipaddress
 import logging
 import mimetypes
 import re
+import secrets
 import socket
 from dataclasses import asdict
 from pathlib import Path
@@ -16,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response
 
 from app.config import settings
@@ -383,6 +384,72 @@ async def serve_template_source_slide(slug: str, filename: str, w: int | None = 
     path = settings.DATA_DIR / "template_studio_cache" / slug / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="원본 슬라이드를 찾을 수 없습니다")
+    return await _serve(path, w)
+
+
+_UPLOAD_EXT_BY_MIME = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+
+
+@router.post("/upload")
+async def upload_user_image(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+):
+    """사용자가 직접 올린 이미지를 저장하고 캐러셀에서 쓸 URL 을 돌려준다 (피드백 6).
+
+    이미지 선택 단계는 검색 결과만 보여줘서, 원하는 그림이 나올 때까지 계속 다시
+    검색해야 했다. 직접 첨부할 길을 연다.
+
+    저장 위치는 `images/uploads/<user_id>/` 다. **ephemeral 스윕 대상 폴더가 아니고**
+    scheduler 의 NEVER_DELETE_FOLDERS 에도 들어 있다 — 캐러셀이 참조하는 원본이라
+    3시간 뒤에 지워지거나 용량 캡에 밀려 사라지면 복구할 수 없다.
+
+    소유권은 DB 에 적지 않는다. URL 자체가 유일한 핸들이고 파일명이 난수라 추측이
+    어렵다(template_assets 와 같은 방식).
+    """
+    mime = (file.content_type or "").lower()
+    if not mime.startswith("image/"):
+        raise HTTPException(status_code=415, detail="이미지 파일만 업로드 가능합니다")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="빈 파일입니다")
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="20MB 이하 이미지만 올릴 수 있습니다")
+
+    out_dir = settings.DATA_DIR / "images" / "uploads" / str(user.id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fname = f"{secrets.token_hex(8)}{_UPLOAD_EXT_BY_MIME.get(mime, '.png')}"
+    (out_dir / fname).write_bytes(data)
+
+    # 캔버스 배치가 원본 비율을 알아야 해서 크기를 같이 준다. 못 읽어도 업로드
+    # 자체는 성공시킨다 — 크기는 있으면 좋은 정보지 필수는 아니다.
+    width = height = 0
+    try:
+        from PIL import Image
+
+        with Image.open(out_dir / fname) as im:
+            width, height = im.size
+    except Exception as e:
+        logger.warning(f"[upload] 크기 판독 실패 {fname}: {e}")
+
+    url = f"/api/images/uploads/{user.id}/{fname}"
+    return {"url": url, "preview_url": url, "width": width, "height": height}
+
+
+@router.get("/uploads/{user_id}/{filename}")
+async def serve_uploaded_image(user_id: str, filename: str, w: int | None = Query(None, ge=16, le=4000)):
+    """업로드 이미지 서빙. template-assets 와 같은 규칙 — 렌더 파이프라인이 인증 없이
+    읽어야 하므로 URL 을 아는 사람은 받을 수 있고, 파일명 난수로 가린다."""
+    if not user_id.isdigit() or "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="bad path")
+    path = settings.DATA_DIR / "images" / "uploads" / user_id / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
     return await _serve(path, w)
 
 

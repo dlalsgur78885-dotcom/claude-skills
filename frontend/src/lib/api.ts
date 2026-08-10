@@ -552,6 +552,25 @@ class ApiClient {
     return this.fetch<{ templates: import("./types").TemplateSummary[] }>("/templates/");
   }
 
+  /** 사용자가 직접 올린 이미지를 저장하고 캐러셀에서 쓸 URL 을 받는다 (피드백 6). */
+  async uploadImage(file: File) {
+    const fd = new FormData();
+    fd.append("file", file);
+    const headers: Record<string, string> = {};
+    if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
+    // FormData: do NOT set Content-Type — let the browser fill the multipart boundary
+    const res = await fetch(`${API_BASE}/images/upload`, {
+      method: "POST",
+      headers,
+      body: fd,
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(e.detail || "이미지 업로드에 실패했습니다");
+    }
+    return (await res.json()) as { url: string; preview_url: string; width: number; height: number };
+  }
+
   /** 템플릿을 레이아웃 낱장으로 펼친 카탈로그. 숨긴 낱장도 hidden=true 로 함께 온다. */
   async listLayoutCatalog() {
     return this.fetch<{ layouts: import("./types").LayoutCatalogItem[] }>("/templates/layouts");

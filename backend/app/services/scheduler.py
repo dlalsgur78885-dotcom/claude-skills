@@ -44,6 +44,7 @@ NEVER_DELETE_FOLDERS: frozenset[str] = frozenset({
     "restyled",            # AI 스타일 변환 이미지 (카루셀 콘텐츠)
     "cutouts",             # 누끼 이미지 (카루셀 콘텐츠)
     "enhanced",            # AI 보정 이미지 (카루셀 콘텐츠)
+    "uploads",             # 사용자가 직접 첨부한 이미지 — 원본이라 지우면 복구 불가
 })
 
 # ephemeral(3h) 정리 + 용량 캡(MAX_TOTAL_MB) 양쪽에서 블라인드 삭제 금지할 폴더.

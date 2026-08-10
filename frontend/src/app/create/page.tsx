@@ -139,6 +139,8 @@ export default function CreatePage() {
   const [slideImages, setSlideImages] = useState<SlideImages>({});
   const [selectedImages, setSelectedImages] = useState<SelectedImages>({});
   const [searching, setSearching] = useState(false);
+  // 첨부 업로드 중인 칸 (피드백 6). null 이면 진행 중인 업로드 없음.
+  const [uploadingKey, setUploadingKey] = useState<ImageKey | null>(null);
 
   // Per-cell search-option state — carousel studio feedback #15-16. Each cell
   // can override which modifier types its queries are biased toward (음식/외관
@@ -228,6 +230,12 @@ export default function CreatePage() {
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   // 낱장 고르기 모달을 띄운 슬라이드 index. null 이면 닫힘.
   const [borrowFor, setBorrowFor] = useState<number | null>(null);
+
+  // 단계를 넘기면 맨 위부터 보여준다. 앞 단계에서 아래로 내려간 스크롤 위치가 그대로
+  // 남아, 이미지 선택 단계가 페이지 중간에서 시작되는 것처럼 보였다(피드백 5).
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [step]);
   const templatePickerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!templatePickerOpen) return;
@@ -350,6 +358,29 @@ export default function CreatePage() {
     setSlideImages(results);
     setSearching(false);
     setStep(2);
+  }
+
+  /** 직접 첨부한 이미지를 올리고 그 칸의 선택으로 잡는다 (피드백 6).
+   *  후보 목록(slideImages)에도 맨 앞에 끼워 넣어, 다른 걸 골랐다가 되돌아올 수 있게 한다. */
+  async function uploadCellImage(key: ImageKey, file: File) {
+    setUploadingKey(key);
+    try {
+      const up = await api.uploadImage(file);
+      const img: ImageResult = {
+        id: `upload:${up.url}`,
+        url: up.url,
+        preview_url: up.preview_url,
+        width: up.width,
+        height: up.height,
+        source: "upload",
+      };
+      setSlideImages((prev) => ({ ...prev, [key]: [img, ...(prev[key] || [])] }));
+      selectImage(key, img);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "이미지 업로드에 실패했습니다");
+    } finally {
+      setUploadingKey(null);
+    }
   }
 
   function selectImage(key: ImageKey, img: ImageResult | null) {
@@ -2037,6 +2068,33 @@ export default function CreatePage() {
                             />
                           );
                         })()}
+
+                        {/* 이미지 첨부 — 검색 결과에 원하는 그림이 없을 때 직접 올린다
+                            (피드백 6). 올린 이미지는 즉시 이 칸의 선택으로 잡힌다. */}
+                        <label
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 5,
+                            marginTop: 6, padding: "4px 10px", fontSize: 11,
+                            background: "var(--bg-elevated)", color: "var(--text-secondary)",
+                            border: "1px solid var(--border)", borderRadius: 5,
+                            cursor: uploadingKey === key ? "default" : "pointer",
+                            opacity: uploadingKey === key ? 0.5 : 1,
+                          }}
+                        >
+                          {uploadingKey === key ? "올리는 중…" : "📎 이미지 첨부"}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            disabled={uploadingKey === key}
+                            style={{ display: "none" }}
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              // 같은 파일을 다시 골라도 change 가 뜨도록 값을 비운다
+                              e.target.value = "";
+                              if (f) void uploadCellImage(key, f);
+                            }}
+                          />
+                        </label>
 
                         {/* Re-search row — type a different keyword if the auto-results miss. */}
                         {(() => {

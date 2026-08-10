@@ -864,13 +864,22 @@ async def list_layout_catalog(db: AsyncSession, user_id: int) -> list[dict]:
     """사용자에게 보이는 모든 템플릿을 낱장으로 펼친 카탈로그.
 
     가시성 규칙은 list_templates_db 와 동일하다(본인 것 + 시스템 것).
+
+    숨긴 낱장도 `hidden=True` 를 달아 함께 돌려준다 — 걸러내는 건 UI 몫이다.
+    그래야 "숨긴 항목 보기" 토글을 별도 엔드포인트 없이 만들 수 있다.
     """
+    from app.services.layout_hidden import get_hidden
+
     result = await db.execute(
         select(CarouselTemplate)
         .where((CarouselTemplate.user_id == user_id) | (CarouselTemplate.user_id.is_(None)))
         .order_by(CarouselTemplate.created_at.desc())
     )
-    return [e for row in result.scalars().all() for e in layout_catalog_entries(row)]
+    hidden = await get_hidden(db, user_id)
+    entries = [e for row in result.scalars().all() for e in layout_catalog_entries(row)]
+    for e in entries:
+        e["hidden"] = (e["template_id"], e["layout_key"]) in hidden
+    return entries
 
 
 async def list_channel_templates(db: AsyncSession, channel_id: int) -> list[dict]:

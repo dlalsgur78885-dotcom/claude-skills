@@ -13,6 +13,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.services.instagram import InstagramAPI
+from app.services.layout_hidden import set_hidden
 from app.services.template_studio import (
     clone_template,
     delete_template,
@@ -66,6 +67,13 @@ class CopyLayoutRequest(BaseModel):
     src_layout_name: str
 
 
+class HideLayoutRequest(BaseModel):
+    """낱장 목록에서 숨기기/숨김 해제. 템플릿 원본은 바뀌지 않는다."""
+    template_id: int
+    layout_key: str
+    hidden: bool = True
+
+
 @router.get("/")
 async def list_all_templates(
     user: User = Depends(get_current_user),
@@ -89,6 +97,23 @@ async def list_layouts(
     가 template_id 로 잡혀 422 가 난다.
     """
     return {"layouts": await list_layout_catalog(db, user.id)}
+
+
+@router.post("/layouts/hidden")
+async def set_layout_hidden(
+    body: HideLayoutRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """낱장 하나를 낱장 목록에서 숨기거나 다시 보이게 한다.
+
+    템플릿 원본(layouts JSON)은 건드리지 않는다 — 숨긴 뒤에도 그 템플릿을 세트로
+    고르는 건 그대로 동작한다. 숨김은 유저별이다.
+
+    ⚠ `/{template_id}` 보다 먼저 등록돼야 한다 (`/layouts` 와 같은 이유).
+    """
+    keys = await set_hidden(db, user.id, body.template_id, body.layout_key, body.hidden)
+    return {"hidden_count": len(keys)}
 
 
 @router.post("/preview-slides")

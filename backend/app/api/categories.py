@@ -1,12 +1,18 @@
-"""Category management endpoints (admin-only for mutations)."""
+"""채널 그룹(카테고리) 관리 엔드포인트.
+
+⚠ 채널은 그룹을 **이름 문자열**로 참조한다(benchmark_channels.category). 외래키가
+아니므로 이름을 바꾸면 채널들이 옛 이름에 매달린 채 어느 그룹에도 안 잡히게 된다.
+그래서 이름 변경은 채널까지 같은 트랜잭션에서 함께 갱신한다.
+"""
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.user import User
 from app.models.category import Category
+from app.models.channel import BenchmarkChannel
 from app.schemas.category import CategoryCreate, CategoryUpdate, CategoryResponse
 from app.api.auth import get_current_user
 
@@ -73,8 +79,34 @@ async def update_category(
     if not category:
         raise HTTPException(status_code=404, detail="카테고리를 찾을 수 없습니다")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    fields = data.model_dump(exclude_unset=True)
+    old_name = category.name
+    new_name = (fields.get("name") or "").strip() or None
+
+    if new_name and new_name != old_name:
+        # 같은 이름이 둘이 되면 채널이 어느 그룹인지 가릴 수 없다 — 채널이 이름
+        # 문자열로만 그룹을 가리키기 때문이다. 미리 막는다.
+        dup = await db.scalar(
+            select(Category.id).where(
+                func.lower(Category.name) == new_name.lower(),
+                Category.id != category_id,
+            )
+        )
+        if dup:
+            raise HTTPException(status_code=409, detail=f"'{new_name}' 그룹이 이미 있습니다")
+        fields["name"] = new_name
+
+    for field, value in fields.items():
         setattr(category, field, value)
+
+    # 이름이 바뀌면 이 그룹을 쓰던 채널들도 같이 옮긴다. 안 하면 채널이 사라진
+    # 이름을 계속 가리켜 어느 그룹 필터에도 안 잡힌다.
+    if new_name and new_name != old_name:
+        await db.execute(
+            update(BenchmarkChannel)
+            .where(BenchmarkChannel.category == old_name)
+            .values(category=new_name)
+        )
 
     await db.commit()
     await db.refresh(category)

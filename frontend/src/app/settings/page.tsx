@@ -166,6 +166,8 @@ function CategoryManager() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [newName, setNewName] = useState("");
   const [loading, setLoading] = useState(true);
+  // 이름을 고치는 중인 카테고리 id. null 이면 편집 중 아님.
+  const [editingId, setEditingId] = useState<number | null>(null);
 
   useEffect(() => { load(); }, []);
 
@@ -186,6 +188,21 @@ function CategoryManager() {
       load();
     } catch (err) {
       alert(err instanceof Error ? err.message : "추가 실패");
+    }
+  }
+
+  /** 이름 변경. 서버가 이 그룹을 쓰던 채널까지 같은 이름으로 옮겨준다 —
+   *  채널은 그룹을 이름 문자열로 가리키므로 전파하지 않으면 고아가 된다. */
+  async function rename(id: number, next: string) {
+    const value = next.trim();
+    const before = categories.find((c) => c.id === id)?.name;
+    setEditingId(null);
+    if (!value || value === before) return;
+    try {
+      await api.updateCategory(id, { name: value });
+      load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "이름 변경 실패");
     }
   }
 
@@ -278,7 +295,30 @@ function CategoryManager() {
                 padding: "4px 10px",
               }}
             >
-              <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{cat.name}</span>
+              {editingId === cat.id ? (
+                <input
+                  autoFocus
+                  defaultValue={cat.name}
+                  onBlur={(e) => rename(cat.id, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    if (e.key === "Escape") setEditingId(null);
+                  }}
+                  style={{
+                    fontSize: 12, width: 90, padding: "1px 4px",
+                    background: "var(--bg-base)", color: "var(--text-primary)",
+                    border: "1px solid var(--accent)", borderRadius: 4, outline: "none",
+                  }}
+                />
+              ) : (
+                <span
+                  onClick={() => setEditingId(cat.id)}
+                  title="이름을 눌러 수정 — 이 그룹을 쓰는 채널도 함께 바뀝니다"
+                  style={{ fontSize: 12, color: "var(--text-secondary)", cursor: "text" }}
+                >
+                  {cat.name}
+                </span>
+              )}
               <button
                 onClick={() => remove(cat.id)}
                 style={{ color: "var(--text-tertiary)", lineHeight: 0 }}

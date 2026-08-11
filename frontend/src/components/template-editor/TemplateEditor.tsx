@@ -1204,9 +1204,15 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
   async function handleSave() {
     setSaving(true);
     setSaveError("");
+    // 지금 보내는 내용을 붙잡아 둔다. 저장이 도는 동안 사용자가 더 편집하면
+    // templateRef.current 가 다른 객체를 가리키게 되고, 그때 dirty 를 꺼버리면
+    // 그 편집은 영영 저장되지 않는다 — 화면엔 "저장됨"이 떠 있는 채로.
+    const snapshot = templateRef.current;
     try {
-      await onSave(templateRef.current);
-      setDirty(false);
+      await onSave(snapshot);
+      // 저장 중 추가 편집이 없었을 때만 깨끗해진 것으로 친다. 있었으면 dirty 를
+      // 유지해 자동저장이 한 번 더 돌게 한다.
+      if (templateRef.current === snapshot) setDirty(false);
       setLastSavedAt(Date.now());
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "저장 실패");
@@ -1229,6 +1235,22 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
     // `template` so the debounce timer resets on every edit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dirty, saving, template]);
+
+  // 언마운트 시 마지막 저장. 위 debounce 는 정리 단계에서 clearTimeout 되므로,
+  // 편집하고 1초 안에 다른 페이지로 넘어가면 대기 중이던 저장이 통째로 취소돼
+  // 그 편집이 사라졌다. 떠나기 직전에 한 번 더 보낸다(응답은 기다리지 않는다 —
+  // 이미 언마운트된 컴포넌트의 상태는 갱신할 수 없고, 요청 자체는 계속 진행된다).
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
+  useEffect(() => {
+    return () => {
+      if (dirtyRef.current) void onSaveRef.current(templateRef.current).catch(() => {});
+    };
+    // 마운트/언마운트에서만 — 의존성을 넣으면 매 편집마다 저장이 나간다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg-app)" }}>

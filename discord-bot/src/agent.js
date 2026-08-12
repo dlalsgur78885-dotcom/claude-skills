@@ -2,15 +2,17 @@ import { config } from './config.js';
 import { parseStructuredReply, schemaRetryInstruction } from './structured-output.js';
 import { TOOL_BY_NAME, toolCatalogText } from './tools.js';
 
-/** 한 번에 도구 하나를 고르거나, 도구 없이 바로 답한다. */
+/** 도구를 쓰거나, 답하거나, 되묻는다.
+ *  `ask` 가 없으면 애매한 요청에 짐작으로 답하게 된다 — 대화가 아니라 주문 접수가 된다. */
 const PLAN_SCHEMA = {
   type: 'object',
   required: ['action'],
   properties: {
-    action: { type: 'string', enum: ['tool', 'answer'] },
+    action: { type: 'string', enum: ['tool', 'answer', 'ask'] },
     tool: { type: 'string' },
     args: { type: 'object' },
     answer: { type: 'string', maxLength: 1800 },
+    question: { type: 'string', maxLength: 400 },
     reason: { type: 'string', maxLength: 200 }
   }
 };
@@ -34,21 +36,30 @@ async function gemini(prompt) {
 
 function systemPrompt(account) {
   return [
-    '너는 인스타그램 캐러셀 제작 팀의 보조다. 디스코드에서 한국어로 대화한다.',
+    '너는 인스타그램 캐러셀 제작 팀의 동료다. 디스코드에서 한국어로 **대화한다.**',
     `지금 "${account.username}" 계정 권한으로 일한다. 이 계정이 가진 채널·템플릿만 보인다.`,
     '',
-    '규칙:',
+    '대화하는 법:',
+    '- 보고서를 쓰지 말고 사람에게 말하듯 답한다. 매번 인사하거나 자기소개하지 않는다.',
+    '- 앞 대화를 기억한다. "그거", "아까 그 채널", "거기서" 같은 말은 앞 내용에서 찾아 푼다.',
+    '  못 찾겠으면 짐작하지 말고 무엇을 말하는지 되묻는다.',
+    '- 요청이 애매하면 **되묻는다.** 예: "좋아요 많은 거"라고만 하면 기준을 묻는다.',
+    '  단, 이미 아는 것을 또 묻지는 않는다. 한 번에 하나만 묻는다.',
+    '- 이미 말한 내용을 처음부터 다시 나열하지 않는다. 달라진 것만 말한다.',
+    '- 결과가 길면 다 쏟지 말고 요점을 말한 뒤 더 볼지 묻는다.',
+    '',
+    '지켜야 할 것:',
     '- 사실은 반드시 도구로 확인한다. 숫자나 목록을 지어내지 않는다.',
     '- 도구 결과가 비어 있으면 없다고 말한다. 추측으로 채우지 않는다.',
-    '- 답변은 짧게. 표가 필요하면 간단한 목록으로.',
-    '- 사용자가 요청하지 않은 삭제·변경은 절대 제안만 하고 실행하지 않는다.',
+    '- 사용자가 시키지 않은 삭제·변경은 하지 않는다. 필요해 보이면 말로 제안만 한다.',
     '',
     '쓸 수 있는 도구:',
     toolCatalogText(),
     '',
     '출력은 항상 JSON 객체 하나다. 설명 문장을 앞뒤에 붙이지 않는다.',
     '  도구를 쓸 때 : {"action":"tool","tool":"이름","args":{...},"reason":"왜"}',
-    '  답할 때     : {"action":"answer","answer":"사용자에게 보일 한국어 답변"}'
+    '  답할 때     : {"action":"answer","answer":"사용자에게 보일 한국어 답변"}',
+    '  되물을 때   : {"action":"ask","question":"확인하고 싶은 것 한 가지"}'
   ].join('\n');
 }
 
@@ -87,6 +98,11 @@ export async function handleMessage({ account, history, message, onDanger }) {
 
     if (plan.action === 'answer') {
       return { reply: plan.answer || '(답변이 비었습니다)', used };
+    }
+
+    // 되묻기도 정상 종료다. 후속대화 창이 열려 있으므로 사용자는 멘션 없이 답하면 된다.
+    if (plan.action === 'ask') {
+      return { reply: plan.question || '조금 더 자세히 알려주시겠어요?', used, asked: true };
     }
 
     const tool = TOOL_BY_NAME.get(plan.tool);

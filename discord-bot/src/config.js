@@ -61,6 +61,8 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean),
   jobConcurrency: intFrom('JOB_CONCURRENCY', 2),
+  // 멘션 없이 이어 말할 수 있는 시간. 너무 길면 옆 사람 잡담까지 봇이 받는다.
+  followupWindowMs: intFrom('FOLLOWUP_WINDOW_SEC', 180) * 1000,
   session: {
     maxTurns: intFrom('SESSION_MAX_TURNS', 8),
     maxAgeMs: intFrom('SESSION_MAX_AGE_MIN', 120) * 60 * 1000

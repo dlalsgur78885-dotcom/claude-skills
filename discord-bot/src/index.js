@@ -4,12 +4,19 @@ import {
 } from 'discord.js';
 import { DATA_DIR, accountForChannel, assertRunnable, config } from './config.js';
 import { SessionStore } from './session-store.js';
+import { FollowupWindow } from './followup-window.js';
 import { handleMessage } from './agent.js';
 
 const sessions = new SessionStore({
   stateFile: path.join(DATA_DIR, 'sessions.json'),
   maxTurns: config.session.maxTurns,
   maxAgeMs: config.session.maxAgeMs
+});
+
+// 한 번 말을 걸면 잠시 동안은 멘션 없이 이어 말할 수 있다.
+const followups = new FollowupWindow({
+  stateFile: path.join(DATA_DIR, 'followups.json'),
+  windowMs: config.followupWindowMs
 });
 
 const client = new Client({
@@ -90,15 +97,27 @@ client.on(Events.MessageCreate, async (message) => {
   const account = accountForChannel(message.channelId);
   if (!account) return;
 
-  const mentioned = message.mentions.has(client.user);
   const content = message.content.replace(/<@!?\d+>/g, '').trim();
-  if (!mentioned || !content) return;
+  if (!content) return;
+
+  // 멘션은 **대화를 시작할 때만** 필요하다. 그 뒤 잠시(기본 3분)는 그냥 말하면 된다 —
+  // 사람과 대화할 때 매 문장마다 이름을 부르지 않는다.
+  // 창 판정은 메시지 **전송 시각** 기준이다. 앞 턴이 오래 걸리면 그 사이 보낸 말이
+  // 처리 시점엔 만료된 것으로 보여 조용히 유실되기 때문이다.
+  const sentAt = message.createdTimestamp;
+  const mentioned = message.mentions.has(client.user);
+  const following = followups.isFollowup(message.channelId, message.author.id, sentAt);
+  if (!mentioned && !following) return;
 
   if (['/new', '새 대화', '새대화'].includes(content)) {
     await sessions.reset(message.channelId);
+    await followups.clear(message.channelId, message.author.id);
     await reply(message, '대화를 새로 시작합니다.');
     return;
   }
+
+  // 이번 발화 시점으로 창을 연장한다. 답이 늦어도 후속 메시지가 살아남는다.
+  await followups.touch(message.channelId, message.author.id, sentAt);
 
   await message.channel.sendTyping();
   const typing = setInterval(() => message.channel.sendTyping().catch(() => {}), 8000);
@@ -113,6 +132,9 @@ client.on(Events.MessageCreate, async (message) => {
     await sessions.append(message.channelId, 'user', content);
     await sessions.append(message.channelId, 'bot', result.reply);
     await reply(message, result.reply);
+    // 되물었으면 답을 기다리는 중이다. 창을 지금 시점으로 다시 열어,
+    // 사용자가 생각하는 동안 창이 닫혀 대답이 무시되는 일을 막는다.
+    if (result.asked) await followups.touch(message.channelId, message.author.id);
   } catch (error) {
     console.error('[봇] 처리 실패:', error);
     await reply(message, `처리 중 문제가 생겼습니다: ${error.message}`);
@@ -124,4 +146,5 @@ client.on(Events.MessageCreate, async (message) => {
 process.on('unhandledRejection', (e) => console.error('[봇] 처리되지 않은 거부:', e));
 
 await sessions.init();
+await followups.init();
 await client.login(config.discordToken);

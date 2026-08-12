@@ -873,6 +873,37 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
   // flight selectedMeta.path so the property panel keeps pointing at the same
   // object. Returns true on success — caller uses this to swap UI back from
   // edit mode.
+  /** 같은 템플릿 안에서 레이아웃을 복제한다 (피드백 2 — "같은 템플릿내에서 레이아웃 복사").
+   *
+   *  서버의 copy-from 을 쓰지 않는다. 그건 **저장된** 버전을 복사하므로, 방금 편집한
+   *  내용이 아니라 옛 내용이 복제된다. 같은 템플릿 안에서는 화면에 보이는 것을 그대로
+   *  복제해야 한다. 로컬에서 commit 하면 되돌리기와 자동저장에도 자연스럽게 얹힌다.
+   *
+   *  이름 규칙은 서버와 같게 맞춘다: -copy, -copy-2, …
+   */
+  function duplicateLayout(name: string): string | null {
+    const prev = templateRef.current;
+    const layouts = prev.layouts || {};
+    const source = layouts[name];
+    if (!source) return null;
+
+    let candidate = `${name}-copy`;
+    let n = 1;
+    while (candidate in layouts) {
+      n += 1;
+      candidate = `${name}-copy-${n}`;
+    }
+
+    const next: TemplateData = {
+      ...prev,
+      // 깊은 복사 — 얕게 두면 복제본을 고칠 때 원본까지 같이 바뀐다.
+      layouts: { ...layouts, [candidate]: JSON.parse(JSON.stringify(source)) as LayoutSpec },
+    };
+    templateRef.current = next;
+    commit(next, JSON.stringify(prev));
+    return candidate;
+  }
+
   function renameLayout(oldName: string, newName: string): boolean {
     const trimmed = newName.trim();
     if (!trimmed || trimmed === oldName) return false;
@@ -1829,7 +1860,7 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
               }}
             >
               <span style={{ fontSize: 11, color: "var(--text-secondary, #aaa)" }}>
-                &quot;{copySourceLayout}&quot; → 대상 템플릿 선택
+                &quot;{copySourceLayout}&quot; 복사 → 어디로?
               </span>
               <button
                 onClick={() => { setCopySourceLayout(null); setCopyAnchorRect(null); }}
@@ -1849,9 +1880,40 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
                 ×
               </button>
             </div>
+            {/* 같은 템플릿 안 복제 (피드백 2). 목록 맨 위에 둔다 — 가장 잦은 동작이고,
+                다른 템플릿 목록이 아직 로딩 중이어도 바로 쓸 수 있다. */}
+            <button
+              onClick={() => {
+                if (!copySourceLayout) return;
+                const made = duplicateLayout(copySourceLayout);
+                setCopyResultMsg(made ? `"${made}" 으로 복제됨 ✓` : '복제 실패');
+              }}
+              disabled={copyingTo != null}
+              style={{
+                display: 'block',
+                width: '100%',
+                textAlign: 'left',
+                padding: '6px 8px',
+                fontSize: 12,
+                fontWeight: 600,
+                background: 'transparent',
+                color: 'var(--accent-text, #7aa2f7)',
+                border: 'none',
+                borderRadius: 4,
+                cursor: copyingTo != null ? 'default' : 'pointer',
+              }}
+            >
+              이 템플릿 안에 복제
+            </button>
+            <div
+              style={{
+                borderTop: '1px solid var(--border, #444)',
+                margin: '4px 0',
+              }}
+            />
             {otherTemplates === null && (
               <div style={{ padding: "8px 6px", fontSize: 11, color: "var(--text-tertiary, #888)" }}>
-                로딩 중...
+                다른 템플릿 불러오는 중...
               </div>
             )}
             {otherTemplates !== null && otherTemplates.length === 0 && (

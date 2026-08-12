@@ -2,3 +2,4 @@ node_modules/
 .env
 data/
 *.log
+설정값_입력.txt

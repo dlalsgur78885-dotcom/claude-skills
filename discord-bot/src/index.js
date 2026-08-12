@@ -94,8 +94,26 @@ client.on(Events.MessageCreate, async (message) => {
 
   // 매핑된 채널에서만 일한다. 계정을 못 정하면 아무 일도 하지 않는다 —
   // 엉뚱한 계정으로 남의 채널을 건드리는 것보다 침묵이 낫다.
+  //
+  // 다만 **멘션했는데도 침묵하면** 사용자는 봇이 고장난 줄 안다. 그래서 매핑되지
+  // 않은 채널에서 부르면 설정에 필요한 값(채널 ID·사용자 ID)을 알려준다.
+  // 설정 단계에서 개발자 모드를 켜고 ID 를 찾아다닐 필요가 없어진다.
   const account = accountForChannel(message.channelId);
-  if (!account) return;
+  if (!account) {
+    if (message.mentions.has(client.user)) {
+      await message.reply(
+        [
+          '이 채널은 아직 계정에 연결되어 있지 않습니다.',
+          '',
+          `• 이 채널 ID : \`${message.channelId}\``,
+          `• 당신의 ID  : \`${message.author.id}\``,
+          '',
+          '위 값을 설정에 넣으면 이 방에서 일할 수 있습니다.'
+        ].join('\n')
+      );
+    }
+    return;
+  }
 
   const content = message.content.replace(/<@!?\d+>/g, '').trim();
   if (!content) return;

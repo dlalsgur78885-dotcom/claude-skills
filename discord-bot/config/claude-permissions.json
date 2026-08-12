@@ -1,0 +1,19 @@
+{
+  "_설명": "봇이 띄우는 Claude 자식 프로세스 전용 권한. 이 봇에서 Claude 는 판단만 한다 — 데이터는 봇이 캐러셀 API 로 가져와 프롬프트에 넣어준다. 그래서 파일·셸·웹 도구가 전혀 필요 없고, 전부 막는다. 매거진 봇처럼 형제 프로젝트를 하나씩 나열하지 않는 이유: 허용할 것이 없으므로 통째로 거부하는 편이 짧고 안전하다.",
+  "permissions": {
+    "deny": [
+      "Bash",
+      "PowerShell",
+      "Read",
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "Agent",
+      "Task"
+    ]
+  }
+}

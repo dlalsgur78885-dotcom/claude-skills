@@ -5,9 +5,16 @@
 직원이 이어서 편집할 수 있다.
 
 ```
-#트립앤라이프 ─┐
-#이솔희       ─┤ 채널로 계정 판별 → 기존 HTTP API → 같은 DB ← 대시보드
+#트립앤라이프 ─┐                    ┌ 두뇌: Claude Code CLI
+#이솔희       ─┤ 채널로 계정 판별 ──┤
+                                    └ 손발: 캐러셀 HTTP API → 같은 DB ← 대시보드
 ```
+
+## ⚠ 실행 위치
+
+두뇌가 **Claude Code CLI** 라, 봇은 **CLI 가 로그인된 기계**에서 돌아야 한다.
+라이브 서버(3.35)에는 claude 도 node 도 없다 — 확인함. 매거진 봇과 같이 이 PC 에서 돌린다.
+캐러셀 API 는 인터넷으로 호출하므로 서버는 그대로 둔다.
 
 ## 왜 API 를 타는가
 
@@ -35,7 +42,6 @@ npm start
 |---|---|
 | `DISCORD_TOKEN` | discord.com/developers → Bot → Reset Token |
 | `CHANNEL_ACCOUNTS` | 디스코드 개발자 모드 → 채널 우클릭 → 채널 ID 복사 |
-| `GEMINI_API_KEY` | 서버 `.env` 에 이미 있는 값과 동일 |
 | `APPROVER_IDS` | 삭제 작업을 승인할 사람의 디스코드 사용자 ID |
 
 **Bot 탭에서 `MESSAGE CONTENT INTENT` 를 켜야** 봇이 글을 읽는다. 이걸 빠뜨리면
@@ -79,8 +85,9 @@ npm start
 | `api-client.js` | 백엔드 호출. 계정별 토큰 캐시, 401 시 1회 재로그인 |
 | `tools.js` | 도구 목록 + 위험 등급. 새 기능은 여기에 항목을 더한다 |
 | `agent.js` | 지시 해석 → 도구 선택 → 실행 → 답변 (최대 4단계) |
+| `claude-runner.js` | Claude CLI 실행. stdin 프롬프트, stream-json 파싱, 세션 재개 |
 | `structured-output.js` | 모델 답변에서 JSON 추출·검증·재시도 지시 |
-| `session-store.js` | 채널별 최근 대화 (턴·시간 만료) |
+| `session-store.js` | 채널별 Claude 세션 UUID (턴·시간 만료) |
 | `followup-window.js` | 멘션 없이 이어 말할 수 있는 시간 관리 |
 | `index.js` | 디스코드 배선, 승인 버튼 |
 | `doctor.js` | 자가진단 |

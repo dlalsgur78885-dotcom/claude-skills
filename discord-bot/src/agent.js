@@ -1,5 +1,6 @@
-import { config } from './config.js';
+import crypto from 'node:crypto';
 import { parseStructuredReply, schemaRetryInstruction } from './structured-output.js';
+import { runClaude } from './claude-runner.js';
 import { TOOL_BY_NAME, toolCatalogText } from './tools.js';
 
 /** 도구를 쓰거나, 답하거나, 되묻는다.
@@ -19,21 +20,6 @@ const PLAN_SCHEMA = {
 
 const MAX_STEPS = 4; // 도구 → 결과 → 도구 … 무한루프 방지
 
-async function gemini(prompt) {
-  const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${config.gemini.model}:generateContent`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.gemini.apiKey },
-    body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] })
-  });
-  if (!res.ok) {
-    throw new Error(`LLM 호출 실패 (${res.status}): ${(await res.text()).slice(0, 200)}`);
-  }
-  const data = await res.json();
-  return (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
-}
-
 function systemPrompt(account) {
   return [
     '너는 인스타그램 캐러셀 제작 팀의 동료다. 디스코드에서 한국어로 **대화한다.**',
@@ -52,6 +38,7 @@ function systemPrompt(account) {
     '- 사실은 반드시 도구로 확인한다. 숫자나 목록을 지어내지 않는다.',
     '- 도구 결과가 비어 있으면 없다고 말한다. 추측으로 채우지 않는다.',
     '- 사용자가 시키지 않은 삭제·변경은 하지 않는다. 필요해 보이면 말로 제안만 한다.',
+    '- 너에게는 파일·셸·웹 도구가 없다. 아래 목록의 도구만 쓸 수 있다.',
     '',
     '쓸 수 있는 도구:',
     toolCatalogText(),
@@ -63,77 +50,110 @@ function systemPrompt(account) {
   ].join('\n');
 }
 
-/** 모델에게 JSON 을 받되, 규격에 맞을 때까지 한 번 더 기회를 준다. */
-async function planStep(prompt) {
-  let text = await gemini(prompt);
-  let parsed = parseStructuredReply(text, PLAN_SCHEMA);
+/**
+ * 한 턴을 돌려 계획을 받는다. 규격에 안 맞으면 무엇이 틀렸는지 알려주고 한 번 더 준다.
+ * 재시도도 같은 세션에서 이어가므로 앞 맥락이 유지된다.
+ */
+async function planTurn(state, promptText, onProgress) {
+  let out = await runClaude({
+    prompt: promptText,
+    sessionId: state.sessionId,
+    resume: state.resume,
+    onProgress
+  });
+  state.sessionId = out.sessionId;
+  state.resume = true;
+
+  let parsed = parseStructuredReply(out.text, PLAN_SCHEMA);
   if (!parsed.ok) {
-    text = await gemini(`${prompt}\n\n${schemaRetryInstruction(parsed.errors)}\n\n직전 답변:\n${text}`);
-    parsed = parseStructuredReply(text, PLAN_SCHEMA);
+    out = await runClaude({
+      prompt: schemaRetryInstruction(parsed.errors),
+      sessionId: state.sessionId,
+      resume: true,
+      onProgress
+    });
+    state.sessionId = out.sessionId;
+    parsed = parseStructuredReply(out.text, PLAN_SCHEMA);
   }
-  if (!parsed.ok) throw new Error(`모델 응답을 이해하지 못했습니다: ${parsed.errors.join(', ')}`);
+  if (!parsed.ok) throw new Error(`응답을 이해하지 못했습니다: ${parsed.errors.join(', ')}`);
   return parsed.value;
 }
 
 /**
  * 사용자 메시지를 처리한다.
- * @param account  이 채널에 매핑된 앱 계정
- * @param history  최근 대화 [{role, text}]
- * @param message  이번 사용자 메시지
- * @param onDanger 위험 도구를 고른 경우 호출. true 를 돌려주면 실행한다.
- * @returns {{reply: string, used: string[]}}
+ *
+ * 대화 맥락은 Claude CLI 가 세션(--session-id / -r)으로 들고 있다. 그래서 매 턴
+ * 히스토리를 다시 실어 보내지 않는다 — 시스템 프롬프트도 세션당 한 번만 나간다.
+ *
+ * @param account       이 채널에 매핑된 앱 계정
+ * @param sessionId     이어갈 Claude 세션 UUID (없으면 새로 시작)
+ * @param message       이번 사용자 메시지
+ * @param onDanger      위험 도구 확인. true 를 돌려주면 실행한다.
+ * @param onProgress    진행 상황 라벨
+ * @returns {{reply, used, asked, sessionId}}
  */
-export async function handleMessage({ account, history, message, onDanger }) {
+export async function handleMessage({ account, sessionId, message, onDanger, onProgress }) {
+  const state = {
+    sessionId: sessionId || crypto.randomUUID(),
+    resume: Boolean(sessionId)
+  };
   const used = [];
-  const transcript = [];
 
-  for (const turn of history || []) {
-    transcript.push(`${turn.role === 'bot' ? '봇' : '사용자'}: ${turn.text}`);
-  }
-  transcript.push(`사용자: ${message}`);
+  // 새 세션이면 규칙과 도구 목록을 한 번 깔아준다. 이어가는 세션이면 이미 알고 있다.
+  let prompt = state.resume
+    ? `사용자: ${message}`
+    : `${systemPrompt(account)}\n\n사용자: ${message}`;
 
   for (let step = 0; step < MAX_STEPS; step += 1) {
-    const prompt = [systemPrompt(account), '', '대화:', ...transcript].join('\n');
-    const plan = await planStep(prompt);
+    const plan = await planTurn(state, prompt, onProgress);
 
     if (plan.action === 'answer') {
-      return { reply: plan.answer || '(답변이 비었습니다)', used };
+      return { reply: plan.answer || '(답변이 비었습니다)', used, sessionId: state.sessionId };
     }
-
-    // 되묻기도 정상 종료다. 후속대화 창이 열려 있으므로 사용자는 멘션 없이 답하면 된다.
+    // 되묻기도 정상 종료다. 후속대화 창이 열려 있어 사용자는 멘션 없이 답하면 된다.
     if (plan.action === 'ask') {
-      return { reply: plan.question || '조금 더 자세히 알려주시겠어요?', used, asked: true };
+      return {
+        reply: plan.question || '조금 더 자세히 알려주시겠어요?',
+        used,
+        asked: true,
+        sessionId: state.sessionId
+      };
     }
 
     const tool = TOOL_BY_NAME.get(plan.tool);
     if (!tool) {
-      transcript.push(`도구결과(${plan.tool}): 그런 도구는 없다. 목록에 있는 것만 쓸 것.`);
+      prompt = `도구결과(${plan.tool}): 그런 도구는 없다. 목록에 있는 것만 쓸 것.`;
       continue;
     }
 
-    // 되돌리기 어려운 것은 사람 확인을 받는다. 승인자가 없으면 실행하지 않는다.
     if (tool.risk === 'danger') {
       const approved = onDanger ? await onDanger(tool, plan.args || {}, plan.reason || '') : false;
       if (!approved) {
         return {
           reply: `\`${tool.name}\` 은 되돌리기 어려운 작업이라 실행하지 않았습니다.`,
-          used
+          used,
+          sessionId: state.sessionId
         };
       }
     }
 
+    if (onProgress) onProgress(tool.name);
     used.push(tool.name);
     try {
       const result = await tool.run(account, plan.args || {});
       const shown = JSON.stringify(result ?? null);
       // 결과가 길면 잘라 넣는다. 프롬프트가 통째로 불어나면 비용과 지연이 커진다.
-      transcript.push(
-        `도구결과(${tool.name}): ${shown.length > 4000 ? `${shown.slice(0, 4000)}…(생략)` : shown}`
-      );
+      prompt =
+        `도구결과(${tool.name}): ` +
+        (shown.length > 4000 ? `${shown.slice(0, 4000)}…(생략)` : shown);
     } catch (error) {
-      transcript.push(`도구결과(${tool.name}): 실패 — ${error.message}`);
+      prompt = `도구결과(${tool.name}): 실패 — ${error.message}`;
     }
   }
 
-  return { reply: '여러 번 시도했지만 답을 만들지 못했습니다. 조금 더 구체적으로 말씀해 주세요.', used };
+  return {
+    reply: '여러 번 시도했지만 답을 만들지 못했습니다. 조금 더 구체적으로 말씀해 주세요.',
+    used,
+    sessionId: state.sessionId
+  };
 }

@@ -125,12 +125,13 @@ client.on(Events.MessageCreate, async (message) => {
   try {
     const result = await handleMessage({
       account,
-      history: sessions.history(message.channelId),
+      sessionId: sessions.current(message.channelId),
       message: content,
-      onDanger: (tool, args, reason) => confirmDanger(message, tool, args, reason)
+      onDanger: (tool, args, reason) => confirmDanger(message, tool, args, reason),
+      onProgress: (label) => console.log(`[봇] ${message.channelId} · ${label}`)
     });
-    await sessions.append(message.channelId, 'user', content);
-    await sessions.append(message.channelId, 'bot', result.reply);
+    // Claude CLI 가 대화를 들고 있으므로 세션 UUID 만 기억한다.
+    await sessions.remember(message.channelId, result.sessionId);
     await reply(message, result.reply);
     // 되물었으면 답을 기다리는 중이다. 창을 지금 시점으로 다시 열어,
     // 사용자가 생각하는 동안 창이 닫혀 대답이 무시되는 일을 막는다.

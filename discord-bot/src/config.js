@@ -52,9 +52,12 @@ export const config = {
   discordToken: required('DISCORD_TOKEN'),
   apiBase: required('CAROUSEL_API_BASE').replace(/\/+$/, ''),
   channelAccounts: parseChannelAccounts(process.env.CHANNEL_ACCOUNTS),
-  gemini: {
-    apiKey: (process.env.GEMINI_API_KEY || '').trim(),
-    model: (process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim()
+  // 두뇌는 Claude Code CLI 다. CLI 가 로그인된 기계에서만 돌아가므로 이 봇은
+  // 라이브 서버가 아니라 CLI 가 깔린 PC 에서 실행한다.
+  claude: {
+    command: (process.env.CLAUDE_COMMAND || 'claude').trim(),
+    model: (process.env.CLAUDE_MODEL || '').trim(),
+    timeoutMs: intFrom('CLAUDE_TIMEOUT_SEC', 180) * 1000
   },
   approverIds: (process.env.APPROVER_IDS || '')
     .split(',')
@@ -79,9 +82,7 @@ export function assertRunnable() {
   if (config.channelAccounts.size === 0) {
     problems.push('CHANNEL_ACCOUNTS 가 비어 있어 어떤 채널에도 반응하지 않습니다.');
   }
-  if (!config.gemini.apiKey) {
-    problems.push('GEMINI_API_KEY 가 없어 자연어 해석을 할 수 없습니다.');
-  }
+  // claude CLI 존재 확인은 doctor 가 실제로 실행해서 한다.
   if (config.approverIds.length === 0) {
     problems.push('APPROVER_IDS 가 비어 위험 작업은 전부 거부됩니다.');
   }

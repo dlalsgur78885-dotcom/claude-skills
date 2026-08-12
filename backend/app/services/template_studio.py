@@ -14,6 +14,7 @@ from PIL import Image
 from pydantic import ValidationError
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.agents.llm_client import gemini_vision
 from app.config import settings
@@ -1005,6 +1006,14 @@ async def update_template(
         row.layouts = fixed["layouts"]
         if canvas is None:
             row.canvas = fixed["canvas"]
+
+        # ⚠ 순서만 바뀐 변경은 이걸 안 하면 저장되지 않는다.
+        #   SQLAlchemy 는 JSON 컬럼의 변경 여부를 **값 비교**로 판단하는데, 파이썬
+        #   dict 는 순서를 무시하고 같다고 본다({'a':1,'b':2} == {'b':2,'a':1}).
+        #   그래서 레이아웃 순서를 바꿔 보내면 "바뀐 게 없다"고 판단해 UPDATE 자체를
+        #   보내지 않았다. 내용이 바뀐 편집은 값이 달라 잘 저장됐기 때문에 그동안
+        #   드러나지 않았다. 명시적으로 변경됨을 표시해 강제로 쓰게 한다.
+        flag_modified(row, "layouts")
 
     await db.commit()
     await db.refresh(row)

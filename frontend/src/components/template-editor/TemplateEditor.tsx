@@ -904,6 +904,33 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
     return candidate;
   }
 
+  /** 레이아웃 순서를 한 칸 옮긴다 (피드백 3 — "레이아웃 순서 변경이 불가합니다").
+   *
+   *  layouts 는 객체이고 화면 순서는 **키 삽입 순서**를 그대로 따른다. 그래서 순서를
+   *  바꾸려면 키를 새 차례로 다시 넣어 객체를 만들면 된다.
+   *
+   *  ⚠ 자바스크립트는 정수처럼 보이는 키("1", "2")를 앞으로 끌어올린다. 지금 쓰는
+   *    이름들(표지_2줄, CTA, grid_2x2, 2x2 …)은 순수 정수가 아니라 영향이 없지만,
+   *    레이아웃 이름을 "1" 같이 지으면 순서가 튄다.
+   */
+  function moveLayout(name: string, direction: -1 | 1): boolean {
+    const prev = templateRef.current;
+    const layouts = prev.layouts || {};
+    const names = Object.keys(layouts);
+    const from = names.indexOf(name);
+    const to = from + direction;
+    if (from < 0 || to < 0 || to >= names.length) return false;
+
+    names.splice(to, 0, ...names.splice(from, 1));
+    const reordered: Record<string, LayoutSpec> = {};
+    for (const key of names) reordered[key] = layouts[key];
+
+    const next: TemplateData = { ...prev, layouts: reordered };
+    templateRef.current = next;
+    commit(next, JSON.stringify(prev));
+    return true;
+  }
+
   function renameLayout(oldName: string, newName: string): boolean {
     const trimmed = newName.trim();
     if (!trimmed || trimmed === oldName) return false;
@@ -1523,12 +1550,33 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
           }}
         >
           <span style={{ fontSize: 11, color: "var(--text-tertiary)", flexShrink: 0 }}>레이아웃</span>
-          {layoutNames.map((n) => {
+          {layoutNames.map((n, idx) => {
             const canDelete = layoutNames.length > 1;
             const isHovered = hoveredLayoutName === n;
             const showDelete = canDelete && isHovered;
             const showCopy = isHovered && templateId != null;
             const isCopyOpen = copySourceLayout === n;
+            // 순서 이동 화살표 (피드백 3). 복사·삭제 버튼과 같은 방식으로 항상 DOM 에
+            // 두고 hover 일 때만 보이게 한다 — 조건부 렌더로 두면 마우스를 올리기 전엔
+            // 버튼이 아예 없어서 접근성 도구나 테스트가 찾지 못한다.
+            const showMove = layoutNames.length > 1;
+            const moveButtonStyle = (enabled: boolean): React.CSSProperties => ({
+              position: "absolute",
+              bottom: -6,
+              width: 18,
+              height: 18,
+              padding: 0,
+              borderRadius: "50%",
+              background: "var(--bg-elevated, #333)",
+              color: enabled ? "var(--text-primary, #eee)" : "var(--text-disabled, #666)",
+              border: "1px solid var(--border, #555)",
+              fontSize: 10,
+              lineHeight: 1,
+              cursor: enabled ? "pointer" : "default",
+              opacity: isHovered ? 1 : 0,
+              transition: "opacity 0.12s",
+              zIndex: 2,
+            });
             return (
               <div
                 key={n}
@@ -1536,6 +1584,28 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
                 onMouseLeave={() => setHoveredLayoutName((cur) => (cur === n ? null : cur))}
                 style={{ position: "relative", flexShrink: 0 }}
               >
+                {showMove && (
+                  <>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); moveLayout(n, -1); }}
+                      disabled={idx === 0}
+                      title="앞으로 옮기기"
+                      aria-label={`레이아웃 ${n} 앞으로`}
+                      style={{ ...moveButtonStyle(idx > 0), left: -6 }}
+                    >
+                      ‹
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); moveLayout(n, 1); }}
+                      disabled={idx === layoutNames.length - 1}
+                      title="뒤로 옮기기"
+                      aria-label={`레이아웃 ${n} 뒤로`}
+                      style={{ ...moveButtonStyle(idx < layoutNames.length - 1), right: -6 }}
+                    >
+                      ›
+                    </button>
+                  </>
+                )}
                 <LayoutMiniPreview
                   template={template}
                   layoutName={n}

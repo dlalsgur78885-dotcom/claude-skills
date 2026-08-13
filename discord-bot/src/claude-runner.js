@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { ROOT, config } from './config.js';
+import { config } from './config.js';
 
 /** Claude Code CLI 를 한 턴 돌린다.
  *
@@ -20,8 +20,8 @@ function buildArgs({ sessionId, resume }) {
 
   // ⚠ 절대경로를 쓰면 안 된다. Windows 에서 shell:true 로 띄우면 인자가 이스케이프
   //   없이 이어붙어서, 프로젝트 경로의 공백("캐러셀 자동화")에서 잘린다.
-  //   cwd 를 ROOT 로 주므로 상대경로면 공백이 끼지 않는다.
-  args.push('--settings', 'config/claude-permissions.json');
+  //   cwd 가 작업공간(프로젝트 루트)이므로 거기서의 상대경로로 준다 — 공백이 안 낀다.
+  args.push('--settings', 'discord-bot/config/claude-permissions.json');
   // 플러그인·스킬 목록이 매 턴 다시 실리는 것을 막는다. 이 봇은 하나도 쓰지 않는데
   // 그대로 두면 턴마다 만 단위 토큰이 헛돈다(매거진 봇 실측 ~14,100토큰).
   args.push('--setting-sources', 'project,local');
@@ -65,7 +65,8 @@ export function parseEvent(line) {
 export function runClaude({ prompt, sessionId, resume = false, onProgress }) {
   return new Promise((resolve, reject) => {
     const child = spawn(config.claude.command, buildArgs({ sessionId, resume }), {
-      cwd: ROOT,
+      // 프로젝트 루트에서 돈다 — 여기 문서를 읽어 질문에 답한다.
+      cwd: config.claude.workspace,
       env: {
         ...process.env,
         NO_COLOR: '1',

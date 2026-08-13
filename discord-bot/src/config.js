@@ -56,6 +56,9 @@ export const config = {
   // 라이브 서버가 아니라 CLI 가 깔린 PC 에서 실행한다.
   claude: {
     command: (process.env.CLAUDE_COMMAND || 'claude').trim(),
+    // Claude 가 문서를 읽을 작업공간. 기본은 캐러셀 자동화 프로젝트 루트(봇의 상위).
+    // 여기 밖은 권한 파일에서 막는다.
+    workspace: (process.env.WORKSPACE_ROOT || path.resolve(ROOT, '..')).trim(),
     model: (process.env.CLAUDE_MODEL || '').trim(),
     timeoutMs: intFrom('CLAUDE_TIMEOUT_SEC', 180) * 1000
   },

@@ -23,10 +23,15 @@ import app.models  # noqa: F401 — registers every ORM model on Base.metadata
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
-if config.config_file_name is not None:
+if config.config_file_name is not None and config.attributes.get(
+    "configure_logger", True
+):
     # disable_existing_loggers=False 필수. 기본값(True)이면 이 시점에 이미 살아있는
     # uvicorn/앱 로거가 전부 죽어서, 기동 중 발생하는 예외 트레이스백이 통째로
     # 삼켜진다(컨테이너가 exit 3 으로 죽는데 로그에 아무것도 안 남음).
+    # configure_logger=False 는 앱 내 부트스트랩(db_migrations)이 넘긴다 —
+    # fileConfig 가 root 레벨을 WARN 으로 갈아엎어 기동 후 앱 INFO 로그
+    # ([Scheduler] Started 등)가 전부 침묵하던 문제.
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata

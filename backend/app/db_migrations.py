@@ -42,6 +42,9 @@ def _alembic_cfg() -> Config:
     cfg = Config(str(backend_root / "alembic.ini"))
     cfg.set_main_option("script_location", str(backend_root / "alembic"))
     cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+    # 앱 부팅 중에는 env.py 가 fileConfig 로 로깅을 재구성하지 않게 한다 —
+    # alembic.ini 의 root=WARN 이 적용되면 이후 앱 INFO 로그가 전부 침묵한다.
+    cfg.attributes["configure_logger"] = False
     return cfg
 
 

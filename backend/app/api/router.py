@@ -7,6 +7,7 @@ from app.api.channels import router as channels_router
 from app.api.posts import router as posts_router
 from app.api.carousels import router as carousels_router
 from app.api.images import router as images_router
+from app.api.galleries import router as galleries_router
 from app.api.categories import router as categories_router
 from app.api.users import router as users_router
 from app.api.scrape import router as scrape_router
@@ -23,6 +24,7 @@ api_router.include_router(channels_router)
 api_router.include_router(posts_router)
 api_router.include_router(carousels_router)
 api_router.include_router(images_router)
+api_router.include_router(galleries_router)
 api_router.include_router(categories_router)
 api_router.include_router(users_router)
 api_router.include_router(scrape_router)

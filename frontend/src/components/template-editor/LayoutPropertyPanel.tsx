@@ -1336,6 +1336,22 @@ function SelectionEditor({
         <p style={SECTION_TITLE}>텍스트 슬롯{t?.role ? ` · ${t.role}` : ""}</p>
         {activeTab === "basic" && (
           <>
+            {/* 0. 역할 — 렌더러가 이 값으로 어떤 문구를 넣을지 고른다. 표시만 하고
+                못 바꾸던 탓에 새로 추가한 슬롯이 전부 headline 으로 굳었다. */}
+            <label style={{ display: "block", marginBottom: 10 }}>
+              <span style={{ display: "block", fontSize: 11, opacity: 0.7, marginBottom: 4 }}>역할</span>
+              <select
+                value={t?.role || "headline"}
+                onChange={(e) => onChange(`${selected.path}.role`, e.target.value)}
+                style={{ ...INPUT_STYLE, width: "100%" }}
+              >
+                <option value="headline">headline · 큰 제목</option>
+                <option value="subheadline">subheadline · 소제목</option>
+                <option value="body">body · 본문</option>
+                <option value="tag">tag · 태그</option>
+                <option value="footer">footer · 하단</option>
+              </select>
+            </label>
             {/* 1. 위치 */}
             <XYGrid basePath={`${selected.path}.position`} vals={{ x: t?.position?.x, y: t?.position?.y }} onChange={onChange} />
             {/* 2. 크기 */}

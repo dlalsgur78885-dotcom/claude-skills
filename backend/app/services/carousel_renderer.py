@@ -556,15 +556,19 @@ async def render_slide_to_canvas(
             r = int(m.group(2))
             c = int(m.group(3))
             cell_slots.setdefault((r, c), {})[kind] = slot
-        if cell_slots:
-            sorted_cells = [cell_slots[k] for k in sorted(cell_slots.keys())]
-            # `kind: image` decorations in array order — one per cell, in the
-            # same order the editor placed them. src is usually empty (the
-            # decoration just reserves the box); the user-picked photo from
-            # step 2 replaces it via item.image_url, just like a grid cell.
-            image_decos = [d for d in _as_list(layout.get("decorations")) if d.get("kind") == "image"]
-            for idx, item in enumerate(items[: len(sorted_cells)]):
-                cell = sorted_cells[idx]
+        sorted_cells = [cell_slots[k] for k in sorted(cell_slots.keys())]
+        # `kind: image` decorations in array order — one per cell, in the
+        # same order the editor placed them. src is usually empty (the
+        # decoration just reserves the box); the user-picked photo from
+        # step 2 replaces it via item.image_url, just like a grid cell.
+        image_decos = [d for d in _as_list(layout.get("decorations")) if d.get("kind") == "image"]
+        # Text slots are not required. A layout may reserve only an image box
+        # (CTA1: one 650x650 image decoration, no cell_* roles) — gating on
+        # `cell_slots` alone dropped those slides' item photos silently.
+        cell_count = max(len(sorted_cells), len(image_decos))
+        if cell_count:
+            for idx, item in enumerate(items[:cell_count]):
+                cell = sorted_cells[idx] if idx < len(sorted_cells) else {}
                 img_src = item.get("image_path") or item.get("image_url")
                 if idx < len(image_decos):
                     dpos = image_decos[idx].get("position") or {}

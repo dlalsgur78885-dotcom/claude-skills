@@ -72,6 +72,18 @@ class Settings(BaseSettings):
     # Empty → fall back to local rembg (CPU, free but slower).
     FAL_KEY: str = ""
 
+    # 캔버스/템플릿 저장(JSON) 본문 상한(MB). 이미지 업로드(multipart)는 해당 없음.
+    # 실측(2026-08-26, prod+dev 캐러셀 33건): 정상 최대 0.065MB, 템플릿 최대 0.006MB.
+    # 2MB 는 그 30배로 여유가 크고, 사고를 낸 17.5MB 는 확실히 막는다.
+    MAX_CANVAS_SAVE_MB: float = 2.0
+
+    # 로컬 누끼(rembg) 허용 여부. 메모리가 좁은 인스턴스에서는 반드시 false 로 둘 것.
+    # rembg 는 onnx 모델(~170MB)을 내려받아 RAM 에 올리는데, 그 스파이크가 한도를 넘으면
+    # 커널이 uvicorn 워커를 죽인다. 그러면 컨테이너는 Up 인 채 모든 요청이 504 가 되고,
+    # 겉으로는 "봇이 먹통" 으로만 보여 원인을 찾기 어렵다(2026-08-25 dev 에서 두 번 발생).
+    # false 면 폴백 대신 명확한 에러를 낸다 — 누끼 한 장을 포기하고 서비스를 살린다.
+    ALLOW_LOCAL_CUTOUT: bool = True
+
     class Config:
         env_file = ".env"
 

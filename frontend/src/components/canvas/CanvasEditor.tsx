@@ -4916,15 +4916,18 @@ export function CanvasEditor({
         const file = item.getAsFile();
         if (!file) continue;
         e.preventDefault();
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result));
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        });
         const fabric = await getFabric();
         try {
-          const img = await fabric.FabricImage.fromURL(dataUrl);
+          // 붙여넣은 사진도 업로드해서 **주소로** 참조한다 — 드롭/"이미지 추가" 와 같은 길.
+          // 예전엔 readAsDataURL 로 base64 를 캔버스에 통째로 박았다. 그러면 사진 한 장에
+          // canvas_data 가 수 MB 씩 불어나고, 1초 자동저장이 그 크기를 통째로 반복 전송한다.
+          // 실제 사고(2026-08-26): 배경을 붙여넣기로 6장 넣은 캐러셀이 17.5MB 가 되어
+          // 자동저장 PATCH 가 백엔드 메모리 한도를 넘겼고, 워커가 OOM 으로 죽어 API 가
+          // 통째로 멎었다(컨테이너는 Up 인 채 전 요청 504).
+          const { path } = await api.uploadTemplateAsset(file);
+          const img = await fabric.FabricImage.fromURL(resolveImageUrl(path), {
+            crossOrigin: "anonymous",
+          });
           // Fit the pasted image into the PAGE (export area), centered.
           // canvas.getWidth()/getHeight() return the BUFFER size (page + 2·PAD)
           // and would drop the image deep in the pad area — same bug as the

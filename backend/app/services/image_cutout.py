@@ -114,7 +114,16 @@ async def _http_get_bytes(url: str) -> bytes:
 
 
 def _rembg_bytes(img_bytes: bytes, model: str = "isnet-general-use") -> bytes:
-    """Run rembg on raw image bytes, returning a transparent PNG."""
+    """Run rembg on raw image bytes, returning a transparent PNG.
+
+    로컬 ML 을 쓰는 유일한 길목이라 메모리 가드를 여기 한 곳에만 둔다.
+    """
+    if not settings.ALLOW_LOCAL_CUTOUT:
+        raise RuntimeError(
+            "로컬 누끼(rembg)가 꺼져 있습니다(ALLOW_LOCAL_CUTOUT=false). "
+            "이 인스턴스는 메모리가 좁아 모델을 올리면 서버 프로세스가 죽습니다. "
+            "fal.ai 로 처리되도록 FAL_KEY 를 확인해 주세요."
+        )
     from rembg import remove, new_session
     chain = [model] + [m for m in _REMBG_CHAIN if m != model]
     last_err: Exception | None = None

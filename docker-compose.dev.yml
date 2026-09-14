@@ -11,16 +11,24 @@
 # 접근:  ssh -L 3001:127.0.0.1:3001 ubuntu@3.35.18.166  →  http://localhost:3001
 #        (Lightsail 방화벽에서 3001 을 열면 http://3.35.18.166:3001 로 직접도 가능)
 #
-# 철거(롤백):
+# ⚠ 2026-08-25 부터 이 스택은 "버려도 되는 실험대" 가 아니다.
+#   디스코드 봇(CAROUSEL_API_BASE=…:3443/api)과 솔희 팀의 실제 작업이 여기서 돈다.
+#   /var/app/data-dev/db.sqlite3 에 prod 에 없는 템플릿·캐러셀이 들어 있다.
+#   아래 철거 명령은 그 작업물을 통째로 지운다 — 백업 없이 실행하지 말 것.
+#
+# 철거(롤백) — 실행 전 반드시 DB 백업:
+#   sudo python3 -c "import sqlite3;s=sqlite3.connect('/var/app/data-dev/db.sqlite3');d=sqlite3.connect('/var/app/data-dev/db.sqlite3.bak');s.backup(d)"
 #   sudo docker compose -p cdev -f /opt/carousel-dev/docker-compose.dev.yml down -v
 #   sudo rm -rf /opt/carousel-dev /var/app/data-dev
-#   → prod 는 아무것도 바뀌지 않으므로 복구할 것이 없다.
+#   → prod 는 아무것도 바뀌지 않는다.
 
 services:
   backend:
     image: carousel-backend:latest   # prod 이미지 재사용 (재빌드 금지 — 11.5GB)
     container_name: cdev-backend
-    restart: "no"                    # 상시 아님. 작업할 때 up, 끝나면 down
+    # 2026-08-25 "no" → unless-stopped. 이 스택에서 실제 작업이 돌게 됐다.
+    # OOM 으로 워커가 죽었는데 아무도 되살리지 않아 하루치 봇 작업이 통째로 막혔다.
+    restart: unless-stopped
     mem_limit: 512m                  # 초과 시 dev 만 죽는다. prod 는 보호됨
     memswap_limit: 1g
     ports:
@@ -34,6 +42,10 @@ services:
       DATABASE_URL: sqlite+aiosqlite:////app/data/db.sqlite3
       # ★ 이것이 없으면 스케줄러가 둘이 되어 채널을 하루 4번 더 긁는다
       ENABLE_SCHEDULER: "false"
+      # ★ mem_limit 512m 안에서는 rembg 모델(~170MB 다운로드 + 적재)이 한도를 넘겨
+      #   커널이 uvicorn 워커를 죽인다. 컨테이너는 Up 인데 전 요청 504 → 봇 먹통.
+      #   2026-08-25 에 두 번 겪었다. 누끼는 fal.ai 로만 하고, 안 되면 깔끔히 실패시킨다.
+      ALLOW_LOCAL_CUTOUT: "false"
       # 프론트는 로컬에서 도므로 localhost 를 허용
       ALLOWED_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
     volumes:
@@ -64,7 +76,7 @@ services:
         # nginx 가 같은 오리진으로 /api 를 프록시하므로 상대경로면 충분하다.
         NEXT_PUBLIC_API_URL: /api
     container_name: cdev-frontend
-    restart: "no"
+    restart: unless-stopped
     mem_limit: 300m          # standalone 프로덕션 빌드라 실사용은 ~50MB
     expose:
       - "3000"
@@ -74,7 +86,7 @@ services:
   nginx:
     image: nginx:1.27-alpine
     container_name: cdev-nginx
-    restart: "no"
+    restart: unless-stopped
     mem_limit: 64m
     ports:
       # HTTP 는 로컬바인딩 — SSH 터널로만 닿는다. 실수로 방화벽을 열어도 노출되지 않는다.

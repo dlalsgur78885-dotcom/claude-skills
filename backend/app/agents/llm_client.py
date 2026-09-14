@@ -6,6 +6,7 @@ falling back to LiteLLM API only when CLI is unavailable or an API key is set.
 CLI tools used:
   claude -p "prompt" --output-format text   (Claude Code CLI)
   gemini -p "prompt"                        (Google Gemini CLI)
+  codex exec -m gpt-5.6-sol -o out.txt -    (OpenAI Codex CLI — 문구 생성)
 
 Environment variables (only needed if CLI unavailable):
   ANTHROPIC_API_KEY  - for Claude models via API
@@ -26,6 +27,12 @@ logger = logging.getLogger(__name__)
 
 CLAUDE_CLI = shutil.which("claude")
 GEMINI_CLI = shutil.which("gemini")
+CODEX_CLI = shutil.which("codex")
+
+# 사람이 쓰는 ~/.codex/config.toml 은 model_reasoning_effort="xhigh" 다 — 코딩용 설정이라
+# 문구 한 벌에 몇 분이 걸린다. 서버 문구 생성은 짧은 JSON 한 덩어리라 낮은 추론으로 충분하다
+# (2026-09-02 실측: low 16~18초 / medium 22초, 결과 품질 차이 없음). 호출마다 덮어쓴다.
+CODEX_REASONING_EFFORT = "low"
 
 # Running totals for vision token usage (process-local; reset by tests).
 # Authoritative source is the `usage_logs` DB table written by _log_usage();
@@ -54,6 +61,7 @@ async def _log_usage(model: str, input_tokens: int, output_tokens: int, call_typ
 
 logger.info(f"[LLM] claude CLI: {CLAUDE_CLI or 'not found'}")
 logger.info(f"[LLM] gemini CLI: {GEMINI_CLI or 'not found'}")
+logger.info(f"[LLM] codex CLI: {CODEX_CLI or 'not found'}")
 
 
 # ─── Model Registry ───
@@ -73,6 +81,12 @@ MODELS = {
     # Vision-capable Flash Lite variant for extraction tasks where Pro accuracy is unnecessary.
     # Use for content extraction on benchmark slides where we don't need Pro accuracy.
     "gemini-flash-lite":     {"provider": "gemini", "model_id": "gemini/gemini-2.5-flash-lite",          "cli_model": "gemini-2.5-flash-lite"},
+
+    # Codex (CLI 전용 — API 경로가 없다). 캐러셀 문구 생성용.
+    # CLI 가 없거나 실패하면 "fallback" 모델로 넘어간다 — prod 서버에는 codex 가 없을 수 있고,
+    # 그때 문구 생성이 통째로 죽는 것보다 예전 모델로 짓는 편이 낫다.
+    "codex-sol": {"provider": "codex", "model_id": "gpt-5.6-sol", "cli_model": "gpt-5.6-sol",
+                  "fallback": "gemini-flash"},
 
     # Image generation/edit (a.k.a. nanobanana, nanobanana2)
     "nanobanana2":           {"provider": "gemini", "model_id": "gemini-3.1-flash-image-preview",       "cli_model": ""},  # Flash, fast/cheap
@@ -101,6 +115,8 @@ def _can_use_cli(provider: str) -> bool:
         return bool(CLAUDE_CLI)
     if provider == "gemini":
         return bool(GEMINI_CLI)
+    if provider == "codex":
+        return bool(CODEX_CLI)
     return False
 
 
@@ -183,6 +199,127 @@ async def _call_gemini_cli(
         os.unlink(prompt_file)
 
 
+async def _log_codex_usage(model: str, stdout: bytes) -> None:
+    """`codex exec --json` 이 뱉은 이벤트에서 토큰 수를 건져 기록한다.
+
+    캐시 적중을 눈으로 볼 수 있게 하려고 만든 것이다 — 캐싱은 자동으로 돌지만
+    적중하는지 알 방법이 없으면 도는지 확인할 수가 없다.
+    ``usage_logs`` 테이블에는 input/output 칸만 있어 캐시 수치는 로그로만 남긴다.
+    """
+    try:
+        usage = None
+        for line in stdout.decode("utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line or "usage" not in line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and isinstance(event.get("usage"), dict):
+                usage = event["usage"]  # 마지막 것이 그 턴의 최종 집계다
+        if not usage:
+            return
+
+        total_in = int(usage.get("input_tokens") or 0)
+        cached = int(usage.get("cached_input_tokens") or 0)
+        out = int(usage.get("output_tokens") or 0)
+        hit = (cached / total_in * 100) if total_in else 0.0
+        logger.info(
+            f"[LLM/codex] {model} usage: input={total_in} (cached={cached}, {hit:.0f}%) output={out}"
+        )
+        await _log_usage(model, total_in, out, call_type="text")
+    except Exception as e:
+        logger.debug(f"[LLM/codex] usage 집계 실패: {e}")
+
+
+async def _call_codex_cli(
+    prompt: str,
+    system: str | None = None,
+    model: str = "gpt-5.6-sol",
+    timeout: float = 180.0,
+    json_schema: dict | None = None,
+) -> str:
+    """Call Codex via `codex exec` (non-interactive).
+
+    플래그는 2026-09-02 에 codex-cli 0.147.0 으로 하나씩 확인한 것이다:
+      exec                   비대화형. 빼면 대화 UI 가 떠서 서버가 그대로 멈춘다.
+      -o <file>              **마지막 답만** 파일로 받는다. stdout 에는 진행 로그가 섞인다.
+      -                      프롬프트를 stdin 으로 넣는다(긴 한글·따옴표가 인자에서 깨지지 않게).
+      --sandbox read-only    문구만 짓게 한다. 모델이 셸을 잡지 못한다.
+      --skip-git-repo-check  서버 작업 폴더가 git 저장소가 아닐 수 있다.
+      --ephemeral            세션 파일을 디스크에 남기지 않는다(서버에 쌓이면 안 된다).
+      --json                 stdout 에 이벤트를 JSONL 로. 마지막 turn.completed 에 토큰 수가 온다.
+      --output-schema <파일>  답의 **모양을 강제**한다. 프롬프트로 "이 형식으로 줘" 라고만 하면
+                             모델이 칸 이름을 한글로 바꾸거나 개수를 줄여서 낸다 — 실제로
+                             주제 10개 대신 「추천 3개」가 `{주제, 왜}` 로 와서 화면이 비었다
+                             (2026-09-02). 스키마를 걸면 그런 변형이 원천적으로 막힌다.
+
+    로그인된 Codex 세션을 쓰므로 API 키가 필요 없다.
+
+    프롬프트 캐싱은 **자동이다** — 붙일 표시(cache_control 같은 것)가 없고, 실측에서도
+    아무 설정 없이 28,300 토큰 중 21,248 이 이미 캐시로 읽혔다(2026-09-02). 캐시되는 것은
+    주로 codex 자신의 시스템 프롬프트다. 그래서 우리 프롬프트를 「고정 + 가변」 으로 쪼개도
+    얻는 것이 없다 — 우리 몫은 631 토큰뿐이라 캐시 최소 단위(1,024)에도 못 미친다.
+    """
+    full_prompt = prompt
+    if system:
+        full_prompt = f"[System Instructions]\n{system}\n\n[User Request]\n{prompt}"
+
+    workdir = tempfile.mkdtemp(prefix="codex_llm_")
+    prompt_file = os.path.join(workdir, "prompt.txt")
+    out_file = os.path.join(workdir, "answer.txt")
+    with open(prompt_file, "w", encoding="utf-8") as f:
+        f.write(full_prompt)
+
+    schema_file = None
+    if json_schema:
+        schema_file = os.path.join(workdir, "schema.json")
+        with open(schema_file, "w", encoding="utf-8") as f:
+            json.dump(json_schema, f, ensure_ascii=False)
+
+    try:
+        cmd = [
+            CODEX_CLI, "exec",
+            "-m", model,
+            "-c", f'model_reasoning_effort="{CODEX_REASONING_EFFORT}"',
+            "--sandbox", "read-only",
+            "--skip-git-repo-check",
+            "--ephemeral",
+            "--color", "never",
+            "--json",
+            "-o", out_file,
+        ]
+        if schema_file:
+            cmd += ["--output-schema", schema_file]
+        cmd.append("-")
+
+        with open(prompt_file, "r", encoding="utf-8") as pf:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=pf,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+
+        if proc.returncode != 0:
+            err = stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"codex CLI error (exit {proc.returncode}): {err[-400:]}")
+
+        if not os.path.exists(out_file):
+            raise RuntimeError("codex CLI 가 답을 남기지 않았습니다 (-o 파일 없음)")
+
+        # 토큰 수는 답이 아니라 이벤트 스트림으로만 온다. 여기서 못 건지면 비용을 볼 방법이 없다.
+        # 집계 실패가 문구 생성을 막아서는 안 되므로 통째로 감싼다.
+        await _log_codex_usage(model, stdout)
+
+        with open(out_file, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
 # ─── API Backend (fallback) ───
 
 async def _call_api(
@@ -238,8 +375,11 @@ async def llm_call(
     temperature: float = 0.7,
     max_tokens: int = 4096,
     json_mode: bool = False,
+    json_schema: dict | None = None,
 ) -> str:
     """Make an LLM call — routes to CLI first, API as fallback.
+
+    json_schema: codex 에서만 쓴다 — 답의 모양을 CLI 가 강제한다. 다른 provider 는 무시한다.
 
     Args:
         model: Short name (e.g. "opus", "gemini-flash") or full model ID
@@ -280,6 +420,11 @@ async def llm_call(
                     prompt_text, system=system,
                     model=entry["cli_model"], max_tokens=max_tokens,
                 )
+            elif provider == "codex":
+                result = await _call_codex_cli(
+                    prompt_text, system=system,
+                    model=entry["cli_model"], json_schema=json_schema,
+                )
             else:  # gemini
                 result = await _call_gemini_cli(
                     prompt_text, system=system,
@@ -289,8 +434,8 @@ async def llm_call(
             return result
         except Exception as e:
             logger.warning(f"[LLM/CLI] {model} failed: {e}, trying API fallback...")
-            if not _has_api_key(provider):
-                raise  # No API key to fall back to
+            if not _has_api_key(provider) and not entry.get("fallback"):
+                raise  # API 키도 폴백 모델도 없다
 
     # API fallback
     if _has_api_key(provider):
@@ -299,6 +444,14 @@ async def llm_call(
         )
         logger.debug(f"[LLM/API] {model} → {len(result)} chars")
         return result
+
+    # 폴백 모델이 지정돼 있으면 마지막으로 그쪽에 맡긴다.
+    # codex-sol 이 이 경우다 — prod 서버에는 codex CLI 가 없을 수 있는데, 그때 문구 생성이
+    # 통째로 죽는 것보다 예전 모델(gemini-flash)로 짓는 편이 낫다.
+    fallback = entry.get("fallback")
+    if fallback and fallback != model:
+        logger.warning(f"[LLM] '{model}' 을 쓸 수 없어 '{fallback}' 로 넘깁니다")
+        return await llm_call(fallback, messages, system, temperature, max_tokens, json_mode, json_schema)
 
     raise RuntimeError(
         f"[LLM] No way to call '{model}': "
@@ -540,11 +693,17 @@ async def llm_json(
     system: str | None = None,
     temperature: float = 0.3,
     max_tokens: int = 4096,
+    json_schema: dict | None = None,
 ) -> dict | list:
-    """Make an LLM call and parse the response as JSON."""
+    """Make an LLM call and parse the response as JSON.
+
+    json_schema 를 주면 codex 가 그 모양을 **강제**한다 — 프롬프트로 부탁만 하면
+    칸 이름·개수가 흔들린다(2026-09-02 실측).
+    """
     text = await llm_call(
         model=model, messages=messages, system=system,
         temperature=temperature, max_tokens=max_tokens, json_mode=True,
+        json_schema=json_schema,
     )
 
     # Try direct parse

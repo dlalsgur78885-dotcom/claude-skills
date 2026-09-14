@@ -23,7 +23,9 @@ class ContentGenerator:
         try:
             prompt = self._build_slide_prompt(topic, tone, slide_count)
             slides = await llm_json(
-                model="gemini-flash",
+                # 2026-09-02 사람 지시 — 캐러셀 문구는 codex sol 이 짓는다.
+                # codex CLI 가 없는 서버에서는 llm_client 가 gemini-flash 로 되돌린다.
+                model="codex-sol",
                 messages=[{"role": "user", "content": prompt}],
             )
 

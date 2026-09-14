@@ -99,12 +99,50 @@ export default function EditorPage() {
     }
   }
 
+  /** 원본 문구가 없는 캐러셀에서, 화면의 글을 긁어 원본을 되만든다.
+   *
+   *  왜 필요한가 — 템플릿을 씌우려면 서버 `/render` 에 「무엇을 쓸지」(문구)를 줘야 하는데,
+   *  참고 글 없이 만든 캐러셀에는 그게 없어 **템플릿 변경이 통째로 잠겨 있었다**
+   *  (2026-09-03 피드백 1·2번, 두 건이 같은 원인). 잠그는 대신 있는 글로 되만든다.
+   *
+   *  ⚠ 캔버스 글상자에는 **역할(headline·body…) 표시가 없다.** 렌더러가 안 남긴다.
+   *    그래서 **위에서 아래 순서**로 headline → subtext → body → tag 에 넣는다. 짐작이라
+   *    자리가 어긋날 수 있어 부르는 쪽에서 사람에게 먼저 확인한다.
+   */
+  function deriveSourceSlides(slides: SlideData[]) {
+    return slides.map((sl, index) => {
+      const texts = (sl.objects || [])
+        .filter((o) => typeof o.text === "string" && String(o.text).trim())
+        .slice()
+        .sort((a, b) => (Number(a.top) || 0) - (Number(b.top) || 0))
+        .map((o) => String(o.text));
+      return {
+        index,
+        type: index === 0 ? "cover" : "content",
+        headline: texts[0] || "",
+        subtext: texts[1] || "",
+        body: texts[2] || "",
+        tag: texts[3] || "",
+      };
+    });
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async function handleReapplyTemplate(templateId: number): Promise<SlideData[] | null> {
-    const sourceSlides = carouselMeta.source_slides;
+    let sourceSlides = carouselMeta.source_slides;
     if (!sourceSlides || !Array.isArray(sourceSlides) || sourceSlides.length === 0) {
-      alert("이 캐러셀에는 원본 슬라이드 데이터가 없습니다. 다시 만들어 주세요.");
-      return null;
+      const base = initialSlides || [];
+      if (base.length === 0) {
+        alert("낱장이 없어 템플릿을 씌울 수 없습니다.");
+        return null;
+      }
+      const ok = window.confirm(
+        "이 캐러셀에는 원본 문구가 없습니다.\n" +
+        "화면의 글을 위에서 아래 순서로 옮겨 템플릿을 씌웁니다 — 자리가 어긋날 수 있습니다.\n\n" +
+        "계속할까요?"
+      );
+      if (!ok) return null;
+      sourceSlides = deriveSourceSlides(base);
     }
     try {
       const rendered = await api.renderCarousel({
@@ -119,7 +157,11 @@ export default function EditorPage() {
         layout_overrides: carouselMeta.layout_overrides || {},
       });
       const newSlides = rendered.canvas_slides as unknown as SlideData[];
-      setCarouselMeta((m) => ({ ...m, template_db_id: templateId }));
+      // ⚠ source_slides 도 함께 넣어야 한다. 화면 상태에 안 넣으면 **자동저장이 옛 값으로
+      //   덮어쓴다** — 되만든 원본이 사라져 다음번에 또 "원본이 없다" 로 돌아간다
+      //   (2026-09-03 E2E 에서 잡음: 적용 직후 source_slides 가 [] 로 저장돼 있었다).
+      //   이 파일 위쪽 handleSave 주석의 사고와 같은 종류다.
+      setCarouselMeta((m) => ({ ...m, template_db_id: templateId, source_slides: sourceSlides }));
       // Persist immediately so the new render survives a reload
       await api.updateCarousel(id, {
         canvas_data: {
@@ -231,7 +273,7 @@ export default function EditorPage() {
         onSave={handleSave}
         onGenerateThumbnail={(blob) => api.uploadCarouselThumbnail(id, blob)}
         currentTemplateId={carouselMeta.template_db_id || null}
-        canReapplyTemplate={!!carouselMeta.source_slides}
+        canReapplyTemplate  /* 원본이 없어도 화면 글로 되만든다 → 항상 연다 */
         onReapplyTemplate={handleReapplyTemplate}
         onChangeSlideLayout={handleChangeSlideLayout}
         isFinalized={status === "finalized"}

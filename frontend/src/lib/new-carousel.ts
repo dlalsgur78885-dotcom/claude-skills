@@ -10,13 +10,19 @@ import { createEmptySlide } from "./canvas-utils";
  *  "빈 문서" 라는 화면 상태가 따로 없다. 그래서 진짜 행을 하나 만들고 그리로 보낸다 —
  *  대시보드에 오래 걸려 있던 `/editor/new` 링크가 늘 깨졌던 이유도 이것이다.
  *
- *  source_slides 가 없으므로 에디터의 "템플릿 변경"은 비활성으로 뜬다. 원본 슬라이드에서
- *  다시 그리는 기능이라 빈 문서에는 적용할 대상이 없다 — 의도된 동작이다.
+ *  ⚠ 예전엔 `source_slides` 를 안 남겼고, 그래서 에디터의 "템플릿 변경"이 잠겨 있었다.
+ *    주석에는 "의도된 동작" 이라고 적혀 있었지만 실제로는 막힌 길이었다 —
+ *    참고 글 없이 새 파일을 만든 사람은 **템플릿을 아예 못 씌운다**(2026-09-03 피드백 1·2번,
+ *    두 건이 같은 원인이었다). 빈 원본이라도 남겨 두면 템플릿을 씌우고 그 위에 글을 채울 수 있다.
  */
 export async function createBlankCarousel(): Promise<number> {
   const carousel = await api.createCarousel({
     title: "제목 없는 캐러셀",
-    canvas_data: { canvas_slides: [createEmptySlide()] },
+    canvas_data: {
+      canvas_slides: [createEmptySlide()],
+      // 글자는 비어 있어도 **자리**는 있어야 한다. 렌더러가 이걸 보고 낱장을 그린다.
+      source_slides: [{ index: 0, type: "cover", headline: "", subtext: "", body: "", tag: "" }],
+    },
   });
   return carousel.id;
 }

@@ -17,6 +17,21 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 14  # 14 days
 
+    # 원클릭 스튜디오 일꾼(services/studio_worker.py)이 들락거릴 서버.
+    # 화면·회차 상태·템플릿·편집기가 전부 그쪽에 있고, 이 PC 는 codex 작업만 맡는다.
+    # 비어 있으면 일꾼이 켜지지 않는다(서버에서 이 코드가 돌 때가 그렇다).
+    STUDIO_API_BASE: str = ""
+    STUDIO_ACCOUNT: str = ""
+    STUDIO_PASSWORD: str = ""
+
+    # 출근 전에 미리 다 만들어 둘 시각 (KST). 쉼표로 여러 개 — 예: "23:00,06:00".
+    # 두 번 도는 이유는 한 번이 실패해도 아침에 빈손이 되지 않게 하려는 것이다.
+    # 비우면 안 돈다.
+    # ⚠ 공용 스케줄러(ENABLE_SCHEDULER)를 쓰지 않는다 — 그것을 켜면 소재 수집까지
+    #   같이 돌아 채널을 두 번 긁는다. 그래서 일꾼이 자기 시계를 본다.
+    STUDIO_PREPARE_AT: str = ""
+    STUDIO_PREPARE_COUNT: int = 10
+
     # HikerAPI (Instagram data)
     HIKER_API_KEY: str = ""
     HIKER_API_BASE_URL: str = "https://api.hikerapi.com"

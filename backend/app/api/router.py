@@ -14,6 +14,7 @@ from app.api.scrape import router as scrape_router
 from app.api.elements import router as elements_router
 from app.api.templates import router as templates_router
 from app.api.settings import router as settings_router
+from app.api.studio_sessions import router as studio_sessions_router
 from app.api.cta import router as cta_router
 from app.api.fonts import router as fonts_router
 
@@ -31,5 +32,6 @@ api_router.include_router(scrape_router)
 api_router.include_router(elements_router)
 api_router.include_router(templates_router)
 api_router.include_router(settings_router)
+api_router.include_router(studio_sessions_router)
 api_router.include_router(cta_router)
 api_router.include_router(fonts_router)

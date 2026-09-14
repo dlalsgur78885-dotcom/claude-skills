@@ -45,6 +45,13 @@ async def lifespan(app: FastAPI):
         logging.getLogger(__name__).warning(
             "[startup] ENABLE_SCHEDULER=false — 백그라운드 잡 비활성 (수집/정리/만료 안 돎)"
         )
+    # 원클릭 스튜디오 일꾼 — codex 가 있는 기계에서만 켜진다(서버에서는 조용히 넘어간다).
+    # 서버에 쌓인 회차를 가져와 문구·그림을 짓고 결과를 돌려준다.
+    try:
+        from app.services.studio_worker import start as start_studio_worker
+        start_studio_worker()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[startup] studio worker 시작 실패: {e}")
     yield
     # Shutdown
     if settings.ENABLE_SCHEDULER:

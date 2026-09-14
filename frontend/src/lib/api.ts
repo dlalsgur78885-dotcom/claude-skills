@@ -772,6 +772,128 @@ class ApiClient {
       body: JSON.stringify({ request, context }),
     });
   }
+
+  // 원클릭 스튜디오 — 회차 상태만 주고받는다.
+  // 문구·그림은 codex 가 있는 PC 의 일꾼이 만들어 여기에 올린다. 화면은 기다렸다 보여주고,
+  // 사람이 고른 것을 다시 여기에 적는다. 그래서 평범한 로그인·API 주소를 그대로 쓴다.
+  studioCreate(axis = "상황별일본어", pending = "topics") {
+    return this.fetch<StudioSession>("/studio-sessions/", {
+      method: "POST",
+      body: JSON.stringify({ axis, pending }),
+    });
+  }
+  /** 밤에 미리 만들어 둔 회차. 없으면 id 가 없는 빈 답이 온다. */
+  studioLatest(axis = "상황별일본어") {
+    return this.fetch<StudioSession | Record<string, never>>(
+      `/studio-sessions/latest?axis=${encodeURIComponent(axis)}`);
+  }
+  studioGet(id: string) {
+    return this.fetch<StudioSession>(`/studio-sessions/${id}`);
+  }
+  /** 고른 것을 적고, 다음 단계를 일꾼에게 넘긴다. */
+  /** reset_from: n 단계부터 아래를 무효로 만든다. 앞 단계를 다시 고를 때 함께 보낸다 —
+   *  안 보내면 옛 선택이 남아 주제와 훅이 따로 노는 캐러셀이 나온다(2026-09-03 사고). */
+  studioPatch(id: string, body: {
+    chosen?: Record<string, unknown>; pending?: string; result?: unknown; reset_from?: number;
+  }) {
+    return this.fetch<StudioSession>(`/studio-sessions/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  }
 }
+
+export type StudioStep =
+  | "topics" | "hooks" | "images" | "body" | "caption" | "build" | "keep"
+  // 지도 축에만 있는 3-4단계
+  | "cta1"
+  // 출근 전에 주제 10개의 훅·사진·본문·캡션을 통째로 미리 만들어 두는 일
+  | "prepare";
+
+/** 미리 만들어 둔 한 주제분. 있으면 화면은 기다리지 않고 바로 보여준다. */
+export type StudioPrepared = {
+  hooks?: { three: StudioHook[]; two: StudioHook[] };
+  images?: StudioImage[];
+  body?: StudioBodyItem[];
+  cta1?: StudioCta1;
+  caption?: string;
+  error?: string;
+};
+
+export type StudioSession = {
+  id: string;
+  axis: string;
+  /** 비어 있으면 사람이 고를 차례, 값이 있으면 일꾼이 만드는 중이다. */
+  pending: StudioStep | "";
+  error: string;
+  candidates: {
+    topics?: StudioTopic[];
+    kept?: string[];
+    /** 사람이 [삭제] 한 주제. 제외 목록에 쌓여 다음 회차에도 안 나온다. */
+    dropped?: string[];
+    hooks?: { three: StudioHook[]; two: StudioHook[] };
+    images?: StudioImage[];
+    body?: StudioBodyItem[];
+    /** 지도 축에만 있다 — 3-4단계 CTA1 세 칸 */
+    cta1?: StudioCta1;
+    caption?: string;
+    /** 주제 이름 → 미리 만들어 둔 것 */
+    prepared?: Record<string, StudioPrepared>;
+  };
+  chosen: {
+    topic?: string;
+    keep_topic?: string;
+    /** true 면 보관 해제 */
+    keep_off?: boolean;
+    /** [삭제] — 제외 목록에 적을 주제 */
+    drop_topic?: string;
+    hook_lines?: string[];
+    image_url?: string;
+    items?: StudioBodyItem[];
+    cta1?: StudioCta1;
+    caption?: string;
+    /** 지도 축 — 주제가 가리키는 가이드·버튼. 장소·지도·수량이 이걸 따라간다.
+     *  region 은 버튼을 한 지역으로 좁힌 주제일 때만 있다(「도쿄 — … 24곳」). */
+    guide_id?: string;
+    button?: string;
+    region?: string;
+    n?: number;
+  };
+  result: StudioBuildResult | null;
+  /** 캐러셀을 만들어 편집 링크까지 받은 주제. 목록에서 [선택] 대신 [완료] 로 보인다. */
+  built?: string[];
+};
+
+/** 지도 축은 주제가 곧 「어느 가이드의 어느 버튼」이다. 그 셋이 함께 다녀야
+ *  장소·지도·수량이 같은 버튼을 가리킨다. 다른 축에는 없다. */
+export type StudioTopic = {
+  topic: string; why?: string;
+  guide_id?: string; button?: string; region?: string; n?: number; guide_name?: string;
+};
+/** CTA1 세 칸 — 강조(2줄) / 공감·수량(1줄) / 팔로우 유도(2줄). 한 칸에 뭉치지 않는다. */
+export type StudioCta1 = { headline: string; subtext: string; body: string; n?: number };
+export type StudioHook = { lines: string[] };
+export type StudioImage = { kind: "person" | "scenery" | "food" | "map"; prompt: string; url: string };
+/** 본문 낱장 하나. 축마다 쓰는 칸이 다르므로 전부 선택이다.
+ *  상황별일본어 — jp / reading / meaning / situation
+ *  일본맛집     — name / where / desc + 구글 지도에서 온 사진(photo, 후보 photos) */
+export type StudioBodyItem = {
+  jp?: string;
+  reading?: string;
+  meaning?: string;
+  situation?: string;
+  name?: string;
+  where?: string;
+  desc?: string;
+  photo?: string;
+  photos?: string[];
+  place_id?: string;
+};
+export type StudioBuildResult = {
+  id: number;
+  url: string;
+  slides: number;
+  history_recorded: boolean;
+};
 
 export const api = new ApiClient();

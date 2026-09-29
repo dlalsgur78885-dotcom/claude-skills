@@ -6,6 +6,7 @@
 
 import { getFabric } from "@/lib/fabric";
 import { resolveImageUrl } from "@/lib/api";
+import { ensureUserFonts } from "@/lib/fonts";
 import type { LayoutSpec, BrandStyle, FabricMeta, ShadowSpec, TextStyle, Decoration, GradientFill } from "./types";
 import { angleToCoords } from "@/components/GradientBarEditor";
 
@@ -143,6 +144,20 @@ export async function renderLayoutToCanvas(
 ) {
   const fabric = await getFabric();
 
+  // Text without its own font falls back to the brand font — same as the
+  // server renderer (carousel_renderer.py), so the preview matches the output.
+  const defaultFont = brand.font_family || "Pretendard";
+  // Uploaded fonts must be registered before the Textboxes are built — Fabric
+  // measures glyphs at construction, so a late font keeps fallback widths.
+  const ib = layout.grid?.item_box;
+  await ensureUserFonts([
+    defaultFont,
+    ...(layout.text_slots || []).map((t) => t.style?.font_family),
+    ib?.title_style?.font_family,
+    ib?.subtitle_style?.font_family,
+    ib?.description_style?.font_family,
+  ]);
+
   canvas.clear();
 
   // 1. Background
@@ -228,7 +243,10 @@ export async function renderLayoutToCanvas(
   // 2. Background overlay — solid OR gradient
   if (bg?.overlay_kind === "gradient" && Array.isArray(bg.overlay_gradient_stops) && bg.overlay_gradient_stops.length >= 2) {
     const angle = bg.overlay_gradient_angle ?? DIR_TO_ANGLE[bg.overlay_gradient_direction ?? "vertical"];
-    const coords = angleToCoords(angle, canvasW * scale, canvasH * scale);
+    // 아래쪽 절반에만 깐다 — 서버 렌더러(carousel_renderer.py)와 같은 박스.
+    const ovTop = Math.floor(canvasH / 2) * scale;
+    const ovH = canvasH * scale - ovTop;
+    const coords = angleToCoords(angle, canvasW * scale, ovH);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const colorStops = bg.overlay_gradient_stops.map((s: any) => {
       const hex = (s.color || "#000000").replace("#", "");
@@ -239,8 +257,8 @@ export async function renderLayoutToCanvas(
     });
     const ovGradient = new fabric.Gradient({ type: "linear", coords, colorStops });
     const ovRect = new fabric.Rect({
-      left: 0, top: 0,
-      width: canvasW * scale, height: canvasH * scale,
+      left: 0, top: ovTop,
+      width: canvasW * scale, height: ovH,
       fill: ovGradient, selectable: false, evented: false,
       originX: "left", originY: "top",
     });
@@ -311,6 +329,22 @@ export async function renderLayoutToCanvas(
         const naturalH = img.height || h;
         img.scaleX = w / naturalW;
         img.scaleY = h / naturalH;
+        // Rounded corners — clip in the image's own coordinate space (rx divided
+        // by the scale so the on-screen radius matches the template value), so
+        // the clip follows drags and resizes instead of staying put.
+        const cornerPx = (d.corner_radius || 0) * scale;
+        if (cornerPx > 0) {
+          img.clipPath = new fabric.Rect({
+            left: -naturalW / 2,
+            top: -naturalH / 2,
+            width: naturalW,
+            height: naturalH,
+            rx: cornerPx / (img.scaleX || 1),
+            ry: cornerPx / (img.scaleY || 1),
+            originX: "left",
+            originY: "top",
+          });
+        }
         applyTextEffects(img, d, scale, false, fabric);
         // BlendColor filter (image-only color tint). intensity 0이면 skip.
         // fabric v7는 ESM modular: `fabric.BlendColor` (top-level) 와
@@ -403,12 +437,15 @@ export async function renderLayoutToCanvas(
     const path = `${layoutPath}.text_slots[${i}]`;
     const fontSize = (t.style?.font_size || 24) * scale;
     const [tx, ty] = anchorToTopLeft(t.position, t.size);
+    // 세로 기준 "bottom" — y 가 글 블록의 아래 끝이다. 백엔드 렌더러와 같게,
+    // 가로만 anchor 로 옮기고 세로는 originY 로 맡긴다(anchor 의 세로 보정은 안 쓴다).
+    const vBottom = t.position?.vertical_anchor === "bottom";
     const tb = new fabric.Textbox(`[${t.role.toUpperCase()}]`, {
       left: tx * scale,
-      top: ty * scale,
+      top: (vBottom ? (t.position?.y || 0) : ty) * scale,
       width: (t.size.width || 400) * scale,
       fontSize,
-      fontFamily: t.style?.font_family || "Pretendard",
+      fontFamily: t.style?.font_family || defaultFont,
       fontWeight: t.style?.font_weight || "400",
       fill: t.style?.fill || "#FFFFFF",
       textAlign: (t.style?.text_align || "left") as "left" | "center" | "right",
@@ -418,7 +455,7 @@ export async function renderLayoutToCanvas(
       transparentCorners: false,
       editable: false,
       originX: "left",
-      originY: "top",
+      originY: vBottom ? "bottom" : "top",
       opacity: t.opacity ?? 1,
     });
     applyTextEffects(tb, t.style, scale, true, fabric);
@@ -469,7 +506,7 @@ export async function renderLayoutToCanvas(
           top: (cellY + (g.item_box.title_offset_y || 0)) * scale,
           width: g.cell_size.width * scale,
           fontSize: (titleStyle.font_size || 24) * scale,
-          fontFamily: titleStyle.font_family || "Pretendard",
+          fontFamily: titleStyle.font_family || defaultFont,
           fontWeight: titleStyle.font_weight || "700",
           fill: titleStyle.fill || "#FFFFFF",
           textAlign: (titleStyle.text_align || "center") as "left" | "center" | "right",
@@ -489,7 +526,7 @@ export async function renderLayoutToCanvas(
             top: (cellY + g.item_box.subtitle_offset_y) * scale,
             width: g.cell_size.width * scale,
             fontSize: (ss.font_size || 18) * scale,
-            fontFamily: ss.font_family || "Pretendard",
+            fontFamily: ss.font_family || defaultFont,
             fontWeight: ss.font_weight || "400",
             fill: ss.fill || "#CCCCCC",
             textAlign: (ss.text_align || "center") as "left" | "center" | "right",
@@ -510,7 +547,7 @@ export async function renderLayoutToCanvas(
             top: (cellY + g.item_box.description_offset_y) * scale,
             width: g.cell_size.width * scale,
             fontSize: (ds.font_size || 16) * scale,
-            fontFamily: ds.font_family || "Pretendard",
+            fontFamily: ds.font_family || defaultFont,
             fontWeight: ds.font_weight || "400",
             fill: ds.fill || "#E0E0E0",
             textAlign: (ds.text_align || "center") as "left" | "center" | "right",

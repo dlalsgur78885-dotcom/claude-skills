@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { HexColorPicker } from "react-colorful";
 import { getByPath } from "@/lib/template-paths";
+import { deleteUserFont, listUserFonts, uploadUserFont, type UserFont } from "@/lib/fonts";
 import type { TemplateData, FabricMeta, TextStyle, GridSpec, ShadowSpec, GradientFill, Decoration } from "./types";
 import { GradientBarEditor, splitColor, mergeColor, type GradValue } from "@/components/GradientBarEditor";
 
@@ -360,6 +361,116 @@ function TextRow({
   );
 }
 
+/** Font picker — Pretendard + the user's uploaded fonts, with an uploader.
+ *  `inheritLabel` adds an empty-value option (text styles fall back to the
+ *  brand font); without it an empty value means Pretendard. */
+function FontRow({
+  label,
+  value,
+  onChange,
+  inheritLabel,
+}: {
+  label: string;
+  value: string | undefined;
+  onChange: (s: string) => void;
+  inheritLabel?: string;
+}) {
+  const [fonts, setFonts] = useState<UserFont[]>([]);
+  const [uploading, setUploading] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    listUserFonts().then((f) => { if (alive) setFonts(f); });
+    return () => { alive = false; };
+  }, []);
+
+  const current = (value || "").trim() || (inheritLabel ? "" : "Pretendard");
+  const options: { label: string; value: string }[] = [
+    ...(inheritLabel ? [{ label: inheritLabel, value: "" }] : []),
+    { label: "Pretendard (기본)", value: "Pretendard" },
+    ...fonts.map((f) => ({ label: f.family, value: f.family })),
+  ];
+  if (!options.some((o) => o.value === current)) {
+    options.unshift({ label: `현재: ${current}`, value: current });
+  }
+  const selectedUpload = fonts.find((f) => f.family === current);
+
+  async function handleDelete(font: UserFont) {
+    if (!confirm(`「${font.family}」 폰트를 삭제할까요?\n이 폰트를 쓰는 다른 글은 기본 글꼴로 보이게 됩니다.`)) return;
+    try {
+      setFonts(await deleteUserFont(font));
+      onChange(inheritLabel ? "" : "Pretendard");
+    } catch (err) {
+      alert("폰트 삭제 실패: " + (err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  return (
+    <div>
+      <label style={LABEL_STYLE}>{label}</label>
+      <select value={current} onChange={(e) => onChange(e.target.value)} style={{ ...INPUT_STYLE, cursor: "pointer" }}>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+      <label
+        title="폰트 파일을 업로드해 바로 적용합니다"
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+          marginTop: 6, padding: "5px 8px", fontSize: 11,
+          color: "var(--text-secondary)",
+          background: "var(--bg-overlay)",
+          border: "1px solid var(--border)",
+          borderRadius: 5,
+          cursor: uploading ? "default" : "pointer",
+        }}
+      >
+        <span>{uploading ? "업로드 중…" : "폰트 파일 업로드"}</span>
+        <input
+          type="file"
+          accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+          disabled={uploading}
+          style={{ display: "none" }}
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (!file) return;
+            setUploading(true);
+            try {
+              const f = await uploadUserFont(file);
+              setFonts(await listUserFonts());
+              onChange(f.family);
+            } catch (err) {
+              alert("폰트 업로드 실패: " + (err instanceof Error ? err.message : String(err)));
+            } finally {
+              setUploading(false);
+            }
+          }}
+        />
+      </label>
+      {selectedUpload && (
+        <button
+          type="button"
+          onClick={() => handleDelete(selectedUpload)}
+          title="올린 폰트 파일을 지웁니다"
+          style={{
+            width: "100%", marginTop: 4, padding: "5px 8px", fontSize: 11,
+            color: "var(--text-secondary)",
+            background: "transparent",
+            border: "1px solid var(--border)",
+            borderRadius: 5,
+            cursor: "pointer",
+          }}
+        >
+          「{selectedUpload.family}」 폰트 삭제
+        </button>
+      )}
+      <p style={{ fontSize: 9, color: "var(--text-tertiary)", margin: "5px 0 0", lineHeight: 1.5 }}>
+        ttf · otf · woff · woff2
+      </p>
+    </div>
+  );
+}
+
 function XYGrid({
   basePath,
   vals,
@@ -388,6 +499,53 @@ function XYGrid({
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** 세로 기준 — 위(y = 글 위쪽) / 아래(y = 글 아래 끝, 줄이 늘면 위로 자란다).
+ *  글상자에만 쓴다. 백엔드 렌더러의 `position.vertical_anchor` 와 같은 값이다. */
+function VAnchorRow({
+  basePath,
+  value,
+  onChange,
+}: {
+  basePath: string;
+  value?: "top" | "bottom";
+  onChange: (path: string, v: unknown) => void;
+}) {
+  const current = value === "bottom" ? "bottom" : "top";
+  return (
+    <div>
+      <label style={LABEL_STYLE}>세로 기준</label>
+      <div style={{ display: "flex", gap: 4 }}>
+        {(["top", "bottom"] as const).map((v) => {
+          const active = current === v;
+          return (
+            <button
+              key={v}
+              type="button"
+              title={v === "top" ? "Y = 글 위쪽. 줄이 늘면 아래로 자란다" : "Y = 글 아래 끝. 줄이 늘면 위로 자란다"}
+              onClick={() => onChange(`${basePath}.vertical_anchor`, v)}
+              style={{
+                flex: 1, padding: "5px 0",
+                fontSize: 11, fontWeight: 500,
+                borderRadius: 4,
+                background: active ? "var(--accent)" : "var(--bg-overlay)",
+                color: active ? "white" : "var(--text-secondary)",
+                border: "1px solid",
+                borderColor: active ? "var(--accent)" : "var(--border)",
+                cursor: "pointer",
+              }}
+            >
+              {v === "top" ? "위 기준" : "아래 기준"}
+            </button>
+          );
+        })}
+      </div>
+      <span style={{ display: "block", fontSize: 10, color: "var(--text-tertiary)", marginTop: 4 }}>
+        {current === "bottom" ? "Y 는 글 아래 끝 — 줄이 늘면 위로 자란다" : "Y 는 글 위쪽 — 줄이 늘면 아래로 자란다"}
+      </span>
     </div>
   );
 }
@@ -533,7 +691,7 @@ function TextStyleEditor({
       )}
 
       {/* Font family */}
-      <TextRow label="글꼴" value={s.font_family} onChange={(v) => onChange(`${path}.font_family`, v)} />
+      <FontRow label="글꼴" value={s.font_family} inheritLabel="브랜드 글꼴 따름" onChange={(v) => onChange(`${path}.font_family`, v)} />
 
       {/* Font size — slider + number */}
       <SliderRow
@@ -869,7 +1027,12 @@ export function LayoutPropertyPanel({ template, layoutName, selected, onChange, 
             <p style={SECTION_TITLE}>브랜드 · 전 레이아웃 공유</p>
             <ColorRow label="주요 색상" value={template.brand?.primary_color} onChange={(v) => onChange("brand.primary_color", v)} />
             <ColorRow label="배경 색상" value={template.brand?.background_color} onChange={(v) => onChange("brand.background_color", v)} />
-            <TextRow label="글꼴" value={template.brand?.font_family} onChange={(v) => onChange("brand.font_family", v)} />
+            {/* Hidden while an object is selected — this row changes every text
+                box, and sitting above the selected text's own 글꼴 it got used
+                for a single-box change. */}
+            {!selected && (
+              <FontRow label="전체 글꼴 · 모든 글 칸" value={template.brand?.font_family} onChange={(v) => onChange("brand.font_family", v)} />
+            )}
           </div>
 
           {/* Background — layout-wide. 오버레이도 같이 (에디터엔 없는 layout-wide 설정이라
@@ -1330,7 +1493,7 @@ function SelectionEditor({
   const isReorderable = /\.(decorations|text_slots)\[\d+\]$/.test(selected.path);
 
   if (selected.kind === "text_slot") {
-    const t = node as { role?: string; position?: { x: number; y: number }; size?: { width: number; height: number }; style?: TextStyle; opacity?: number; lock_aspect?: boolean };
+    const t = node as { role?: string; position?: { x: number; y: number; vertical_anchor?: "top" | "bottom" }; size?: { width: number; height: number }; style?: TextStyle; opacity?: number; lock_aspect?: boolean };
     return (
       <div style={SECTION_STYLE}>
         <p style={SECTION_TITLE}>텍스트 슬롯{t?.role ? ` · ${t.role}` : ""}</p>
@@ -1346,14 +1509,22 @@ function SelectionEditor({
                 style={{ ...INPUT_STYLE, width: "100%" }}
               >
                 <option value="headline">headline · 큰 제목</option>
+                <option value="headline2">headline2 · 큰 제목 2</option>
+                <option value="headline3">headline3 · 큰 제목 3</option>
                 <option value="subheadline">subheadline · 소제목</option>
+                <option value="subheadline2">subheadline2 · 소제목 2</option>
+                <option value="subheadline3">subheadline3 · 소제목 3</option>
                 <option value="body">body · 본문</option>
+                <option value="body2">body2 · 본문 2</option>
+                <option value="body3">body3 · 본문 3</option>
                 <option value="tag">tag · 태그</option>
                 <option value="footer">footer · 하단</option>
               </select>
             </label>
             {/* 1. 위치 */}
             <XYGrid basePath={`${selected.path}.position`} vals={{ x: t?.position?.x, y: t?.position?.y }} onChange={onChange} />
+            {/* 1-1. 세로 기준 — 칸마다 따로 고른다 */}
+            <VAnchorRow basePath={`${selected.path}.position`} value={t?.position?.vertical_anchor} onChange={onChange} />
             {/* 2. 크기 */}
             <WHGrid basePath={`${selected.path}.size`} vals={{ width: t?.size?.width, height: t?.size?.height }} onChange={onChange} lockPath={`${selected.path}.lock_aspect`} locked={!!t?.lock_aspect} />
             {/* 3. 색상 */}
@@ -1398,8 +1569,8 @@ function SelectionEditor({
             {!fillIsGradient && (
               <ColorRow label="색상" value={solidFill || ""} onChange={(v) => onChange(`${selected.path}.fill`, v)} />
             )}
-            {/* 라운드 — shape rect 모서리 둥글기 (피드백 14-8) */}
-            {d?.kind === "shape" && (
+            {/* 라운드 — shape rect·이미지 칸 모서리 둥글기 (피드백 14-8) */}
+            {(d?.kind === "shape" || d?.kind === "image") && (
               <SliderRow
                 label="라운드"
                 value={d?.corner_radius ?? 0}

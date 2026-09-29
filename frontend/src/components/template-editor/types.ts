@@ -4,6 +4,9 @@ export interface Position {
   x: number;
   y: number;
   anchor?: "top-left" | "center" | "top-center" | "bottom-center";
+  // 세로 기준. "bottom" 이면 `y` 를 글 블록의 **아래 끝**으로 읽어, 줄이 늘면 위로
+  // 자란다(줄이 줄어도 아래가 고정). 글상자에만 쓴다 — backend Position 과 같다.
+  vertical_anchor?: "top" | "bottom";
 }
 
 export interface Size {

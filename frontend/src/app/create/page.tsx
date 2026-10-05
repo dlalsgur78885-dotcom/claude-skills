@@ -1211,7 +1211,7 @@ export default function CreatePage() {
           </div>
           {selectedTemplateId && templates.find((t) => t.id === selectedTemplateId)?.user_id === null && (
             <span style={{ fontSize: 10, color: "var(--text-tertiary)", flexShrink: 0 }}>
-              시스템 (수정 불가)
+              시스템
             </span>
           )}
         </div>

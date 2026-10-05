@@ -868,16 +868,22 @@ export type StudioSession = {
  *  장소·지도·수량이 같은 버튼을 가리킨다. 다른 축에는 없다. */
 export type StudioTopic = {
   topic: string; why?: string;
+  /** X인용 — 원문에서 확인한 값. 고를 때 반응 크기를 보고 판단한다. */
+  url?: string; account?: string; views?: number; likes?: number; replies?: number; photos?: number;
   guide_id?: string; button?: string; region?: string; n?: number; guide_name?: string;
 };
 /** CTA1 세 칸 — 강조(2줄) / 공감·수량(1줄) / 팔로우 유도(2줄). 한 칸에 뭉치지 않는다. */
 export type StudioCta1 = { headline: string; subtext: string; body: string; n?: number };
 export type StudioHook = { lines: string[] };
-export type StudioImage = { kind: "person" | "scenery" | "food" | "map"; prompt: string; url: string };
+/** `post` 는 그린 것이 아니라 **원문 게시물에 올라온 사진**이다(X인용). */
+export type StudioImage = { kind: "person" | "scenery" | "food" | "map" | "post"; prompt: string; url: string };
 /** 본문 낱장 하나. 축마다 쓰는 칸이 다르므로 전부 선택이다.
  *  상황별일본어 — jp / reading / meaning / situation
  *  일본맛집     — name / where / desc + 구글 지도에서 온 사진(photo, 후보 photos) */
 export type StudioBodyItem = {
+  /** X인용 — 장마다 A·B·C 3안. 사람이 하나를 고르면 `text` 로 확정된다. */
+  options?: { tone?: string; text?: string }[];
+  text?: string;
   jp?: string;
   reading?: string;
   meaning?: string;
@@ -887,6 +893,9 @@ export type StudioBodyItem = {
   desc?: string;
   photo?: string;
   photos?: string[];
+  /** 한 가게가 두 낱장인 축(일본맛집2) — 본문2 에 들어갈 사진과 그 후보 5장. */
+  photo2?: string;
+  photos2?: string[];
   place_id?: string;
 };
 export type StudioBuildResult = {

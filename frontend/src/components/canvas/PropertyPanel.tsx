@@ -452,8 +452,14 @@ export function PropertyPanel({ selectedObject, selectedTextRange, onUpdate, use
         {/* 라운드 — rect 모서리 둥글기 (피드백 14-8). rx는 object-space라
             scale이 곱해진다 — 표시·입력 모두 VISUAL 반경(rx*scaleX) 기준
             (피드백 17-1: 늘린 사각형에서 알약 모양 방지). */}
-        {(selectedObject.type === "rect" || selectedObject.type === "Rect") && (() => {
-          const visualR = Math.round((selectedObject.rx ?? 0) * (selectedObject.scaleX ?? 1));
+        {(selectedObject.type === "rect" || selectedObject.type === "Rect" || selectedObject.type === "image" || selectedObject.type === "Image") && (() => {
+          // 이미지는 모서리를 clipPath(둥근 사각형)로 깎는다 — 칸에 맞춘 사진(absolutePositioned)은
+          // 캔버스 좌표, 그 밖의 사진은 이미지 좌표라 곱하는 scale 이 다르다.
+          const isImg = selectedObject.type === "image" || selectedObject.type === "Image";
+          const clip = isImg ? selectedObject.clipPath : null;
+          const visualR = isImg
+            ? Math.round(clip ? (clip.rx ?? 0) * (clip.absolutePositioned ? (clip.scaleX ?? 1) : (selectedObject.scaleX ?? 1)) : 0)
+            : Math.round((selectedObject.rx ?? 0) * (selectedObject.scaleX ?? 1));
           return (
             <div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>

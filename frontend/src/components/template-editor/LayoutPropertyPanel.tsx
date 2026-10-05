@@ -781,6 +781,16 @@ function TextStyleEditor({
         onChange={(v) => onChange(`${path}.line_height`, v)}
       />
 
+      {/* 자간 — 편집기(PropertyPanel)와 같은 표시 단위. 0 = 기본, 음수는 좁게 */}
+      <SliderRow
+        label="자간"
+        value={s.letter_spacing ?? 0}
+        min={-20}
+        max={100}
+        step={1}
+        onChange={(v) => onChange(`${path}.letter_spacing`, v)}
+      />
+
     </>
   );
 }
@@ -1493,7 +1503,7 @@ function SelectionEditor({
   const isReorderable = /\.(decorations|text_slots)\[\d+\]$/.test(selected.path);
 
   if (selected.kind === "text_slot") {
-    const t = node as { role?: string; position?: { x: number; y: number; vertical_anchor?: "top" | "bottom" }; size?: { width: number; height: number }; style?: TextStyle; opacity?: number; lock_aspect?: boolean };
+    const t = node as { role?: string; fixed_text?: string | null; position?: { x: number; y: number; vertical_anchor?: "top" | "bottom" }; size?: { width: number; height: number }; style?: TextStyle; opacity?: number; lock_aspect?: boolean };
     return (
       <div style={SECTION_STYLE}>
         <p style={SECTION_TITLE}>텍스트 슬롯{t?.role ? ` · ${t.role}` : ""}</p>
@@ -1520,6 +1530,21 @@ function SelectionEditor({
                 <option value="tag">tag · 태그</option>
                 <option value="footer">footer · 하단</option>
               </select>
+            </label>
+            {/* 0-1. 고정 문구 — 채우면 슬라이드 데이터 대신 이 글자가 그대로 나온다.
+                이 템플릿을 쓰는 모든 캐러셀에 같은 문구가 찍히고, 자동 생성이
+                덮어쓰지 못한다. 비우면 역할대로 문구를 받아온다. */}
+            <label style={{ display: "block", marginBottom: 10 }}>
+              <span style={{ display: "block", fontSize: 11, opacity: 0.7, marginBottom: 4 }}>
+                고정 문구 <span style={{ opacity: 0.6 }}>(비우면 자동)</span>
+              </span>
+              <input
+                type="text"
+                value={t?.fixed_text ?? ""}
+                placeholder="모든 캐러셀에 똑같이 나올 문구"
+                onChange={(e) => onChange(`${selected.path}.fixed_text`, e.target.value || null)}
+                style={{ ...INPUT_STYLE, width: "100%" }}
+              />
             </label>
             {/* 1. 위치 */}
             <XYGrid basePath={`${selected.path}.position`} vals={{ x: t?.position?.x, y: t?.position?.y }} onChange={onChange} />

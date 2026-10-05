@@ -8,10 +8,16 @@
 인증은 `settings.STUDIO_ACCOUNT / STUDIO_PASSWORD` 로 로그인해 토큰을 받아 쓴다.
 토큰은 만료될 수 있으므로 401 이면 한 번 다시 로그인하고 재시도한다.
 
+**계정은 하나가 아니다** (2026-09-17). 축마다 주인이 다를 수 있어 `account=` 로 골라 부른다
+— 위 첫 문단과 같은 이유다. 준혁 축을 솔희 계정으로 만들면 준혁이 편집 링크를 열어도
+자기 캐러셀이 없다. 계정별 비번은 `settings.STUDIO_ACCOUNTS`(`아이디:비번,…`)에 둔다.
+회차 상태를 들고 다니는 일꾼 호출은 계정을 안 넘긴다 — 기본 계정이면 충분하다.
+
 ⚠ dev 스택은 sslip.io 자체 서명 인증서라 검증을 끄고 붙는다(봇도 같다).
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import ssl
@@ -24,7 +30,14 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_TOKEN: str | None = None
+# 계정 아이디 → 토큰. 축마다 계정이 다를 수 있어 하나로 두지 않는다.
+_TOKENS: dict[str, str] = {}
+
+# 지금 처리 중인 회차의 주인. 일꾼이 회차를 집을 때 여기에 넣으면, 그 아래에서 일어나는
+# 모든 호출이 **그 사람 계정**으로 나간다 — 함수마다 계정을 들고 다니지 않아도 된다.
+# 태스크마다 따로 복사되므로 회차 여럿을 나란히 처리해도 섞이지 않는다.
+CURRENT_ACCOUNT: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "studio_current_account", default=None)
 _LOCK = asyncio.Lock()
 
 _SSL = ssl.create_default_context()
@@ -48,10 +61,27 @@ def _request(path: str, *, data: bytes | None, headers: dict[str, str], timeout:
     return json.loads(raw) if raw else {}
 
 
-async def _login() -> str:
+def _credentials(account: str | None) -> tuple[str, str]:
+    """그 계정의 아이디·비번. `account` 가 없거나 기본 계정이면 STUDIO_ACCOUNT 쌍을 쓴다."""
+    default = settings.STUDIO_ACCOUNT
+    if not account or account == default:
+        return default, settings.STUDIO_PASSWORD
+    for pair in settings.STUDIO_ACCOUNTS.split(","):
+        name, _, password = pair.strip().partition(":")
+        if name.strip() == account:
+            return account, password.strip()
+    # 여기서 조용히 기본 계정으로 넘어가면 **남의 계정에 캐러셀이 생긴다.** 그게 이 기능의 목적과 정반대다.
+    raise RuntimeError(
+        f"'{account}' 계정의 비밀번호가 없습니다 — backend/.env 의 STUDIO_ACCOUNTS 에 "
+        f"`{account}:<비밀번호>` 를 추가하세요."
+    )
+
+
+async def _login(account: str | None = None) -> str:
+    username, password = _credentials(account)
     body = json.dumps({
-        "username": settings.STUDIO_ACCOUNT,
-        "password": settings.STUDIO_PASSWORD,
+        "username": username,
+        "password": password,
     }).encode()
     result = await asyncio.to_thread(
         _request, "/auth/login",
@@ -64,18 +94,22 @@ async def _login() -> str:
 
 
 async def call(path: str, payload: dict | None = None, *,
-               method: str = "POST", timeout: float = 120) -> Any:
-    """토큰을 붙여 부른다. 401 이면 한 번만 다시 로그인하고 재시도한다."""
-    global _TOKEN
+               method: str = "POST", timeout: float = 120, account: str | None = None) -> Any:
+    """토큰을 붙여 부른다. 401 이면 한 번만 다시 로그인하고 재시도한다.
+
+    `account` 를 주면 **그 계정으로** 부른다(축 주인 계정). 안 주면 기본 계정이다.
+    """
     if not is_configured():
         raise RuntimeError("STUDIO_API_BASE / STUDIO_ACCOUNT 가 설정되지 않았습니다")
 
+    who = account or CURRENT_ACCOUNT.get() or settings.STUDIO_ACCOUNT
+    account = account or CURRENT_ACCOUNT.get()
     method = method.upper()
     for attempt in (1, 2):
         async with _LOCK:
-            if _TOKEN is None:
-                _TOKEN = await _login()
-            token = _TOKEN
+            if who not in _TOKENS:
+                _TOKENS[who] = await _login(account)
+            token = _TOKENS[who]
         headers = {"Authorization": f"Bearer {token}"}
         data = None
         if method != "GET":
@@ -88,21 +122,22 @@ async def call(path: str, payload: dict | None = None, *,
         except urllib.error.HTTPError as e:
             if e.code == 401 and attempt == 1:
                 async with _LOCK:
-                    _TOKEN = None          # 만료됐다 — 다시 받는다
+                    _TOKENS.pop(who, None)   # 만료됐다 — 다시 받는다
                 continue
             detail = e.read().decode("utf-8", errors="replace")[:300]
             raise RuntimeError(f"{path} 호출 실패 ({e.code}): {detail}") from e
     raise RuntimeError(f"{path} 호출 실패: 인증이 계속 거부됩니다")
 
 
-async def upload_image(blob: bytes, filename: str = "image.png") -> str:
+async def upload_image(blob: bytes, filename: str = "image.png", *, account: str | None = None) -> str:
     """이미지를 원격에 올리고 **전체 주소**를 돌려준다.
 
     ⚠ 서버는 `/api/images/...` **상대 주소**를 준다. 그대로 캐러셀에 넣으면 편집기가
       못 읽는다 — `/api` 를 뗀 웹 주소를 앞에 붙여 전체 주소로 만든다
       (`config.apiBase` 를 그냥 붙이면 `/api/api/...` 가 된다. 봇에서 겪은 함정).
     """
-    global _TOKEN
+    who = account or CURRENT_ACCOUNT.get() or settings.STUDIO_ACCOUNT
+    account = account or CURRENT_ACCOUNT.get()
     boundary = uuid.uuid4().hex
     body = b"".join([
         f"--{boundary}\r\n".encode(),
@@ -112,11 +147,13 @@ async def upload_image(blob: bytes, filename: str = "image.png") -> str:
         f"\r\n--{boundary}--\r\n".encode(),
     ])
 
-    for attempt in (1, 2):
+    # 연결이 끊기면(WinError 10054 등) 몇 초 뒤 다시 올린다 — 2026-10-05 회차에서 한 번 끊겨 표지
+    # 사진 1장이 그냥 빠졌다. 401 은 토큰만 새로 받아 한 번 더 한다(원래 규칙 그대로).
+    for attempt in (1, 2, 3):
         async with _LOCK:
-            if _TOKEN is None:
-                _TOKEN = await _login()
-            token = _TOKEN
+            if who not in _TOKENS:
+                _TOKENS[who] = await _login(account)
+            token = _TOKENS[who]
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": f"multipart/form-data; boundary={boundary}",
@@ -129,11 +166,16 @@ async def upload_image(blob: bytes, filename: str = "image.png") -> str:
         except urllib.error.HTTPError as e:
             if e.code == 401 and attempt == 1:
                 async with _LOCK:
-                    _TOKEN = None
+                    _TOKENS.pop(who, None)
                 continue
             raise RuntimeError(
                 f"이미지 업로드 실패 ({e.code}): {e.read().decode('utf-8', errors='replace')[:200]}"
             ) from e
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+            if attempt == 3:
+                raise
+            logger.info(f"[studio-remote] 업로드 연결이 끊겨 다시 올립니다({attempt}/2): {str(e)[:120]}")
+            await asyncio.sleep(3 * attempt)
 
     url = str(result.get("url") or result.get("path") or "")
     if url.startswith("/"):

@@ -196,6 +196,79 @@ function rgbaFromPsd(c: any): string | null {
 const TRANSPARENT_PX =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
+/** Round an image's corners by `r` VISUAL px (2026-09-15 — 이미지 라운드).
+ *  Slot photos keep their absolutePositioned clip (the slot window, canvas
+ *  coords) and just get rx/ry. Free images get an object-space clip that
+ *  follows drags/resizes; r=0 removes it. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyImageCornerRadius(fabric: any, img: any, r: number) {
+  const clip = img.clipPath;
+  if (clip && clip.absolutePositioned) {
+    clip.set({ rx: r / (Number(clip.scaleX) || 1), ry: r / (Number(clip.scaleY) || 1) });
+  } else if (r <= 0) {
+    img.clipPath = undefined;
+  } else {
+    const w = Number(img.width) || 1;
+    const h = Number(img.height) || 1;
+    img.clipPath = new fabric.Rect({
+      left: -w / 2,
+      top: -h / 2,
+      width: w,
+      height: h,
+      rx: r / (Number(img.scaleX) || 1),
+      ry: r / (Number(img.scaleY) || 1),
+      originX: "left",
+      originY: "top",
+      absolutePositioned: false,
+    });
+  }
+  img.dirty = true;
+}
+
+/** 내보내기 동안만, 페이지 가장자리에 닿은 사진 틀(absolutePositioned clip)을 손본다.
+ *  clip 된 이미지는 fabric 이 캐시 캔버스로 그려 가장자리가 1~2px 반투명해지고, 그 틈으로
+ *  흰 페이지 바탕이 비쳐 PNG 가장자리에 희끗한 줄이 생겼다(2026-09-17).
+ *  페이지 전체를 덮는 틀은 빼고(내보내기가 어차피 페이지로 자르니 결과가 같다), 한두 변만 닿은
+ *  틀은 그 변을 바깥으로 넓힌다. 라운드 틀은 모서리가 보여야 해서 그대로 둔다. 되돌리는 함수를 돌려준다. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function relaxPageEdgeClips(canvas: any, pageW: number, pageH: number): () => void {
+  const BLEED = 4;
+  const restores: (() => void)[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const o of canvas.getObjects() as any[]) {
+    const clip = o.clipPath;
+    if (!clip || !clip.absolutePositioned || Number(clip.rx) > 0) continue;
+    const sx = Number(clip.scaleX) || 1;
+    const sy = Number(clip.scaleY) || 1;
+    const l = Number(clip.left) || 0;
+    const t = Number(clip.top) || 0;
+    const r = l + (Number(clip.width) || 0) * sx;
+    const b = t + (Number(clip.height) || 0) * sy;
+    if (l <= 0 && t <= 0 && r >= pageW && b >= pageH) {
+      o.clipPath = undefined;
+      o.dirty = true;
+      restores.push(() => {
+        o.clipPath = clip;
+        o.dirty = true;
+      });
+      continue;
+    }
+    const nl = l <= 0 ? -BLEED : l;
+    const nt = t <= 0 ? -BLEED : t;
+    const nr = r >= pageW ? pageW + BLEED : r;
+    const nb = b >= pageH ? pageH + BLEED : b;
+    if (nl === l && nt === t && nr === r && nb === b) continue;
+    const saved = { left: clip.left, top: clip.top, width: clip.width, height: clip.height };
+    clip.set({ left: nl, top: nt, width: (nr - nl) / sx, height: (nb - nt) / sy });
+    o.dirty = true;
+    restores.push(() => {
+      clip.set(saved);
+      o.dirty = true;
+    });
+  }
+  return () => restores.forEach((fn) => fn());
+}
+
 /** Resolve true if `src` loads as an image, false on a definitive load error.
  *  Optimistic on timeout (resolves true) so a slow-but-valid image is never
  *  falsely replaced — the loadFailedRef guard still protects data if a load it
@@ -649,7 +722,8 @@ export function CanvasEditor({
   }, []);
 
   async function handleTemplateChange(templateId: number) {
-    if (!onReapplyTemplate || templateId === currentTemplateId) return;
+    // 같은 템플릿도 막지 않는다 — 템플릿을 고친 뒤 이 캐러셀에 다시 씌우는 길이 이것뿐이다(2026-09-18).
+    if (!onReapplyTemplate) return;
     if (!canReapplyTemplate) {
       alert("이 캐러셀은 원본 데이터가 없어 템플릿을 바꿀 수 없습니다.\n캐러셀 만들기에서 다시 만들어 주세요.");
       return;
@@ -662,8 +736,11 @@ export function CanvasEditor({
     try {
       const newSlides = await onReapplyTemplate(templateId);
       if (newSlides && fabricRef.current) {
+        // ref 도 바로 맞춘다 — 안 그러면 loadSlide 가 옛 슬라이드를 그린다(applySlideLayout 과 같음).
+        slidesRef.current = newSlides;
         setSlides(newSlides);
         setCurrentSlideIndex(0);
+        currentSlideIndexRef.current = 0;
         // Force a reload from the new state
         loadSlide(0);
         setUndoStack([]);
@@ -684,7 +761,11 @@ export function CanvasEditor({
     try {
       const rendered = await onChangeSlideLayout(idx, layoutRef);
       if (rendered && rendered[idx] && fabricRef.current) {
-        setSlides((prev) => prev.map((s, i) => (i === idx ? rendered[idx] : s)));
+        // loadSlide 는 slidesRef 를 읽는다. setSlides 만 하면 ref 가 다음 렌더까지 옛
+        // 배열이라 옛 슬라이드를 다시 그려, 레이아웃이 안 바뀐 것처럼 보였다(2026-09-18).
+        const next = slidesRef.current.map((s, i) => (i === idx ? rendered[idx] : s));
+        slidesRef.current = next;
+        setSlides(next);
         loadSlide(idx);
         setUndoStack([]);
         setRedoStack([]);
@@ -975,6 +1056,21 @@ export function CanvasEditor({
           }
           tgt.rx = tr0.__rx0 / (Number(tgt.scaleX) || 1);
           tgt.ry = tr0.__ry0 / (Number(tgt.scaleY) || 1);
+          tgt.dirty = true;
+        }
+        // Same for a free image's object-space round clip (이미지 라운드) —
+        // without this a stretched photo's corners go oval.
+        const tclip = tgt?.clipPath;
+        if (
+          tgt && tr0?.original && String(tgt.type).toLowerCase() === "image" &&
+          tclip && !tclip.absolutePositioned && ((tclip.rx || 0) > 0 || (tclip.ry || 0) > 0)
+        ) {
+          if (tr0.__crx0 === undefined) {
+            tr0.__crx0 = (tclip.rx || 0) * (Number(tr0.original.scaleX) || 1);
+            tr0.__cry0 = (tclip.ry || 0) * (Number(tr0.original.scaleY) || 1);
+          }
+          tclip.rx = tr0.__crx0 / (Number(tgt.scaleX) || 1);
+          tclip.ry = tr0.__cry0 / (Number(tgt.scaleY) || 1);
           tgt.dirty = true;
         }
         if (!tgt || !tgt.__lockAspect) return;
@@ -1497,9 +1593,15 @@ export function CanvasEditor({
             fill: obj.fill || "#000000",
             textAlign: (obj.textAlign as "left" | "center" | "right" | "justify") || "left",
             lineHeight: (obj.lineHeight as number) || 1.4,
+            // 자간 — 렌더러가 템플릿의 letter_spacing 을 Fabric 단위(1/1000 em)로
+            // 변환해 보낸다. 빠뜨리면 템플릿에서 맞춘 자간이 적용할 때 0 으로 풀린다.
+            charSpacing: Number(obj.charSpacing) || 0,
             angle: Number(obj.angle) || 0,
             originX: "left",
-            originY: "top",
+            // 세로 기준 — 템플릿에서 「아래 기준」으로 둔 글상자는 렌더러가
+            // originY:"bottom" 을 실어 보낸다(top = 글 블록의 아래 끝). 여기서 "top" 으로
+            // 굳히면 템플릿에서 아래로 맞춰 둔 글이 적용할 때마다 위 기준으로 바뀐다.
+            originY: String(obj.originY) === "bottom" ? "bottom" : "top",
           });
           // Drop shadow string from renderer (Fabric accepts CSS-like syntax)
           if (typeof obj.shadow === "string") {
@@ -1537,11 +1639,18 @@ export function CanvasEditor({
             strokeWidth: (Number(obj.strokeWidth) || 0) * scale,
             strokeUniform: true,
             angle: Number(obj.angle) || 0,
+            // 템플릿 도형의 불투명도(예: 본문 박스 60%) — 빠뜨리면 1 로 그려지고 자동저장이 굳힌다.
+            opacity: typeof obj.opacity === "number" ? obj.opacity : 1,
             originX: "left",
             originY: "top",
             selectable: obj.selectable !== false,
             evented: obj.selectable !== false,
           });
+          // Drop shadow string from renderer — same as the textbox branch above.
+          if (typeof obj.shadow === "string") {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (rect as any).set("shadow", obj.shadow);
+          }
           canvas.add(rect);
         } else if (obj.type === "circle") {
           const circle = new fabric.Circle({
@@ -1607,6 +1716,11 @@ export function CanvasEditor({
               angle: Number(obj.angle) || 0,
               opacity: typeof obj.opacity === "number" ? obj.opacity : 1,
             });
+            // Drop shadow string from renderer — same as the textbox branch above.
+            if (typeof obj.shadow === "string") {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (img as any).set("shadow", obj.shadow);
+            }
             if (Array.isArray(obj.filters) && obj.filters.length > 0) {
               const restoredFilters = obj.filters.map((f: any) => {
                 const type = String(f?.type || "").toLowerCase();
@@ -1658,7 +1772,11 @@ export function CanvasEditor({
               _autoTop: offsetT,
               _autoScale: coverScale,
             };
-            if (needsClip) {
+            // Rounded corners authored in the template (design-space px).
+            // The clip box below is the slot rect, so rounding it rounds the
+            // photo — no separate mask object.
+            const clipR = Math.max(0, Number(backendData._cornerRadius) || 0) * ratioX;
+            if (needsClip || clipR > 0) {
               // absolutePositioned: clipPath stays in canvas coords so the image
               // can be repositioned within the slot ("object-position" equivalent)
               // without dragging the clip along.
@@ -1671,6 +1789,8 @@ export function CanvasEditor({
                 top: targetT,
                 width: targetW,
                 height: targetH,
+                rx: clipR,
+                ry: clipR,
                 originX: "left",
                 originY: "top",
                 absolutePositioned: true,
@@ -1894,6 +2014,11 @@ export function CanvasEditor({
     const newCropY = existCropY + (auxT - imgT) / sy;
     const newWidth = auxW / sx;
     const newHeight = auxH / sy;
+    // 자르기는 clipPath 를 비운다 — 그 전에 걸려 있던 라운드(시각 px)를 기억해 뒀다가 다시 건다.
+    const origClip = cropOrigClipRef.current;
+    const keepR = origClip
+      ? (Number(origClip.rx) || 0) * (origClip.absolutePositioned ? (Number(origClip.scaleX) || 1) : sx)
+      : 0;
     imgAny.set({
       cropX: Math.max(0, newCropX),
       cropY: Math.max(0, newCropY),
@@ -1903,6 +2028,7 @@ export function CanvasEditor({
       top: auxT,
       clipPath: null,
     });
+    if (keepR > 0) applyImageCornerRadius(await getFabric(), imgAny, keepR);
     img.dirty = true;
     if (typeof img.setCoords === "function") img.setCoords();
 
@@ -3113,16 +3239,22 @@ export function CanvasEditor({
       const hiddenGuides = (canvas.getObjects() as any[]).filter((o) => isGuide(o) && o.visible !== false);
       for (const g of hiddenGuides) g.visible = false;
       canvas.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
+      const restoreClips = relaxPageEdgeClips(canvas, w, h);
       // 1:1 cover — crop the centred square of the page (top/bottom trimmed for
       // portrait), scaled to 480px.
-      const dataUrl: string = canvas.toDataURL({
-        format: "png",
-        left: PAGE_PAD + (w - side) / 2,
-        top: PAGE_PAD + (h - side) / 2,
-        width: side,
-        height: side,
-        multiplier: 480 / side,
-      });
+      let dataUrl: string;
+      try {
+        dataUrl = canvas.toDataURL({
+          format: "png",
+          left: PAGE_PAD + (w - side) / 2,
+          top: PAGE_PAD + (h - side) / 2,
+          width: side,
+          height: side,
+          multiplier: 480 / side,
+        });
+      } finally {
+        restoreClips();
+      }
       if (savedVT) canvas.setViewportTransform(savedVT);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (canvas as any).__suppressPageOutline = false;
@@ -3883,14 +4015,20 @@ export function CanvasEditor({
       );
       for (const g of exportHiddenGuides) g.visible = false;
       const { w: pageW, h: pageH } = canvasSizeRef.current;
-      const dataUrl = canvas!.toDataURL({
-        format: "png",
-        multiplier: 2,
-        left: PAGE_PAD,
-        top: PAGE_PAD,
-        width: pageW,
-        height: pageH,
-      });
+      const restoreClips = relaxPageEdgeClips(canvas, pageW, pageH);
+      let dataUrl: string;
+      try {
+        dataUrl = canvas!.toDataURL({
+          format: "png",
+          multiplier: 2,
+          left: PAGE_PAD,
+          top: PAGE_PAD,
+          width: pageW,
+          height: pageH,
+        });
+      } finally {
+        restoreClips();
+      }
       if (pb) {
         pb.set({ stroke: savedStroke, strokeWidth: savedStrokeWidth });
       }
@@ -4053,11 +4191,31 @@ export function CanvasEditor({
       pushUndo();
       const members = isActiveSel
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ? (target.getObjects() as any[]).filter((o) => String(o.type).toLowerCase() === "rect")
+        ? (target.getObjects() as any[]).filter((o) => ["rect", "image"].includes(String(o.type).toLowerCase()))
         : [target];
-      for (const o of members) {
+      // 이미지 라운드 (2026-09-15 사람 신고 — 「이미지에 라운드를 넣으면 적용이 안돼」).
+      // 전에는 rect 만 rx/ry 를 받았고 이미지는 슬라이더도 없어 둥글게 할 길이 없었다.
+      const rectMembers = members.filter((o) => String(o.type).toLowerCase() !== "image");
+      const imageMembers = members.filter((o) => String(o.type).toLowerCase() === "image");
+      for (const o of rectMembers) {
         o.set({ rx: r / (Number(o.scaleX) || 1), ry: r / (Number(o.scaleY) || 1) });
         o.dirty = true;
+      }
+      if (imageMembers.length) {
+        void getFabric().then((fabric) => {
+          for (const img of imageMembers) applyImageCornerRadius(fabric, img, r);
+          canvas.requestRenderAll();
+          saveCurrentSlide();
+          if (!isActiveSel) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const snap: any = { ...target };
+            snap.type = target.type;
+            snap.clipPath = target.clipPath;
+            snap.__fabricRef = target;
+            setSelectedObject(snap);
+          }
+        });
+        if (!rectMembers.length) return;
       }
       canvas.requestRenderAll();
       saveCurrentSlide();
@@ -5189,6 +5347,22 @@ export function CanvasEditor({
                   </option>
                 ))}
               </select>
+              {/* 드롭다운은 같은 값을 다시 골라도 onChange 가 안 뜬다 — 고친 템플릿을 다시 씌우는 버튼 */}
+              <button
+                onClick={() => currentTemplateId && handleTemplateChange(currentTemplateId)}
+                disabled={applyingTemplate || !canReapplyTemplate || !currentTemplateId}
+                title="템플릿을 고친 뒤 이 캐러셀에 다시 씌운다"
+                style={{
+                  padding: "4px 10px", fontSize: 11,
+                  background: "var(--bg-overlay)", color: "var(--text-primary)",
+                  border: "1px solid var(--border)", borderRadius: 5,
+                  cursor: canReapplyTemplate ? "pointer" : "not-allowed",
+                  opacity: canReapplyTemplate ? 1 : 0.55,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                다시 적용
+              </button>
               {onChangeSlideLayout && (
                 <button
                   onClick={() => setSlideLayoutPickerOpen(true)}

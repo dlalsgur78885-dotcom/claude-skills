@@ -30,6 +30,8 @@ export interface TextStyle {
   fill?: string;
   text_align?: "left" | "center" | "right";
   line_height?: number;
+  // 자간 — 편집기 표시 단위(0 = 기본). 렌더 시 ×10 해서 Fabric charSpacing 으로.
+  letter_spacing?: number;
   shadow?: ShadowSpec | null;
   stroke?: string | null;
   stroke_width?: number;
@@ -92,6 +94,8 @@ export interface TextSlot {
   size: Size;
   style: TextStyle;
   opacity?: number;  // 0..1, default 1
+  // 고정 문구 — 값이 있으면 슬라이드 데이터 대신 이 글자가 그대로 나온다.
+  fixed_text?: string | null;
 }
 
 export interface ItemBox {

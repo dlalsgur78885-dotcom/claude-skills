@@ -249,6 +249,55 @@ async def latest_prepared(
     return await _out(db, best[0], best[1])
 
 
+@router.delete("/old")
+async def delete_old(
+    axis: str = "",
+    hours: int = 24,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """그 축의 **오래된 회차를 지운다**(기본 24시간).
+
+    하루에 세 번 미리 만드는 축(X인용)은 회차가 매일 세 개씩 쌓인다. 지난 것을 놔두면
+    화면이 무엇을 이어 열지 헷갈리고 목록도 불어난다 — 2026-09-18 사람 지시
+    「각각 24시간 지나면 삭제되게 해놔」.
+
+    ⚠ **자기 회차만** 지운다(`owner`). 남의 계정 것을 건드리면 안 된다.
+    ⚠ 축을 비워 두면 **모든 축**이 대상이다. 일꾼은 축을 꼭 준다.
+
+    `created_at` 은 이 파일이 `datetime.now()` 로 적은 **서버 시계**다. 읽을 수 없거나
+    나이가 음수면(시계 어긋남) 지우지 않는다 — 잘못 지우는 쪽이 훨씬 나쁘다.
+    """
+    if hours < 1:
+        raise HTTPException(status_code=400, detail="hours 는 1 이상이어야 합니다.")
+    rows = (await db.execute(
+        select(AppSetting).where(AppSetting.key.like(f"{KEY_PREFIX}%"))
+    )).scalars().all()
+    now = datetime.now()
+    removed: list[str] = []
+    for row in rows:
+        try:
+            data = json.loads(row.value)
+        except json.JSONDecodeError:
+            continue
+        if data.get("owner") != user.id:
+            continue
+        if axis and data.get("axis") != axis:
+            continue
+        try:
+            made = datetime.fromisoformat(str(data.get("created_at") or ""))
+        except ValueError:
+            continue
+        age = (now - made).total_seconds() / 3600
+        if age < 0 or age < hours:
+            continue
+        await db.delete(row)
+        removed.append(row.key[len(KEY_PREFIX):])
+    if removed:
+        await db.commit()
+    return {"removed": removed, "count": len(removed)}
+
+
 @router.get("/{session_id}")
 async def get_session(session_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """화면이 주기적으로 물어보는 자리.

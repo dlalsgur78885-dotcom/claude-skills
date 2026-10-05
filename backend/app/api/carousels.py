@@ -504,6 +504,9 @@ def _template_has_multicell(layouts: dict) -> bool:
             if (int(grid.get("rows") or 1) * int(grid.get("cols") or 1)) > 1:
                 return True
         for slot in layout.get("text_slots") or []:
+            # 고정 문구 칸은 낱장 데이터를 안 쓴다 — 칸 나누기 판단에서 뺀다.
+            if (slot.get("fixed_text") or "").strip():
+                continue
             if "cell_" in str(slot.get("role") or ""):
                 return True
     return False
@@ -517,6 +520,9 @@ def _layout_has_body_slot(layout: dict) -> bool:
     if not isinstance(layout, dict):
         return False
     for slot in (layout.get("text_slots") or []):
+        # 고정 문구가 박힌 칸은 생성된 본문이 들어갈 자리가 아니다.
+        if (slot.get("fixed_text") or "").strip():
+            continue
         if str(slot.get("role") or "").lower() in _BODY_TEXT_ROLES:
             return True
     return False

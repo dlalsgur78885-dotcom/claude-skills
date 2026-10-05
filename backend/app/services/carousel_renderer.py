@@ -13,6 +13,7 @@ Output:
 """
 
 import logging
+import math
 import re
 from typing import Any
 
@@ -23,6 +24,10 @@ from app.services.image_search import search_all
 # emits these instead of a `grid` block whenever the layout is hand-drawn
 # (e.g. zig-zag) and a regular rows×cols grid can't describe it.
 _CELL_ROLE_RE = re.compile(r"^cell_(title|subtitle|description)_r(\d+)c(\d+)$")
+# 번호 붙은 역할 — 한 낱장에 같은 역할 칸을 여럿 두고 칸마다 다른 문구를 넣는다.
+# headline2 → slide["headline2"], subheadline2 → slide["subtext2"], body2 → slide["body2"]
+# (1번은 기존 headline/subheadline/body).
+_NUMBERED_ROLE_RE = re.compile(r"^(headline|subheadline|body)([2-9])$")
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +111,11 @@ def _hex_to_rgba(hex_color: str, alpha: float) -> str:
 def _text_for_slot(role: str, slide: dict) -> str:
     """Map a template text-slot role to a string from the slide content."""
     role = role.lower()
+    numbered = _NUMBERED_ROLE_RE.match(role)
+    if numbered:
+        # 비어 있으면 빈칸 — 1번 문구로 채우면 같은 글이 두 번 찍힌다.
+        key = "subtext" if numbered.group(1) == "subheadline" else numbered.group(1)
+        return slide.get(f"{key}{numbered.group(2)}") or ""
     if role == "tag":
         # Use the badge/pill label specifically; fall back to subtext
         return slide.get("tag") or slide.get("subtext") or ""
@@ -125,6 +135,34 @@ def _text_for_slot(role: str, slide: dict) -> str:
     return ""
 
 
+def _shadow_css(spec: dict | None) -> str | None:
+    """템플릿 편집기의 ShadowSpec → Fabric 그림자 문자열.
+
+    계산은 편집기와 같다(frontend/src/components/template-editor/renderer.ts
+    `buildShadowString`). 편집기는 화면 배율로 줄이지만 여기는 디자인 좌표
+    그대로라 배율이 1 이다.
+    """
+    if not isinstance(spec, dict):
+        return None
+    try:
+        angle = float(spec.get("angle") or 0)
+        distance = float(spec.get("distance") or 0)
+        blur = float(spec.get("blur") or 0)
+        opacity = float(spec.get("opacity") if spec.get("opacity") is not None else 100)
+    except (TypeError, ValueError):
+        return None
+    rad = math.radians(angle)
+    offset_x = round(distance * math.cos(rad))
+    offset_y = round(distance * math.sin(rad))
+    h = str(spec.get("color") or "#000000").lstrip("#")
+    try:
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except (ValueError, IndexError):
+        r = g = b = 0
+    alpha = max(0.0, min(100.0, opacity)) / 100
+    return f"rgba({r},{g},{b},{alpha:.2f}) {offset_x}px {offset_y}px {round(blur)}px"
+
+
 def _make_textbox(
     text: str,
     *,
@@ -133,10 +171,12 @@ def _make_textbox(
     style: dict,
     canvas_w: int,
     default_font: str,
-    over_image: bool = False,
 ) -> dict:
     """Convert template text slot → Fabric textbox dict."""
     anchor = (pos or {}).get("anchor", "top-left")
+    # 세로 기준 — "bottom" 이면 y 가 글 블록의 아래 끝이다. 줄 수가 달라져도
+    # 아래가 고정되고 위로 자란다(Fabric 이 실제 렌더 높이로 잡는다).
+    v_anchor = (pos or {}).get("vertical_anchor", "top")
     x = float((pos or {}).get("x", 0))
     y = float((pos or {}).get("y", 0))
     w = float((size or {}).get("width", canvas_w))
@@ -158,14 +198,18 @@ def _make_textbox(
         "fill": fill,
         "textAlign": (style or {}).get("text_align") or "left",
         "lineHeight": float((style or {}).get("line_height") or 1.4),
+        # 자간 — 템플릿은 편집기 표시 단위로 저장한다(0 = 기본). Fabric 은 1/1000 em.
+        "charSpacing": float((style or {}).get("letter_spacing") or 0) * 10,
         "originX": "left",
-        "originY": "top",
+        "originY": "bottom" if v_anchor == "bottom" else "top",
     }
-    # Drop shadow when text sits over a photo — readable against any backdrop.
-    if over_image:
-        is_light = fill.upper() in ("#FFFFFF", "#FFF") or _looks_light(fill)
-        shadow_color = "rgba(0,0,0,0.7)" if is_light else "rgba(255,255,255,0.6)"
-        box["shadow"] = f"{shadow_color} 0px 2px 6px"
+    # 그림자는 **템플릿이 정한 것만** 그린다(2026-09-30 사람 지시 — 「템플릿에서 그림자
+    # 없음이면 진짜 안 생기게」). 전에는 사진 배경 위 글자에 검정·흰 그림자를 자동으로
+    # 얹어, 템플릿에서 그림자를 끈 낱장에도 그림자가 붙었다. 사진 위에서 글이 안 읽히면
+    # 템플릿 편집기에서 그 글상자의 그림자를 켠다(배경 오버레이 「없음」과 같은 규칙).
+    style_shadow = _shadow_css((style or {}).get("shadow"))
+    if style_shadow:
+        box["shadow"] = style_shadow
     return box
 
 
@@ -185,6 +229,7 @@ def _make_rect(
     left: int, top: int, width: int, height: int, fill: str,
     opacity: float = 1.0, rx: int = 0,
     stroke: str | None = None, stroke_width: int = 0,
+    shadow: str | None = None,
 ) -> dict:
     out = {
         "type": "rect",
@@ -202,6 +247,8 @@ def _make_rect(
         out["stroke"] = stroke
         out["strokeWidth"] = int(stroke_width)
         out["strokeUniform"] = True
+    if shadow:
+        out["shadow"] = shadow
     return out
 
 
@@ -215,6 +262,8 @@ def _make_image(
     opacity: float = 1.0,
     filters: list[dict] | None = None,
     data: dict | None = None,
+    corner_radius: int = 0,
+    shadow: str | None = None,
 ) -> dict:
     # `data` round-trips through Fabric as `obj.data` so the editor can recognize
     # user-picked photos and exempt them from the "lock backdrop objects" rule.
@@ -231,6 +280,11 @@ def _make_image(
     merged_data.setdefault("_slotT", int(top))
     merged_data.setdefault("_slotW", int(width))
     merged_data.setdefault("_slotH", int(height))
+    # Rounded corners travel as data, not geometry: the editor re-derives the
+    # image's clip box on load (cover-fit), so a clipPath written here would be
+    # thrown away. `_cornerRadius` is design-space px — the editor scales it.
+    if corner_radius > 0:
+        merged_data.setdefault("_cornerRadius", int(corner_radius))
     obj = {
         "type": "image",
         "src": src,
@@ -243,6 +297,8 @@ def _make_image(
     }
     if filters:
         obj["filters"] = filters
+    if shadow:
+        obj["shadow"] = shadow
     return obj
 
 
@@ -347,16 +403,20 @@ async def render_slide_to_canvas(
                 c = s.get("color") or "#000000"
                 a = float(s.get("alpha") or 0.0)
                 color_stops.append({"offset": float(s.get("offset") or 0.0), "color": _hex_to_rgba(c, a)})
+            # 그라데이션은 아래쪽 절반에만 깐다(1080×1350 이면 x0 y675 w1080 h675) —
+            # 전체에 깔면 사진 윗부분까지 어두워진다(2026-09-14 사람 지시).
+            box_top = canvas_h // 2
+            box_h = canvas_h - box_top
             objects.append({
                 "type": "rect",
-                "left": 0, "top": 0,
-                "width": canvas_w, "height": canvas_h,
+                "left": 0, "top": box_top,
+                "width": canvas_w, "height": box_h,
                 "fill": {
                     "type": "linear",
                     "coords": (
                         {"x1": 0, "y1": 0, "x2": canvas_w, "y2": 0} if direction == "horizontal"
-                        else {"x1": 0, "y1": 0, "x2": canvas_w, "y2": canvas_h} if direction == "diagonal"
-                        else {"x1": 0, "y1": 0, "x2": 0, "y2": canvas_h}
+                        else {"x1": 0, "y1": 0, "x2": canvas_w, "y2": box_h} if direction == "diagonal"
+                        else {"x1": 0, "y1": 0, "x2": 0, "y2": box_h}
                     ),
                     "colorStops": color_stops,
                 },
@@ -366,13 +426,12 @@ async def render_slide_to_canvas(
     else:
         overlay_color = bg_spec.get("overlay_color")
         overlay_opacity = bg_spec.get("overlay_opacity") or 0.0
-        if has_photo_bg:
+        # 오버레이 「없음」(색 없음)이면 아무것도 얹지 않는다 — 예전엔 여기서 검정 35% 막을
+        # 자동으로 깔았다(2026-09-21 사람 지시 — 「배경 오버레이 없음으로 하면 아무것도 안생기게」).
+        if has_photo_bg and overlay_color:
             # Bump too-weak overlays to keep headlines readable
-            if not overlay_color or overlay_opacity < 0.35:
-                overlay_color = overlay_color or "#000000"
-                overlay_opacity = max(overlay_opacity, 0.35)
-            if overlay_color and overlay_opacity > 0.001:
-                objects.append(_make_rect(0, 0, canvas_w, canvas_h, _hex_to_rgba(overlay_color, overlay_opacity), opacity=1.0))
+            overlay_opacity = max(overlay_opacity, 0.35)
+            objects.append(_make_rect(0, 0, canvas_w, canvas_h, _hex_to_rgba(overlay_color, overlay_opacity), opacity=1.0))
 
     # When there's no photo background, flip default text colors that were
     # designed for over-image readability so text stays visible on the brand bg.
@@ -384,19 +443,23 @@ async def render_slide_to_canvas(
         kind = dec.get("kind")
         pos = dec.get("position") or {}
         size = dec.get("size") or {}
+        dec_shadow = _shadow_css(dec.get("shadow"))
         if kind == "logo" and brand.get("logo_path"):
             objects.append(_make_image(
                 brand["logo_path"],
                 left=int(pos.get("x", 0)), top=int(pos.get("y", 0)),
                 width=int(size.get("width", 200)), height=int(size.get("height", 60)),
+                shadow=dec_shadow,
             ))
         elif kind in ("shape",):
             fill = dec.get("fill") or brand.get("primary_color") or "#FFFFFF"
             objects.append(_make_rect(
                 int(pos.get("x", 0)), int(pos.get("y", 0)),
                 int(size.get("width", 100)), int(size.get("height", 50)),
-                fill, opacity=1.0, rx=int(dec.get("corner_radius") or 0),
+                fill, opacity=float(dec.get("opacity") if dec.get("opacity") is not None else 1.0),
+                rx=int(dec.get("corner_radius") or 0),
                 stroke=dec.get("stroke"), stroke_width=int(dec.get("stroke_width") or 0),
+                shadow=dec_shadow,
             ))
         elif kind == "image" and dec.get("src"):
             objects.append(_make_image(
@@ -405,23 +468,30 @@ async def render_slide_to_canvas(
                 width=int(size.get("width", 100)), height=int(size.get("height", 100)),
                 opacity=float(dec.get("opacity") if dec.get("opacity") is not None else 1.0),
                 filters=_blend_color_filter(dec.get("color_fill")),
+                corner_radius=int(dec.get("corner_radius") or 0),
+                shadow=dec_shadow,
             ))
 
     # 4. Text slots (slide-level headline/subheadline/...)
     default_font = brand.get("font_family") or "Pretendard"
     for slot in _as_list(layout.get("text_slots")):
         role = slot.get("role", "headline")
+        # 고정 문구가 있으면 슬라이드 데이터 대신 그대로 찍는다 — 템플릿을 쓰는
+        # 모든 캐러셀에 같은 문구가 나온다. 칸 역할(cell_*)이어도 마찬가지다.
+        fixed = (slot.get("fixed_text") or "").strip()
         # Per-cell roles (cell_title_r0c1 etc.) are rendered by the freeform
         # cell pass below — skip here so we don't try to read a slide-level
         # field for them.
-        if _CELL_ROLE_RE.match(role):
+        if not fixed and _CELL_ROLE_RE.match(role):
             continue
-        text = _text_for_slot(role, slide)
+        text = fixed or _text_for_slot(role, slide)
         if not text:
             continue
         style = dict(slot.get("style") or {})
-        # Brand color override for accent text slots
-        if role in ("tag", "cta_button") and brand.get("primary_color"):
+        # Brand color fills accent text slots only when the slot has no color of
+        # its own — a color picked in the template editor must win (2026-09-18:
+        # 88 TAG was set blue but rendered brand black).
+        if role in ("tag", "cta_button") and brand.get("primary_color") and not style.get("fill"):
             style["fill"] = brand["primary_color"]
         # Auto-contrast: if no photo bg and the template's fill would be invisible
         # on the solid brand background, flip it to a readable color.
@@ -439,7 +509,6 @@ async def render_slide_to_canvas(
             style=style,
             canvas_w=canvas_w,
             default_font=default_font,
-            over_image=has_photo_bg,
         ))
 
     # 5. Grid (per-item cards: image area + title + subtitle + description)
@@ -471,15 +540,17 @@ async def render_slide_to_canvas(
             ia_y = cell_y + int(ia.get("y", 0))
             ia_w = int(ia.get("width", cell_w - 40))
             ia_h = int(ia.get("height", 200))
+            ia_r = int(ia.get("border_radius") or 0)
             if img_src:
                 # Mark grid-cell photos so the editor lets users move/replace
                 # them — same exemption as full-canvas user images.
                 objects.append(_make_image(
                     img_src, left=ia_x, top=ia_y, width=ia_w, height=ia_h,
                     data={"kind": "user_item_image", "slide_index": slide.get("index", -1), "item_index": idx},
+                    corner_radius=ia_r,
                 ))
             else:
-                objects.append(_make_rect(ia_x, ia_y, ia_w, ia_h, "rgba(120,120,120,0.45)"))
+                objects.append(_make_rect(ia_x, ia_y, ia_w, ia_h, "rgba(120,120,120,0.45)", rx=ia_r))
 
             # Title
             title_style = item_box.get("title_style") or {}
@@ -491,7 +562,6 @@ async def render_slide_to_canvas(
                 style=title_style,
                 canvas_w=canvas_w,
                 default_font=default_font,
-                over_image=has_photo_bg,
             ))
 
             # Subtitle / description rendering with fallback.
@@ -526,7 +596,6 @@ async def render_slide_to_canvas(
                     style=sub_style,
                     canvas_w=canvas_w,
                     default_font=default_font,
-                    over_image=has_photo_bg,
                 ))
 
             if has_desc_slot and desc_text:
@@ -537,7 +606,6 @@ async def render_slide_to_canvas(
                     style=desc_style,
                     canvas_w=canvas_w,
                     default_font=default_font,
-                    over_image=has_photo_bg,
                 ))
 
     # 5b. Freeform cells (hand-drawn layouts without a regular grid block).
@@ -549,6 +617,9 @@ async def render_slide_to_canvas(
     if not grid and items:
         cell_slots: dict[tuple[int, int], dict] = {}
         for slot in _as_list(layout.get("text_slots")):
+            # 고정 문구 칸은 위 4번에서 이미 찍었다 — 여기서 또 찍으면 겹친다.
+            if (slot.get("fixed_text") or "").strip():
+                continue
             m = _CELL_ROLE_RE.match(slot.get("role") or "")
             if not m:
                 continue
@@ -562,6 +633,13 @@ async def render_slide_to_canvas(
         # decoration just reserves the box); the user-picked photo from
         # step 2 replaces it via item.image_url, just like a grid cell.
         image_decos = [d for d in _as_list(layout.get("decorations")) if d.get("kind") == "image"]
+        # ⚠ src 가 이미 있는 image decoration 은 **그림(배경 아트워크)** 이지 사진 자리가 아니다.
+        #   빈 자리가 하나라도 있으면 그쪽만 쓴다 — 안 그러면 배열 순서대로 짝지어져
+        #   첫 번째 아트워크(1080×1350)가 사진으로 덮인다. 트래블뷰(맛집)_2 의 `표지`·`본문1`
+        #   이 그랬다(2026-09-28 — 사진이 칸이 아니라 배경처럼 깔렸다).
+        empty_decos = [d for d in image_decos if not d.get("src")]
+        if empty_decos:
+            image_decos = empty_decos
         # Text slots are not required. A layout may reserve only an image box
         # (CTA1: one 650x650 image decoration, no cell_* roles) — gating on
         # `cell_slots` alone dropped those slides' item photos silently.
@@ -577,13 +655,17 @@ async def render_slide_to_canvas(
                     ia_y = int(dpos.get("y", 0))
                     ia_w = int(dsize.get("width", 300))
                     ia_h = int(dsize.get("height", 300))
+                    dec_r = int(image_decos[idx].get("corner_radius") or 0)
+                    dec_sh = _shadow_css(image_decos[idx].get("shadow"))
                     if img_src:
                         objects.append(_make_image(
                             img_src, left=ia_x, top=ia_y, width=ia_w, height=ia_h,
                             data={"kind": "user_item_image", "slide_index": slide.get("index", -1), "item_index": idx},
+                            corner_radius=dec_r,
+                            shadow=dec_sh,
                         ))
                     else:
-                        objects.append(_make_rect(ia_x, ia_y, ia_w, ia_h, "rgba(120,120,120,0.45)"))
+                        objects.append(_make_rect(ia_x, ia_y, ia_w, ia_h, "rgba(120,120,120,0.45)", rx=dec_r, shadow=dec_sh))
                 # Title / subtitle / description — each cell's slot position is
                 # already absolute (no offset math needed).
                 for cell_kind, item_field, fallback in (
@@ -606,7 +688,6 @@ async def render_slide_to_canvas(
                         style=slot.get("style") or {},
                         canvas_w=canvas_w,
                         default_font=default_font,
-                        over_image=has_photo_bg,
                     ))
 
     return {

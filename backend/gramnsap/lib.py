@@ -160,6 +160,11 @@ class Output:
 
 
 class GramSnap:
+    # 2026-09-04 upstream(deongdion/GramSnap 8250479): 사이트가 서명 비밀값을 바꾸고 API 를
+    # api-wh 호스트로 옮겼다. 옛 값으로는 전 계정 401 이었다(2026-10-02~10-05 로그).
+    # 프록시 인자와 until_shortcode 조기 종료는 이 저장소에서 덧붙인 것이라 그대로 둔다.
+    _API_BASE = "https://api-wh.gramsnap.com"
+
     def __init__(self, proxy: str | None = None):
         proxies = {"http": proxy, "https": proxy} if proxy else None
         self.session = AsyncSession(impersonate="chrome", proxies=proxies)
@@ -171,32 +176,43 @@ class GramSnap:
             "referer": "https://gramsnap.com/en/instagram-profile-viewer/",
             "user-agent": ua.random,
         })
+        self._tsc = 0
 
     async def close(self):
         await self.session.close()
 
     async def __aenter__(self):
+        await self._sync_time()
         return self
 
     async def __aexit__(self, *_):
         await self.close()
 
-    _SECRET = "34e4d4eb0f74189073c8be297e8bcc002bdff6ddce2fda624e45363a5d6c589d"
-    _TS = 1773739557351
-    _TSC = 0
+    async def _sync_time(self):
+        # 사이트가 서명 전에 /msec 로 시계를 맞춘다. 실패하면 보정 없이 서명한다.
+        try:
+            resp = await self.session.get("https://gramsnap.com/msec")
+            msec = float((resp.json() or {}).get("msec", 0))
+            self._tsc = int(time.time() * 1000) - int(msec * 1000)
+        except Exception:
+            self._tsc = 0
+
+    _SECRET = "5ffa2766f492b10380b0233714f052da80bd3e20682e83352725ea75978e460d"
+    _TS = 1788369349112
 
     def __sign(self, body: dict) -> dict:
-        ts = int(time.time() * 1000) - self._TSC
-        raw = json.dumps(body, separators=(",", ":"), sort_keys=True) + str(ts) + self._SECRET
+        ts = int(time.time() * 1000) - self._tsc
+        raw = json.dumps(body, separators=(",", ":"), sort_keys=True, ensure_ascii=False) + str(ts) + self._SECRET
         _s = hashlib.sha256(raw.encode()).hexdigest()
-        return {**body, "ts": ts, "_ts": self._TS, "_tsc": self._TSC, "_s": _s}
+        return {**body, "ts": ts, "_ts": self._TS, "_tsc": self._tsc, "_s": _s}
 
     _RETRY_DELAY = 2
+    _TIMEOUT = 180
 
     async def __request(self, url: str, body: dict, retry: int):
         attempt = 0
         while True:
-            resp = await self.session.post(url, json=self.__sign(body))
+            resp = await self.session.post(url, json=self.__sign(body), timeout=self._TIMEOUT)
             if resp.status_code == 502 and (retry == -1 or attempt < retry):
                 attempt += 1
                 await asyncio.sleep(self._RETRY_DELAY)
@@ -207,7 +223,7 @@ class GramSnap:
         posts, max_id = [], ""
         while True:
             resp = await self.__request(
-                "https://gramsnap.com/api/v1/instagram/postsV2",
+                f"{self._API_BASE}/api/v1/instagram/postsV2",
                 {"username": username, "maxId": max_id}, retry,
             )
             if resp.status_code == 502:
@@ -233,7 +249,7 @@ class GramSnap:
         posts, max_id = [], ""
         while True:
             resp = await self.__request(
-                "https://gramsnap.com/api/v1/instagram/posts",
+                f"{self._API_BASE}/api/v1/instagram/posts",
                 {"username": username, "maxId": max_id}, retry,
             )
             if resp.status_code == 502:

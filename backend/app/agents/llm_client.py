@@ -6,7 +6,7 @@ falling back to LiteLLM API only when CLI is unavailable or an API key is set.
 CLI tools used:
   claude -p "prompt" --output-format text   (Claude Code CLI)
   gemini -p "prompt"                        (Google Gemini CLI)
-  codex exec -m gpt-5.6-sol -o out.txt -    (OpenAI Codex CLI — 문구 생성)
+  codex exec -m gpt-6-sol -o out.txt -      (OpenAI Codex CLI — 문구 생성)
 
 Environment variables (only needed if CLI unavailable):
   ANTHROPIC_API_KEY  - for Claude models via API
@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import shutil
+from pathlib import Path
 import tempfile
 from typing import Any
 
@@ -33,6 +34,26 @@ CODEX_CLI = shutil.which("codex")
 # 문구 한 벌에 몇 분이 걸린다. 서버 문구 생성은 짧은 JSON 한 덩어리라 낮은 추론으로 충분하다
 # (2026-09-02 실측: low 16~18초 / medium 22초, 결과 품질 차이 없음). 호출마다 덮어쓴다.
 CODEX_REASONING_EFFORT = "low"
+
+# 문구 짓기에는 codex 의 코딩 에이전트 지침과 도구(브라우저·셸·이미지·앱 …)가 필요 없다.
+# 그대로 두면 「OK」 한 마디에도 입력이 1.39만 토큰이었다 — 지침을 아래 짧은 것으로 바꾸고
+# 도구 기능을 끄면 0.7만이 된다(2026-10-05 실측, 번역 결과 같음). 호출이 회차당 90번 안팎이다.
+# 이미지 생성(`services/codex_image.py`)은 따로 codex 를 부르므로 여기와 상관없다.
+CODEX_INSTRUCTIONS_FILE = Path(__file__).with_name("codex_writer_instructions.md")
+CODEX_OFF_FEATURES = (
+    "apps", "browser_use", "browser_use_external", "computer_use", "image_generation",
+    "multi_agent", "plugins", "skill_search", "tool_suggest", "goals", "sleep_tool",
+    "in_app_browser", "realtime_conversation", "shell_tool", "unified_exec", "hooks", "mentions_v2",
+)
+
+
+def _codex_lean_flags() -> list[str]:
+    flags: list[str] = []
+    if CODEX_INSTRUCTIONS_FILE.exists():
+        flags += ["-c", f'model_instructions_file="{CODEX_INSTRUCTIONS_FILE.as_posix()}"']
+    for feature in CODEX_OFF_FEATURES:
+        flags += ["-c", f"features.{feature}=false"]
+    return flags
 
 # Running totals for vision token usage (process-local; reset by tests).
 # Authoritative source is the `usage_logs` DB table written by _log_usage();
@@ -85,8 +106,18 @@ MODELS = {
     # Codex (CLI 전용 — API 경로가 없다). 캐러셀 문구 생성용.
     # CLI 가 없거나 실패하면 "fallback" 모델로 넘어간다 — prod 서버에는 codex 가 없을 수 있고,
     # 그때 문구 생성이 통째로 죽는 것보다 예전 모델로 짓는 편이 낫다.
-    "codex-sol": {"provider": "codex", "model_id": "gpt-5.6-sol", "cli_model": "gpt-5.6-sol",
-                  "fallback": "gemini-flash"},
+    # 2026-09-23 gpt-5.6-sol → gpt-6-sol. 같은 주제로 나란히 돌려 고른 것이다:
+    # 훅 37초→10초 · 본문 12초→8초로 **2.3배 빠르고**, 규칙(두 줄 훅·A/B/C·결 분리)은
+    # 그대로 지킨다. 결은 5.6 쪽이 점잖고 6 쪽이 구어에 가깝다.
+    # ⚠ 2026-09-28 폴백을 gemini-flash → sonnet 으로 바꿨다. gemini CLI 가 계정 문제로 죽는다
+    #   (IneligibleTierError — 「Gemini Code Assist for individuals 를 더는 지원하지 않는다」).
+    #   그날 codex 사용량 한도에 걸렸을 때 폴백도 같이 죽어 **문구 생성이 통째로 멈췄다.**
+    "codex-sol": {"provider": "codex", "model_id": "gpt-6-sol", "cli_model": "gpt-6-sol",
+                  "fallback": "sonnet"},
+    # 가벼운 자리 전용(번역·여는 한 줄). 더 빠르지만 **문구를 짓게 하지 않는다** —
+    # 같은 시험에서 원문에 없는 「창가석」을 지어냈고 「モンスター」를 「괴물」로 옮겼다.
+    "codex-luna": {"provider": "codex", "model_id": "gpt-6-luna", "cli_model": "gpt-6-luna",
+                   "fallback": "sonnet"},
 
     # Image generation/edit (a.k.a. nanobanana, nanobanana2)
     "nanobanana2":           {"provider": "gemini", "model_id": "gemini-3.1-flash-image-preview",       "cli_model": ""},  # Flash, fast/cheap
@@ -152,7 +183,9 @@ async def _call_claude_cli(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+            # 지침서를 통째로 싣는 자리(캐러셀 문구)는 프롬프트가 2만 자를 넘는다 —
+            # 120초로는 모자라 codex 폴백이 그대로 시간 초과로 죽었다(2026-09-28).
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
 
         if proc.returncode != 0:
             err = stderr.decode("utf-8", errors="replace").strip()
@@ -160,7 +193,13 @@ async def _call_claude_cli(
 
         return stdout.decode("utf-8", errors="replace").strip()
     finally:
-        os.unlink(prompt_file)
+        try:
+            os.unlink(prompt_file)
+        except OSError:
+            # ⚠ 윈도우에서는 CLI 가 아직 파일을 물고 있으면 지워지지 않는다(WinError 32).
+            #   임시 파일 하나 남는 것보다, 답을 다 받아 놓고 **여기서 터지는 쪽**이 훨씬 나쁘다
+            #   (2026-09-28 — 주제 생성이 답을 받고도 이 줄에서 죽었다).
+            pass
 
 
 async def _call_gemini_cli(
@@ -168,7 +207,14 @@ async def _call_gemini_cli(
     system: str | None = None,
     model: str = "gemini-2.5-flash",
 ) -> str:
-    """Call Gemini via `gemini` CLI."""
+    """Call Gemini via `gemini` CLI.
+
+    ⚠ 2026-09-28 이 길은 **이 기계에서 안 돈다.** 두 가지가 겹쳐 있다:
+      ① `-p` 뒤에 값을 안 주고 프롬프트를 stdin 으로 넣는데, 지금 CLI 는 값을 요구한다
+         (`Not enough arguments following: p`).
+      ② 고쳐도 로그인 자체가 막힌다 — `IneligibleTierError`(개인용 Gemini Code Assist 지원 종료).
+    그래서 codex 폴백을 claude 쪽(sonnet)으로 돌렸다. 여기는 계정이 풀리면 다시 본다.
+    """
     # Combine system + user prompt for CLI
     full_prompt = prompt
     if system:
@@ -188,7 +234,9 @@ async def _call_gemini_cli(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+            # 지침서를 통째로 싣는 자리(캐러셀 문구)는 프롬프트가 2만 자를 넘는다 —
+            # 120초로는 모자라 codex 폴백이 그대로 시간 초과로 죽었다(2026-09-28).
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
 
         if proc.returncode != 0:
             err = stderr.decode("utf-8", errors="replace").strip()
@@ -196,7 +244,13 @@ async def _call_gemini_cli(
 
         return stdout.decode("utf-8", errors="replace").strip()
     finally:
-        os.unlink(prompt_file)
+        try:
+            os.unlink(prompt_file)
+        except OSError:
+            # ⚠ 윈도우에서는 CLI 가 아직 파일을 물고 있으면 지워지지 않는다(WinError 32).
+            #   임시 파일 하나 남는 것보다, 답을 다 받아 놓고 **여기서 터지는 쪽**이 훨씬 나쁘다
+            #   (2026-09-28 — 주제 생성이 답을 받고도 이 줄에서 죽었다).
+            pass
 
 
 async def _log_codex_usage(model: str, stdout: bytes) -> None:
@@ -236,11 +290,14 @@ async def _log_codex_usage(model: str, stdout: bytes) -> None:
 async def _call_codex_cli(
     prompt: str,
     system: str | None = None,
-    model: str = "gpt-5.6-sol",
+    model: str = "gpt-6-sol",
     timeout: float = 180.0,
     json_schema: dict | None = None,
+    images: list[str] | None = None,
 ) -> str:
     """Call Codex via `codex exec` (non-interactive).
+
+    `images` — 모델에게 보여 줄 로컬 그림 경로(`-i`). 훅 창고가 표지 글자를 읽을 때 쓴다.
 
     플래그는 2026-09-02 에 codex-cli 0.147.0 으로 하나씩 확인한 것이다:
       exec                   비대화형. 빼면 대화 UI 가 떠서 서버가 그대로 멈춘다.
@@ -283,6 +340,7 @@ async def _call_codex_cli(
             CODEX_CLI, "exec",
             "-m", model,
             "-c", f'model_reasoning_effort="{CODEX_REASONING_EFFORT}"',
+            *_codex_lean_flags(),
             "--sandbox", "read-only",
             "--skip-git-repo-check",
             "--ephemeral",
@@ -292,6 +350,8 @@ async def _call_codex_cli(
         ]
         if schema_file:
             cmd += ["--output-schema", schema_file]
+        for image in images or []:
+            cmd += ["-i", image]
         cmd.append("-")
 
         with open(prompt_file, "r", encoding="utf-8") as pf:
@@ -305,7 +365,20 @@ async def _call_codex_cli(
 
         if proc.returncode != 0:
             err = stderr.decode("utf-8", errors="replace").strip()
-            raise RuntimeError(f"codex CLI error (exit {proc.returncode}): {err[-400:]}")
+            # `--json` 이면 실패 사유가 stderr 가 아니라 **stdout 이벤트**(error · turn.failed)로 온다.
+            # stderr 만 보면 「exit 1: 」 처럼 빈 사유만 남아 원인을 못 찾았다(2026-10-05).
+            events = []
+            for line in stdout.decode("utf-8", errors="replace").splitlines():
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if ev.get("type") in ("error", "turn.failed"):
+                    msg = ev.get("message") or (ev.get("error") or {}).get("message") or ""
+                    if msg:
+                        events.append(str(msg))
+            detail = " | ".join(events[-2:]) or err
+            raise RuntimeError(f"codex CLI error (exit {proc.returncode}): {detail[-400:]}")
 
         if not os.path.exists(out_file):
             raise RuntimeError("codex CLI 가 답을 남기지 않았습니다 (-o 파일 없음)")
@@ -421,10 +494,22 @@ async def llm_call(
                     model=entry["cli_model"], max_tokens=max_tokens,
                 )
             elif provider == "codex":
-                result = await _call_codex_cli(
-                    prompt_text, system=system,
-                    model=entry["cli_model"], json_schema=json_schema,
-                )
+                # 「Selected model is at capacity」 — OpenAI 쪽이 잠깐 붐빈 것이다(2026-10-05 실측:
+                # 5개 동시 호출 중 1개). 바로 sonnet 폴백으로 넘기면 문구 결이 달라지고 돈이 든다.
+                # 몇 초 뒤 다시 부르면 대개 된다 → 붐빔일 때만 두 번 더 기다렸다 부른다.
+                for attempt, wait in enumerate((0, 4, 10)):
+                    if wait:
+                        logger.info(f"[LLM/CLI] {model} 붐빔 — {wait}초 뒤 다시 부릅니다({attempt}/2)")
+                        await asyncio.sleep(wait)
+                    try:
+                        result = await _call_codex_cli(
+                            prompt_text, system=system,
+                            model=entry["cli_model"], json_schema=json_schema,
+                        )
+                        break
+                    except RuntimeError as e:
+                        if "at capacity" not in str(e) or attempt == 2:
+                            raise
             else:  # gemini
                 result = await _call_gemini_cli(
                     prompt_text, system=system,

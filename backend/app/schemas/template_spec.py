@@ -18,6 +18,9 @@ class Position(BaseModel):
     x: int
     y: int
     anchor: Literal["top-left", "center", "top-center", "bottom-center"] = "top-left"
+    # 세로 기준. "bottom" 이면 `y` 를 글 블록의 **아래 끝**으로 읽어, 줄이 늘면 위로
+    # 자란다(줄이 줄어도 아래가 고정). 글상자에만 쓴다.
+    vertical_anchor: Literal["top", "bottom"] = "top"
 
 
 class Size(BaseModel):
@@ -32,6 +35,9 @@ class TextStyle(BaseModel):
     fill: str = "#000000"
     text_align: Literal["left", "center", "right"] = "left"
     line_height: float = 1.4
+    # 자간. 편집기와 같은 표시 단위(0 = 기본, 음수는 좁게) — Fabric charSpacing 은
+    # 1/1000 em 이라 렌더러에서 ×10 해서 넘긴다.
+    letter_spacing: float = 0
 
 
 class Background(BaseModel):
@@ -63,6 +69,9 @@ _STANDARD_ROLES = {
 # Per-cell roles used by freeform (non-grid) layouts. Pattern:
 # cell_{title|subtitle|description}_r{row}c{col} where row/col are digits.
 _CELL_ROLE_RE = re.compile(r"^cell_(title|subtitle|description)_r(\d+)c(\d+)$")
+# Numbered slide-level roles (headline2, subheadline3, body2) — several same-role
+# slots on one layout, each reading its own slide field. Mirrors carousel_renderer.
+_NUMBERED_ROLE_RE = re.compile(r"^(headline|subheadline|body)[2-9]$")
 
 
 class TextSlot(BaseModel):
@@ -77,6 +86,9 @@ class TextSlot(BaseModel):
     role: str
     position: Position
     size: Size
+    # 고정 문구. 값이 있으면 슬라이드 데이터 대신 이 글자를 그대로 찍는다 —
+    # 템플릿을 쓰는 모든 캐러셀에 같은 문구가 나온다(자동 생성이 못 덮어쓴다).
+    fixed_text: str | None = None
     # Editor-only: when true the 크기 W/H stay proportional on resize (the
     # template-studio chain-lock). Defaults off so existing templates load.
     lock_aspect: bool = False
@@ -84,10 +96,11 @@ class TextSlot(BaseModel):
     @field_validator("role")
     @classmethod
     def _check_role(cls, v: str) -> str:
-        if v in _STANDARD_ROLES or _CELL_ROLE_RE.match(v):
+        if v in _STANDARD_ROLES or _CELL_ROLE_RE.match(v) or _NUMBERED_ROLE_RE.match(v):
             return v
         raise ValueError(
-            f"role must be one of {sorted(_STANDARD_ROLES)} or match "
+            f"role must be one of {sorted(_STANDARD_ROLES)}, headline<2-9>, "
+            f"subheadline<2-9>, body<2-9>, or match "
             f"cell_(title|subtitle|description)_r<row>c<col>; got {v!r}"
         )
     style: TextStyle

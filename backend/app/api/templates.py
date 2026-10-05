@@ -244,7 +244,7 @@ async def patch_template(
     if not row:
         raise HTTPException(
             status_code=404,
-            detail="템플릿을 찾을 수 없거나 시스템 템플릿은 수정할 수 없습니다",
+            detail="템플릿을 찾을 수 없거나 수정 권한이 없습니다",
         )
     return template_row_to_dict(row)
 
@@ -259,11 +259,11 @@ async def copy_layout_into_template(
     """Copy one layout from a source template into this (destination) template.
 
     Source must be readable by the user (own/system/public-shared); destination
-    must be writable (own, non-system). On name collision, the new layout is
-    suffixed with -copy / -copy-2 / ... until unique.
+    must be writable (own or system — same rule as update_template). On name
+    collision, the new layout is suffixed with -copy / -copy-2 / ... until unique.
     """
     dst = await db.get(CarouselTemplate, template_id)
-    if not dst or dst.user_id != user.id:
+    if not dst or (dst.user_id is not None and dst.user_id != user.id):
         raise HTTPException(
             status_code=404,
             detail="대상 템플릿을 찾을 수 없거나 본인 소유가 아닙니다",

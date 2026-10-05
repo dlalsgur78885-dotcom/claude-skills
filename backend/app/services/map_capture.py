@@ -53,8 +53,34 @@ SIZE = {"width": 1080, "height": 1350}
 # ⚠ 인자가 아니라 **표준입력**으로 넘긴다. `node -e` 는 스크립트 파일이 없어 첫 인자가
 #   argv[1] 로 오는데(argv[2] 가 아니다), 그 차이로 조용히 undefined 를 파싱하다 죽었다
 #   (2026-09-04). 윈도우의 명령줄 길이·따옴표 문제도 함께 피한다.
+#
+# ⚠ 장소를 누르면(`anchor`) 그 장소 카드가 지도 위 `.maplibregl-popup` 으로 뜨고, 그대로
+#   찍혀 썸네일에 카드가 남았다(2026-09-17 솔희 신고 — 제주 해산물·회 후보 3장 모두).
+#   봇의 browser-capture.js 는 이 워크스페이스 밖이라 못 고친다. 그래서 여기서 **새 페이지마다
+#   카드를 숨기는 스타일을 심는다** — 같은 playwright 모듈이라 captureMany 가 여는 페이지에도 걸린다.
+#   카드만 숨길 뿐 지도·핀은 그대로다. addInitScript 라 장마다 되돌리는 goto 뒤에도 남는다.
 _SCRIPT = r"""
+import { chromium } from 'playwright';
 import { captureMany } from './src/browser-capture.js';
+const HIDE_CARD = () => {
+  const add = () => {
+    const s = document.createElement('style');
+    s.textContent = '.maplibregl-popup{display:none!important}';
+    document.head.appendChild(s);
+  };
+  if (document.head) add(); else document.addEventListener('DOMContentLoaded', add);
+};
+const launch = chromium.launch.bind(chromium);
+chromium.launch = async (...a) => {
+  const browser = await launch(...a);
+  const newPage = browser.newPage.bind(browser);
+  browser.newPage = async (...b) => {
+    const page = await newPage(...b);
+    await page.addInitScript(HIDE_CARD);
+    return page;
+  };
+  return browser;
+};
 let raw = '';
 for await (const chunk of process.stdin) raw += chunk;
 try {

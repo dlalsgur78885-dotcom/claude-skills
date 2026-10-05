@@ -36,15 +36,47 @@ GENERATED_DIR = Path.home() / ".codex" / "generated_images"
 # %TEMP% 밖이어야 한다(위 2번). 데이터 폴더 아래에 둔다.
 WORK_ROOT = settings.DATA_DIR / "codexgen"
 
-# 한 장에 40~60초이고 프로세스마다 메모리를 먹는다. 무제한으로 띄우지 않는다.
+# 이 수만큼 codex 프로세스가 동시에 뜬다.
 # 4 → 8 (2026-09-03): 10장이 3묶음으로 나뉘어 4분 반이 걸렸다. 8이면 2묶음이다.
-# ⚠ 이 수만큼 codex 프로세스가 동시에 뜬다. 밤에 도는 작업이라 8로 뒀지만,
-#   낮에 사람이 PC 를 쓰는 중에 돌리면 느려진다. 그럴 땐 도로 낮출 것.
-MAX_CONCURRENT = 8
+# 8 → 24 (2026-09-23): 실측해 보니 **줄 세운 것이 병목이었다.**
+#     동시  8 · 16장 → 100초      동시 16 · 16장 →  63초
+#     동시 12 · 24장 → 102초      동시 24 · 24장 →  57초   (실패는 전부 0)
+#   한 묶음에 다 넣으면 장수와 무관하게 60초쯤이다. 서버가 24개 동시 요청을 받아 준다.
+#   이 PC 는 RAM 127GB(여유 68GB)라 프로세스 수는 제약이 아니다.
+# ⚠ 더 올리려면 **실패율을 함께 본다.** 빨라져도 실패가 늘면 손해다.
+MAX_CONCURRENT = 24
 
 # ⚠ 자물쇠는 **프로세스에 하나**여야 한다. 부를 때마다 새로 만들면 축을 두 개 동시에
 #   준비할 때 8+8 = 16 개가 뜬다(2026-09-03 — 밤 준비를 두 축으로 늘리며 잡은 것).
 _GATE = asyncio.Semaphore(MAX_CONCURRENT)
+
+
+async def _kill_tree(proc: asyncio.subprocess.Process) -> None:
+    """codex 프로세스를 **자식까지 통째로** 죽인다.
+
+    ⚠ `proc.kill()` 만으로는 안 죽는다. codex CLI 가 자식을 또 띄워서, 부모만 죽이면
+      자식들이 남아 **그리던 그림을 끝까지 그린다**(2026-09-23 실측 — 12장을 20초 만에
+      취소했는데 27개가 살아남아 제 일을 마쳤다). 취소한 뒤에도 크레딧이 나가는 셈이다.
+      윈도우에서는 `taskkill /T` 가 트리를 정리한다.
+    """
+    pid = proc.pid
+    try:
+        if os.name == "nt":
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill", "/PID", str(pid), "/T", "/F",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(killer.wait(), timeout=10)
+        else:
+            proc.kill()
+    except BaseException as e:      # 취소 중에도 여기서 더 막히지 않는다
+        logger.debug(f"[codex-image] 트리 종료 실패(pid {pid}): {e}")
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except BaseException:
+        # 파이프가 이미 닫혔으면 ValueError 가 난다 — 죽이는 것이 목적이라 넘어간다.
+        pass
 
 
 def is_available() -> bool:
@@ -100,6 +132,7 @@ async def _generate_one(prompt: str, size: str, timeout: float) -> bytes:
     env = {**os.environ, "NO_COLOR": "1"}
     env.pop("OPENAI_API_KEY", None)  # 내장 도구만 쓰게 한다
 
+    proc: asyncio.subprocess.Process | None = None
     try:
         proc = await asyncio.create_subprocess_exec(
             CODEX_CLI, "exec",
@@ -115,7 +148,6 @@ async def _generate_one(prompt: str, size: str, timeout: float) -> bytes:
                 proc.communicate(instruction.encode("utf-8")), timeout=timeout
             )
         except asyncio.TimeoutError:
-            proc.kill()
             raise RuntimeError(f"이미지 생성이 {int(timeout)}초를 넘겼습니다.")
 
         asked = Path(workdir) / "out.png"
@@ -125,6 +157,11 @@ async def _generate_one(prompt: str, size: str, timeout: float) -> bytes:
             raise RuntimeError(f"이미지가 만들어지지 않았습니다. {detail}")
         return source.read_bytes()
     finally:
+        # ⚠ **끝나면 반드시 죽인다.** 전에는 시간 초과일 때만 죽여서, 취소(백엔드 재시작·
+        #   회차 중단)나 오류로 빠져나가면 프로세스가 그대로 남았다. 동시 장수를 24로
+        #   올리면 고아도 24개가 된다 — 2026-09-23 사람 지시 「돌리고 끝나면 바로 꺼야 함」.
+        if proc is not None and proc.returncode is None:
+            await _kill_tree(proc)
         shutil.rmtree(workdir, ignore_errors=True)
 
 

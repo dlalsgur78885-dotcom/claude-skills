@@ -980,12 +980,14 @@ async def update_template(
     brand: dict | None = None,
     layouts: dict | None = None,
 ) -> CarouselTemplate | None:
-    """Apply a partial update to a template the user owns.
+    """Apply a partial update to a template the user owns, or a system template.
 
-    System templates (user_id NULL) are read-only; this returns None for them.
+    System templates (user_id NULL) are editable in place — the team edits the
+    shared originals directly instead of cloning (2026-09-18). Deleting them is
+    still blocked (see delete_template).
     """
     row = await db.get(CarouselTemplate, template_id)
-    if not row or row.user_id != user_id:
+    if not row or (row.user_id is not None and row.user_id != user_id):
         return None
 
     if name is not None:
@@ -1002,7 +1004,9 @@ async def update_template(
             "canvas": canvas if canvas is not None else (row.canvas or {}),
             "layouts": layouts,
         }
-        fixed = validate_and_fix_template(merged)
+        # 겹침 밀어내기는 끈다 — 사람이 일부러 겹쳐 둔 칸(88 TAG·HEADLINE 한 줄)을
+        # 저장할 때마다 아래로 밀어 「위치가 안 바뀐다」가 됐다(2026-09-18).
+        fixed = validate_and_fix_template(merged, deoverlap=False)
         row.layouts = fixed["layouts"]
         if canvas is None:
             row.canvas = fixed["canvas"]

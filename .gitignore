@@ -27,3 +27,11 @@ _pptx_check*/
 
 # 로컬 실행 로그
 *.log
+
+# 로컬 실행 로그·스크래치 (2026-10-06 추가)
+uvicorn.log*
+**/uvicorn.log*
+.work/
+tmp/
+.codex-prompt.txt
+**/.env.bak*

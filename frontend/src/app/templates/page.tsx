@@ -570,21 +570,22 @@ export default function TemplatesPage() {
                     {t.layouts.map(displayLayoutName).join(", ") || "레이아웃 없음"}
                   </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  {/* 시스템(공용) 템플릿도 원본을 바로 고친다 — 서버가 허용한다(update_template). */}
+                  <Link
+                    href={`/templates/${t.id}/edit`}
+                    style={{
+                      fontSize: 11,
+                      padding: "3px 10px",
+                      borderRadius: 4,
+                      background: "var(--accent-muted)",
+                      color: "var(--accent-text)",
+                      textDecoration: "none",
+                    }}
+                  >
+                    편집
+                  </Link>
                   {t.user_id !== null ? (
                     <>
-                      <Link
-                        href={`/templates/${t.id}/edit`}
-                        style={{
-                          fontSize: 11,
-                          padding: "3px 10px",
-                          borderRadius: 4,
-                          background: "var(--accent-muted)",
-                          color: "var(--accent-text)",
-                          textDecoration: "none",
-                        }}
-                      >
-                        편집
-                      </Link>
                       <button
                         disabled={busy === t.id}
                         onClick={() => share(t)}
@@ -627,14 +628,14 @@ export default function TemplatesPage() {
                         fontSize: 11,
                         padding: "3px 10px",
                         borderRadius: 4,
-                        background: "var(--accent-muted)",
-                        color: "var(--accent-text)",
-                        border: "none",
+                        background: "var(--bg-overlay)",
+                        color: "var(--text-secondary)",
+                        border: "1px solid var(--border)",
                         cursor: "pointer",
                         opacity: busy === t.id ? 0.5 : 1,
                       }}
                     >
-                      {busy === t.id ? "복제 중…" : "복제 후 편집"}
+                      {busy === t.id ? "복제 중…" : "복제"}
                     </button>
                   )}
                   {t.source_post_url && (
@@ -665,11 +666,7 @@ export default function TemplatesPage() {
           onEdit={() => {
             const t = previewing;
             setPreviewing(null);
-            if (t.user_id === null) {
-              clone(t);
-            } else {
-              router.push(`/templates/${t.id}/edit`);
-            }
+            router.push(`/templates/${t.id}/edit`);
           }}
         />
       )}

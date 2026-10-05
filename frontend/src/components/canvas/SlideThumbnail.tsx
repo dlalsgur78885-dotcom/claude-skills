@@ -107,7 +107,11 @@ export function SlideThumbnail({ slide, size = 80 }: Props) {
             // re-center and ignore the user's pan/resize — the slide preview
             // then never reflects a moved/resized photo.)
             const clip = obj.clipPath;
-            if (clip && (clip.absolutePositioned || clip.left != null)) {
+            // 이미지 라운드(2026-09-15)는 이미지 좌표 clip(absolutePositioned:false)이다 —
+            // 칸 창으로 읽으면 음수 좌표에 그려진다. 명시적으로 false 인 것만 따로 본다.
+            const isObjectClip = !!clip && clip.absolutePositioned === false;
+            const roundPx = clip ? (Number(clip.rx) || 0) * (isObjectClip ? sx : (Number(clip.scaleX) || 1)) : 0;
+            if (clip && !isObjectClip && (clip.absolutePositioned || clip.left != null)) {
               const clipX = Number(clip.left) || 0;
               const clipY = Number(clip.top) || 0;
               const clipW = (Number(clip.width) || 0) * (Number(clip.scaleX) || 1);
@@ -123,6 +127,7 @@ export function SlideThumbnail({ slide, size = 80 }: Props) {
                       width: clipW,
                       height: clipH,
                       overflow: "hidden",
+                      borderRadius: roundPx,
                       opacity,
                       pointerEvents: "none",
                     }}
@@ -159,6 +164,7 @@ export function SlideThumbnail({ slide, size = 80 }: Props) {
                   opacity,
                   pointerEvents: "none",
                   display: "block",
+                  borderRadius: roundPx,
                 }}
               />
             );
@@ -178,8 +184,14 @@ export function SlideThumbnail({ slide, size = 80 }: Props) {
                   position: "absolute",
                   left: Number(obj.left) || 0,
                   top: Number(obj.top) || 0,
+                  // 세로 기준 「아래」 글상자는 top 이 글 아래 끝이다(렌더러·편집기와 같다).
+                  transform: String(obj.originY) === "bottom" ? "translateY(-100%)" : undefined,
                   width: widthBox,
                   fontSize: fontSize * sy,
+                  // 자간 — Fabric charSpacing 은 1/1000 em 이라 em 으로 환산한다.
+                  letterSpacing: Number(obj.charSpacing)
+                    ? `${Number(obj.charSpacing) / 1000}em`
+                    : undefined,
                   lineHeight: typeof obj.lineHeight === "number" ? obj.lineHeight : 1.4,
                   fontFamily: typeof obj.fontFamily === "string" ? obj.fontFamily : "Pretendard, sans-serif",
                   fontWeight: obj.fontWeight ?? 400,

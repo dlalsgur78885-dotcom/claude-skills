@@ -36,6 +36,7 @@
 import asyncio
 import logging
 import random
+import time
 from typing import Any
 
 import httpx
@@ -45,12 +46,31 @@ logger = logging.getLogger(__name__)
 BASE = "https://travelassi-web-production.up.railway.app"
 TIMEOUT = 20.0
 
+# ⚠ 가이드 서버에 한꺼번에 몰아 부르지 않는다(2026-10-05). 주제 하나마다 `all_buttons` 가 가이드
+#   155개를 **동시에** 다시 받았고, 주제 5개를 겹쳐 돌리니 수백 개가 몰려 시간 초과로 무더기 실패했다
+#   (22:04 한 순간에 155건). 못 받은 가이드의 버튼은 목록에서 빠져 「어느 가이드 버튼인지 찾지 못했습니다」
+#   가 났다. 그래서 ① 동시에 부르는 수를 묶고 ② 실패하면 한 번 더 부르고 ③ 받은 가이드는 잠시 재사용한다.
+CONCURRENCY = 8
+CACHE_SECONDS = 30 * 60
+_sem = asyncio.Semaphore(CONCURRENCY)
+_guide_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
+_buttons_cache: tuple[float, list[dict[str, Any]]] | None = None
+_buttons_lock = asyncio.Lock()
+
 
 async def _get(params: dict[str, Any]) -> list[dict[str, Any]]:
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        r = await client.get(f"{BASE}/api/web/guides/list", params=params)
-        r.raise_for_status()
-        return ((r.json() or {}).get("data") or {}).get("list") or []
+    async with _sem:
+        for attempt in (1, 2):
+            try:
+                async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+                    r = await client.get(f"{BASE}/api/web/guides/list", params=params)
+                    r.raise_for_status()
+                    return ((r.json() or {}).get("data") or {}).get("list") or []
+            except (httpx.TimeoutException, httpx.TransportError):
+                if attempt == 2:
+                    raise
+                await asyncio.sleep(2)
+    return []
 
 
 async def list_guides() -> list[dict[str, Any]]:
@@ -70,8 +90,13 @@ async def list_guides() -> list[dict[str, Any]]:
 
 async def read_guide(guide_id: str) -> dict[str, Any] | None:
     """가이드 하나를 통째로. 장소·버튼(composition)·묶음(groups)이 다 들어 있다."""
+    hit = _guide_cache.get(guide_id)
+    if hit and time.monotonic() - hit[0] < CACHE_SECONDS:
+        return hit[1]
     got = await _get({"id": guide_id})
-    return got[0] if got else None
+    guide = got[0] if got else None
+    _guide_cache[guide_id] = (time.monotonic(), guide)
+    return guide
 
 
 def buttons(guide: dict[str, Any]) -> list[dict[str, Any]]:
@@ -249,14 +274,32 @@ async def all_buttons() -> list[dict[str, Any]]:
     """모든 가이드의 버튼을 한 줄로 편다 — 주제 후보를 만들 재료다.
 
     `지도_1단계` 「여러 가이드를 가로질러 10개를 뽑는다」(2026-08-27 확정).
+
+    주제마다 부르므로 한 번 편 목록은 `CACHE_SECONDS` 동안 그대로 돌려준다. 여럿이 동시에
+    부르면 한 번만 받고 나머지는 그 결과를 기다린다(`_buttons_lock`).
     """
+    global _buttons_cache
+    async with _buttons_lock:
+        if _buttons_cache and time.monotonic() - _buttons_cache[0] < CACHE_SECONDS:
+            return list(_buttons_cache[1])
+        rows, failed = await _collect_buttons()
+        # 일부라도 못 받았으면 재사용하지 않는다 — 빠진 가이드의 버튼을 30분 동안 못 찾게 된다.
+        if not failed:
+            _buttons_cache = (time.monotonic(), rows)
+        return rows
+
+
+async def _collect_buttons() -> tuple[list[dict[str, Any]], int]:
     guides = await list_guides()
     got = await asyncio.gather(*(read_guide(g["id"]) for g in guides), return_exceptions=True)
 
     rows: list[dict[str, Any]] = []
+    failed = 0
     for g, full in zip(guides, got):
         if isinstance(full, Exception) or not full:
-            logger.warning(f"[guide] {g['id']} 를 읽지 못했습니다: {full}")
+            failed += 1
+            # 시간 초과는 메시지가 빈 문자열이라 종류를 함께 남긴다(전에는 「읽지 못했습니다: 」 로만 찍혔다).
+            logger.warning(f"[guide] {g['id']} 를 읽지 못했습니다: {full!r}")
             continue
         for b in buttons(full):
             # 지역은 **그 버튼 안의 장소**에서 센다. 가이드 전체와 다를 수 있다
@@ -273,7 +316,7 @@ async def all_buttons() -> list[dict[str, Any]]:
                 # 점프시킬 장소 하나**를 함께 둔다(3-2 캡처가 앵커로 쓴다).
                 "regions": _regions_in(inside),
             })
-    return rows
+    return rows, failed
 
 
 def _regions_in(places: list[dict[str, Any]], top: int = 8) -> list[dict[str, Any]]:

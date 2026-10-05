@@ -51,12 +51,22 @@ const T = {
 const SID_PARAM = "s";
 
 /** 주소 한 조각 → 축 이름. 축을 늘리려면 여기와 백엔드 AXES 두 곳만 고치면 된다. */
-const AXES: Record<string, { axis: string; title: string; scenery?: boolean; food?: boolean }> = {
+const AXES: Record<string, {
+  axis: string; title: string; scenery?: boolean; food?: boolean; personOnDemand?: boolean;
+}> = {
   // 인물 말고 무엇을 더 그리는 축인지 — 백엔드 `AXES[축].cover_shots` 와 짝이다.
   // 상황별일본어는 풍경, 일본맛집은 음식이다(본문 배경은 실제 가게 사진이라 여기서 안 그린다).
+  // personOnDemand — 인물은 미리 안 그리고 [인물 5장 생성] 을 눌러야 그린다(백엔드 `cover_on_demand`, 2026-09-22).
   "ja-situations": { axis: "상황별일본어", title: "상황별 일본어", scenery: true },
-  "ja-restaurants": { axis: "일본맛집", title: "일본 맛집", food: true },
+  "ja-restaurants": { axis: "일본맛집", title: "일본 맛집", food: true, personOnDemand: true },
+  // 일본 맛집과 내용은 같고 **템플릿만 다른 축**(트래블뷰(맛집)_2, 2026-09-28).
+  "ja-restaurants-2": { axis: "일본맛집2", title: "일본 맛집 2", food: true, personOnDemand: true },
   "map": { axis: "지도", title: "지도" },
+  // X 게시물을 인용하는 축 — 1단계 주제를 grok 이 X 에서 찾아온다.
+  // ⚠ 풍경 5장도 **만들어지고 있었는데** 이 플래그가 없어 화면에서 통째로 숨어 있었다.
+  //   그래서 사람이 「생성 사진 5장」으로 알고 있었다(2026-09-18 피드백 1번).
+  //   X인용_3-2단계 지침서는 「인물 5장 · 풍경 5장」이다 — 백엔드 cover_shots 와도 짝이다.
+  "x-quote": { axis: "X인용", title: "X인용", scenery: true },
 };
 
 /** 화면에 보이는 단계. 진행 띠와 주소(#step-n)가 이 순서를 쓴다.
@@ -65,10 +75,14 @@ const AXES: Record<string, { axis: string; title: string; scenery?: boolean; foo
 const STEPS_DEFAULT = ["주제", "훅 문구", "사진", "본문", "캡션", "링크"] as const;
 const STEPS_MAP = ["주제", "훅 문구", "지도", "본문", "CTA1", "캡션", "링크"] as const;
 
+// 대기 문구는 실측값이다(backend/uvicorn.log.err 기준, 2026-09-22).
+// X 조사 축의 topics 는 grok 헬퍼를 부르느라 8분 00~06초로 거의 고정인데
+// 종전 문구는 "20초쯤"이라 24배 틀렸다. images 는 10장 기준 1분47초~3분58초로,
+// 종전 "6분쯤"은 실제로 나온 적이 없다.
 const WAITING: Record<StudioStep, string> = {
-  topics: "주제 후보를 짓는 중… 20초쯤",
+  topics: "주제 후보를 짓는 중… X 조사가 있으면 8분쯤",
   hooks: "훅 문구를 짓는 중… 20초쯤",
-  images: "사진을 그리는 중… 10장이면 6분쯤",
+  images: "사진을 그리는 중… 10장이면 2~4분",
   body: "본문을 짓는 중… 40초쯤",
   cta1: "CTA1 문구를 짓는 중… 20초쯤",
   caption: "캡션을 짓는 중… 25초쯤",
@@ -79,7 +93,7 @@ const WAITING: Record<StudioStep, string> = {
 
 /** 「다시 뽑기」로 날아가는 시간. 확인 창에서 사람에게 그대로 보여준다. */
 const REDO_COST: Partial<Record<StudioStep, string>> = {
-  topics: "20초", hooks: "20초", images: "6분", body: "40초", cta1: "20초", caption: "25초",
+  topics: "8분", hooks: "20초", images: "2~4분", body: "40초", cta1: "20초", caption: "25초",
 };
 
 const rowBetween: React.CSSProperties = {
@@ -177,8 +191,11 @@ export default function AxisStudio() {
   const [dropped, setDropped] = useState<string[]>([]);
   const [excluded, setExcluded] = useState<Set<number>>(new Set());
   // 낱장 사진을 바꾼 것만 기록한다. 펼친 줄은 하나만 — 40장을 한꺼번에 늘어놓지 않는다.
+  // 한 가게가 두 낱장인 축(일본맛집2)은 본문1·본문2 를 따로 고르므로 상자가 둘이다.
   const [swapped, setSwapped] = useState<Record<number, string>>({});
-  const [openShots, setOpenShots] = useState<number>(-1);
+  const [swapped2, setSwapped2] = useState<Record<number, string>>({});
+  // 펼친 사진 목록 — `가게번호:낱장번호`("3:2" = 넷째 가게의 본문2). "" 면 다 접혀 있다.
+  const [openShots, setOpenShots] = useState<string>("");
   const [captionDraft, setCaptionDraft] = useState<string | null>(null);
   const [cta1Draft, setCta1Draft] = useState<StudioCta1 | null>(null);
   const [openStep, setOpenStep] = useState(1);
@@ -189,6 +206,8 @@ export default function AxisStudio() {
   // 그 사진이 **어느 낱장의 것**인지. -1 이면 표지 후보다.
   // 크게 띄운 화면에서 「고르기」가 표지냐 낱장 교체냐가 갈린다.
   const [zoomSlide, setZoomSlide] = useState(-1);
+  // 그 가게의 **몇 번째 장**인지(1=본문1, 2=본문2). 한 장뿐인 축은 늘 1 이다.
+  const [zoomPage, setZoomPage] = useState(1);
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -284,9 +303,16 @@ export default function AxisStudio() {
   const stepNo = (key: string) => KEYS.indexOf(key) + 1;
 
   const items = c.body || [];
+  // X인용 — 장마다 고른 안(0=A, 1=B, 2=C). 안 고른 장은 A 가 기본이다.
+  const [pickedOpt, setPickedOpt] = useState<Record<number, number>>({});
   // 바꾼 사진만 담는다(낱장 번호 → 고른 주소). 안 건드린 낱장은 여기 없다.
   const chosenItems = items
     .map((it: StudioBodyItem, i: number) => (swapped[i] ? { ...it, photo: swapped[i] } : it))
+    // 본문2 사진은 따로 담는다 — 안 바꿨으면 백엔드가 넣어 둔 `photo2` 가 그대로 간다.
+    .map((it: StudioBodyItem, i: number) => (swapped2[i] ? { ...it, photo2: swapped2[i] } : it))
+    // 3안이 있는 장은 **고른 안의 문구**를 text 로 박아 넘긴다. 안 고르면 A 다.
+    .map((it: StudioBodyItem, i: number) =>
+      it.options?.length ? { ...it, text: it.options[pickedOpt[i] ?? 0]?.text ?? "" } : it)
     .filter((_, i: number) => !excluded.has(i));
   const caption = captionDraft ?? ch.caption ?? c.caption ?? "";
   // CTA1 도 캡션처럼 사람이 고쳐 쓸 수 있다. 고른 것 → 미리 만든 것 순.
@@ -295,6 +321,8 @@ export default function AxisStudio() {
   const photos = useMemo(() => {
     const all: StudioImage[] = c.images || [];
     return {
+      // 원문에 올라온 사진 — 그린 것보다 먼저 보여준다(2026-09-18 피드백 1번).
+      post: all.filter((i) => i.kind === "post"),
       person: all.filter((i) => i.kind === "person"),
       scenery: all.filter((i) => i.kind === "scenery"),
       food: all.filter((i) => i.kind === "food"),
@@ -349,12 +377,27 @@ export default function AxisStudio() {
           region: (meta as { region?: string }).region || "",
         }
       : {};
-    send({ chosen: { topic, ...where }, reset_from: 2, pending: prepared[topic] ? "" : "hooks" }, 2);
+    // X인용은 **주제가 곧 X 게시물**이다. 그 게시물 정보를 함께 보내지 않으면 앞 주제의
+    // post_id 가 `chosen` 에 그대로 남아(PATCH 가 합치기다) **본문 캡처가 엉뚱한 글로
+    // 찍힌다** — 2026-09-22 트립앤라이프 피드백(「지정석은 양보할 의무가 없다」를 골랐는데
+    // 삼계탕 글이 찍혔다). 백엔드에도 같은 것을 바로잡는 그물이 있지만, 애초에 여기서
+    // 제대로 보내는 것이 맞다.
+    const src = meta as Record<string, unknown>;
+    const source: Record<string, unknown> = {};
+    for (const k of ["post_id", "url", "photos", "photo_urls", "text",
+                     "views", "likes", "replies", "author", "reply_quotes"]) {
+      if (src[k] !== undefined) source[k] = src[k];
+    }
+    send({ chosen: { topic, ...where, ...source }, reset_from: 2,
+           pending: prepared[topic] ? "" : "hooks" }, 2);
   };
 
-  const pickHook = (lines: string[]) => {
-    if (ch.hook_lines?.join("\n") === lines.join("\n")) return jump(3);
-    send({ chosen: { hook_lines: lines }, pending: c.images?.length ? "" : "images" }, 3);
+  // 표지가 네 칸인 축(일본맛집2)은 후보가 훅 말고 **소개 3줄·해시태그**도 들고 온다.
+  // 고를 때 같이 저장해야 4단계에서 표지 네 칸이 다 찬다(없는 축은 빈 값이라 그대로 무시된다).
+  const pickHook = (h: { lines: string[]; intro?: string[]; tags?: string }) => {
+    if (ch.hook_lines?.join("\n") === h.lines.join("\n")) return jump(3);
+    send({ chosen: { hook_lines: h.lines, cover_intro: h.intro || [], cover_tags: h.tags || "" },
+           pending: c.images?.length ? "" : "images" }, 3);
   };
 
   const pickPhoto = (url: string) => {
@@ -368,11 +411,11 @@ export default function AxisStudio() {
   /** 캐러셀을 만들어 편집 링크까지 받은 주제 — 목록에서 [선택] 대신 [완료] 로 보인다. */
   const isBuilt = (topic: string) => (s.built || []).includes(topic);
 
-  const closeZoom = () => { setZoom(""); setZoomSlide(-1); };
+  const closeZoom = () => { setZoom(""); setZoomSlide(-1); setZoomPage(1); };
   /** 크게 띄운 사진이 속한 낱장이 **지금 쓰고 있는** 사진. 같으면 바꿀 것이 없다. */
-  const zoomShot = zoomSlide >= 0
-    ? (swapped[zoomSlide] || items[zoomSlide]?.photo || "")
-    : "";
+  const zoomShot = zoomSlide < 0 ? "" : (zoomPage === 2
+    ? (swapped2[zoomSlide] || items[zoomSlide]?.photo2 || "")
+    : (swapped[zoomSlide] || items[zoomSlide]?.photo || ""));
 
   // 다섯 칸으로 쪼개 놓으면 얼굴·글자가 안 보여 고를 수가 없다.
   // 그래서 누르면 **크게 띄우고**, 고르는 것은 그 큰 화면에서 한다.
@@ -393,6 +436,45 @@ export default function AxisStudio() {
       ))}
     </div>
   );
+
+  /** 낱장 하나의 사진 고르기 줄. `page` 가 2 면 같은 가게의 **본문2** 것이다(일본맛집2).
+   *  후보가 한 장뿐이면 고를 것이 없으니 줄을 아예 안 그린다. */
+  const shotPicker = (i: number, page: number, list: string[], current: string, label: string) => {
+    const key = `${i}:${page}`;
+    if (list.length < 2) return null;
+    return (
+      <div style={{ paddingBottom: 10, display: "flex", alignItems: "flex-start", gap: T.s.xs, flexWrap: "wrap" }}>
+        {current ? (
+          // 지금 무엇이 들어가 있는지 — 펼치지 않아도 보이게 작게 붙인다.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={current} alt="" width={40} height={40}
+               onClick={() => { setZoomSlide(i); setZoomPage(page); setZoom(current); }}
+               style={{ width: 40, height: 40, objectFit: "cover", borderRadius: T.r.sm, cursor: "zoom-in" }} />
+        ) : null}
+        <Btn kind="ghost" onClick={() => setOpenShots(openShots === key ? "" : key)}>
+          {openShots === key ? "사진 닫기" : `${label} 바꾸기 (${list.length}장)`}
+        </Btn>
+        {openShots === key ? (
+          <div style={{ display: "flex", gap: T.s.xs, overflowX: "auto", paddingTop: T.s.xs, width: "100%" }}>
+            {/* 96px 로는 무엇이 찍혔는지 안 보인다 — 표지 후보와 똑같이
+                **누르면 크게 띄우고**, 고르는 것은 그 큰 화면에서 한다. */}
+            {list.map((u: string) => (
+              <button key={u} type="button"
+                onClick={() => { setZoomSlide(i); setZoomPage(page); setZoom(u); }}
+                style={{
+                  padding: 0, background: "none", cursor: "pointer", flexShrink: 0, lineHeight: 0,
+                  border: `2px solid ${u === current ? T.accent : "transparent"}`, borderRadius: T.r.md,
+                }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={u} alt="" width={96} height={96}
+                     style={{ width: 96, height: 96, objectFit: "cover", borderRadius: T.r.sm }} />
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   return (
     <>
@@ -464,6 +546,10 @@ export default function AxisStudio() {
                   <span style={{ flex: 1 }}>{t}</span>
                   <Btn small kind="ghost" disabled={busy}
                        onClick={() => send({ chosen: { keep_topic: t, keep_off: true, drop_topic: "" }, pending: "keep" })}>보관 해제</Btn>
+                  {/* 보관 주제도 후보 목록처럼 [삭제] 로 제외 목록에 보낸다 — 보관함에서도 함께 빠진다(studio_worker._do_keep).
+                      만든 것만 보이게 걸어 뒀더니 「보관 + 이미 만든」 주제가 있는 축에서만 떴다(2026-10-01 사람 신고). */}
+                  <Btn small kind="ghost" disabled={busy}
+                       onClick={() => send({ chosen: { drop_topic: t, keep_topic: "" }, pending: "keep" })}>삭제</Btn>
                   {isBuilt(t) ? (
                     <Btn small disabled={busy}
                          onClick={() => send({ chosen: { keep_topic: t, keep_off: true, drop_topic: "" }, pending: "keep" })}>✓ 완료</Btn>
@@ -484,9 +570,24 @@ export default function AxisStudio() {
           ) : null}
           {topicList.map((t) => (
             <div key={t.topic} style={{ display: "flex", gap: T.s.xs, alignItems: "flex-start", padding: "10px 0", borderTop: T.line }}>
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 500 }}>{t.topic}</div>
                 {t.why ? <div style={{ color: T.faint, fontSize: 14 }}>{t.why}</div> : null}
+                {/* X인용 — 반응 크기를 보고 고른다. 숫자는 원문에서 확인한 값이다. */}
+                {t.url ? (
+                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center",
+                                gap: 10, marginTop: 4, color: T.muted, fontSize: 13 }}>
+                    <span>조회 {(t.views ?? 0).toLocaleString()}</span>
+                    <span>♥ {(t.likes ?? 0).toLocaleString()}</span>
+                    <span>댓글 {(t.replies ?? 0).toLocaleString()}</span>
+                    {t.photos ? <span>사진 {t.photos}장</span> : null}
+                    <a href={t.url} target="_blank" rel="noreferrer"
+                       style={{ color: T.accent, textDecoration: "none",
+                                border: T.line, borderRadius: T.r.sm, padding: "1px 8px" }}>
+                      원문 열기 ↗
+                    </a>
+                  </div>
+                ) : null}
               </div>
               {/* 보관 = 다음 회차에 다시 나온다 / 삭제 = 제외 목록에 쌓여 다시 안 나온다.
                   chosen 은 **합쳐지므로** 반대쪽 칸을 빈 값으로 함께 보내 지운다 —
@@ -531,7 +632,7 @@ export default function AxisStudio() {
                     <div key={i} style={{ display: "flex", gap: T.s.xs, alignItems: "center", padding: "8px 0", borderTop: T.line }}>
                       <div style={{ flex: 1, whiteSpace: "pre-line", lineHeight: 1.45 }}>{h.lines.join("\n")}</div>
                       <Btn small kind="primary" disabled={busy}
-                           onClick={() => pickHook(h.lines)}>선택</Btn>
+                           onClick={() => pickHook(h)}>선택</Btn>
                     </div>
                   ))}
                 </div>
@@ -557,9 +658,24 @@ export default function AxisStudio() {
               </>
             ) : (
               <>
+                {/* 원문에 사진이 있으면 **그것도 고를 수 있다** — 생성분과 나란히 둔다
+                    (2026-09-18 피드백 1번 「생성 사진 5장 + 원문 사진 중 택 1」).
+                    없는 회차(글만 있는 게시물)에서는 이 묶음이 통째로 빠진다. */}
+                {photos.post.length ? (
+                  <>
+                    <Group>원문 사진 {photos.post.length}장</Group>
+                    {photoRow(photos.post)}
+                  </>
+                ) : null}
                 <Group>
                   인물 {photos.person.length}장
-                  <Btn small kind="ghost" disabled={busy} onClick={() => askRedo("images", "person")}>인물만 다시</Btn>
+                  {/* 인물을 미리 안 그리는 축은 비어 있을 때 [생성] 을 준다. 음식은 그대로 두고
+                      인물만 더하므로 밤에 만든 것이 지워지지 않는다 — 확인 창 없이 바로 보낸다. */}
+                  {AX.personOnDemand && !photos.person.length ? (
+                    <Btn small kind="primary" disabled={busy} onClick={() => send(redoBody("images", "person"))}>인물 5장 생성</Btn>
+                  ) : (
+                    <Btn small kind="ghost" disabled={busy} onClick={() => askRedo("images", "person")}>인물만 다시</Btn>
+                  )}
                 </Group>
                 {photoRow(photos.person)}
                 {AX.scenery ? (
@@ -604,6 +720,9 @@ export default function AxisStudio() {
             </p>
             {items.map((it: StudioBodyItem, i: number) => {
               const shot = swapped[i] || it.photo || "";
+              // 한 가게가 두 낱장인 축은 본문2 사진이 따로 있다(`photos2`).
+              const shot2 = swapped2[i] || it.photo2 || "";
+              const hasTwoPages = (it.photos2?.length || 0) > 0;
               // 가게를 다루는 축은 칸 이름이 다르다(name/where/desc). 사진도 여기만 있다.
               const isPlace = !!it.name;
               return (
@@ -617,42 +736,51 @@ export default function AxisStudio() {
                       // 라벨 안이라 그냥 두면 누를 때 체크박스가 토글된다. 막고 크게 띄운다.
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={shot} alt="크게 보기" width={72} height={72}
-                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); setZoomSlide(i); setZoom(shot); }}
+                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); setZoomSlide(i); setZoomPage(1); setZoom(shot); }}
                            style={{ width: 72, height: 72, objectFit: "cover", borderRadius: T.r.md,
                                     flexShrink: 0, cursor: "zoom-in" }} />
                     ) : null}
                     {/* 지침서 형식 그대로 세로로. 큰따옴표·줄바꿈을 다듬지 않는다. */}
                     <div style={{ whiteSpace: "pre-line", minWidth: 0 }}>
-                      <div style={{ fontWeight: 500 }}>{isPlace ? it.name : it.jp}</div>
-                      <div style={{ color: T.muted, fontSize: 14 }}>{isPlace ? it.where : it.reading}</div>
-                      <div>{isPlace ? it.desc : it.meaning}</div>
-                      {isPlace ? null : <div style={{ color: T.faint, fontSize: 14 }}>{it.situation}</div>}
+                      {it.options?.length ? (
+                        // X인용 — 장마다 A·B·C. 라벨 안이라 누르면 체크박스가 토글되므로 막는다.
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          <div style={{ color: T.faint, fontSize: 13 }}>본문 {i + 1} — 하나 고르세요</div>
+                          {it.options.map((op, oi: number) => {
+                            const on = (pickedOpt[i] ?? 0) === oi;
+                            return (
+                              <button key={oi} type="button"
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation();
+                                                  setPickedOpt((prev) => ({ ...prev, [i]: oi })); }}
+                                style={{
+                                  textAlign: "left", cursor: "pointer", padding: "7px 10px",
+                                  borderRadius: T.r.md,
+                                  background: on ? "var(--accent-muted)" : "transparent",
+                                  border: on ? `1px solid ${T.accent}` : T.line, color: T.text,
+                                  font: "inherit", whiteSpace: "pre-line",
+                                }}>
+                                <span style={{ color: on ? T.accent : T.faint, fontSize: 13, marginRight: 8 }}>
+                                  {"ABC"[oi] || oi + 1}{op.tone ? ` · ${op.tone}` : ""}
+                                </span>
+                                {op.text}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <>
+                          <div style={{ fontWeight: 500 }}>{isPlace ? it.name : it.jp}</div>
+                          <div style={{ color: T.muted, fontSize: 14 }}>{isPlace ? it.where : it.reading}</div>
+                          <div>{isPlace ? it.desc : it.meaning}</div>
+                          {isPlace ? null : <div style={{ color: T.faint, fontSize: 14 }}>{it.situation}</div>}
+                        </>
+                      )}
                     </div>
                   </label>
-                  {(it.photos?.length || 0) > 1 ? (
-                    <div style={{ paddingBottom: 10 }}>
-                      <Btn kind="ghost" onClick={() => setOpenShots(openShots === i ? -1 : i)}>
-                        {openShots === i ? "사진 닫기" : `사진 바꾸기 (${it.photos!.length}장)`}
-                      </Btn>
-                      {openShots === i ? (
-                        <div style={{ display: "flex", gap: T.s.xs, overflowX: "auto", paddingTop: T.s.xs }}>
-                          {/* 96px 로는 무엇이 찍혔는지 안 보인다 — 표지 후보와 똑같이
-                              **누르면 크게 띄우고**, 고르는 것은 그 큰 화면에서 한다. */}
-                          {it.photos!.map((u: string) => (
-                            <button key={u} type="button" onClick={() => { setZoomSlide(i); setZoom(u); }}
-                              style={{
-                                padding: 0, background: "none", cursor: "pointer", flexShrink: 0, lineHeight: 0,
-                                border: `2px solid ${u === shot ? T.accent : "transparent"}`, borderRadius: T.r.md,
-                              }}>
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={u} alt="" width={96} height={96}
-                                   style={{ width: 96, height: 96, objectFit: "cover", borderRadius: T.r.sm }} />
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
+                  {/* 한 가게가 두 낱장인 축(일본맛집2)은 본문1·본문2 를 **따로** 고른다.
+                      한 장뿐인 축은 이름 없이 「사진 바꾸기」 하나만 나온다. */}
+                  {shotPicker(i, 1, it.photos || [], shot, hasTwoPages ? "본문1 사진" : "사진")}
+                  {hasTwoPages ? shotPicker(i, 2, it.photos2 || [], shot2, "본문2 사진") : null}
                 </div>
               );
             })}
@@ -670,7 +798,7 @@ export default function AxisStudio() {
                    }}>
                 이 {chosenItems.length}개로 진행
               </Btn>
-              <Btn kind="ghost" disabled={busy} onClick={() => { setExcluded(new Set()); setSwapped({}); setOpenShots(-1); askRedo("body"); }}>다시 뽑기</Btn>
+              <Btn kind="ghost" disabled={busy} onClick={() => { setExcluded(new Set()); setSwapped({}); setSwapped2({}); setOpenShots(""); askRedo("body"); }}>다시 뽑기</Btn>
             </div>
           </Step>
         ) : null}
@@ -809,7 +937,11 @@ export default function AxisStudio() {
                 <span style={{ color: "#fff", fontSize: 14 }}>이 낱장에 지금 쓰는 사진입니다</span>
               ) : (
                 <Btn kind="primary"
-                     onClick={() => { setSwapped((p) => ({ ...p, [zoomSlide]: zoom })); setOpenShots(-1); closeZoom(); }}>
+                     onClick={() => {
+                       const set = zoomPage === 2 ? setSwapped2 : setSwapped;
+                       set((p) => ({ ...p, [zoomSlide]: zoom }));
+                       setOpenShots(""); closeZoom();
+                     }}>
                   이 사진으로 바꾸기
                 </Btn>
               )

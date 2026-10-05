@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { TemplateData, FabricMeta, LayoutSpec, TextSlot, Decoration } from "./types";
+import type { TemplateData, FabricMeta, LayoutSpec, TextSlot, TextStyle, Decoration } from "./types";
 import { renderLayoutToCanvas } from "./renderer";
 import { setByPath, getByPath, removeArrayItem } from "@/lib/template-paths";
 import { getFabric } from "@/lib/fabric";
@@ -15,11 +15,43 @@ export type { TemplateData };
 
 const DISPLAY_SIZE = 560;
 
+// 글상자·도형 복붙용 클립보드 (Ctrl+C / Ctrl+V / Ctrl+D). 모듈 수준에 두어
+// 낱장을 옮기거나 다른 템플릿을 열어도 붙여넣기가 살아 있게 한다.
+type ClipboardEntry = { arrayName: "text_slots" | "decorations"; node: unknown };
+let templateClipboard: ClipboardEntry[] = [];
+// 붙여넣은 것이 원본에 완전히 겹쳐 안 보이는 일을 막는다.
+const PASTE_OFFSET = 20;
+
 interface Props {
   templateId?: number;
   template: TemplateData;
   onSave: (next: TemplateData) => Promise<void>;
   onClose: () => void;
+}
+
+/** Text that used the old brand font follows the new one. Slots store
+ *  "Pretendard" explicitly, so changing brand.font_family alone showed no
+ *  change; text given a different font on purpose keeps it. */
+function followBrandFont(t: TemplateData, oldFont: string, newFont: string): TemplateData {
+  if (oldFont === newFont) return t;
+  const swap = (s?: TextStyle | null) => (s && s.font_family === oldFont ? { ...s, font_family: newFont } : s);
+  const layouts = Object.fromEntries(Object.entries(t.layouts || {}).map(([name, l]) => {
+    const ib = l.grid?.item_box;
+    return [name, {
+      ...l,
+      text_slots: l.text_slots && l.text_slots.map((slot) => ({ ...slot, style: swap(slot.style) as TextStyle })),
+      grid: l.grid && ib ? {
+        ...l.grid,
+        item_box: {
+          ...ib,
+          title_style: swap(ib.title_style) as TextStyle,
+          subtitle_style: swap(ib.subtitle_style),
+          description_style: swap(ib.description_style),
+        },
+      } : l.grid,
+    }];
+  }));
+  return { ...t, layouts };
 }
 
 export function TemplateEditor({ templateId, template: initial, onSave, onClose }: Props) {
@@ -747,6 +779,9 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
   function patchTemplate(path: string, value: unknown) {
     const prev = templateRef.current;
     let next = setByPath(prev, path, value) as TemplateData;
+    if (path === "brand.font_family") {
+      next = followBrandFont(next, prev.brand?.font_family || "Pretendard", String(value || "Pretendard"));
+    }
     // 다중 선택 일괄 적용 (피드백 14-6): 패널은 첫 선택(selectedMeta)의
     // 경로만 편집하므로, 같은 kind의 나머지 선택 객체에도 동일한 하위
     // 속성을 복제 적용한다. 위치(.position)는 제외 — 일괄 적용하면 전부
@@ -816,7 +851,7 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
       role: "headline",
       position: { x: 80, y: 80, anchor: "top-left" },
       size: { width: 920, height: 100 },
-      style: { font_size: 32, font_family: "Pretendard", font_weight: "700", fill: "#FFFFFF", text_align: "left", line_height: 1.4 },
+      style: { font_size: 32, font_family: prev.brand?.font_family || "Pretendard", font_weight: "700", fill: "#FFFFFF", text_align: "left", line_height: 1.4 },
     };
     const next = setByPath(prev, `layouts.${layoutName}.text_slots[${idx}]`, slot) as TemplateData;
     commit(next, JSON.stringify(prev));
@@ -832,6 +867,25 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
       position: { x: 80, y: 80, anchor: "top-left" },
       size: { width: 200, height: 100 },
       fill: "#FFFFFF",
+    };
+    const next = setByPath(prev, `layouts.${layoutName}.decorations[${idx}]`, dec) as TemplateData;
+    commit(next, JSON.stringify(prev));
+  }
+
+  // Empty photo box — a `kind: image` decoration with no src. The renderer
+  // fills these with the slide's items[] photos in decoration order; without
+  // items they draw nothing. Until now the only ways to get one were
+  // exploding a grid or uploading a stand-in PNG.
+  function addImageArea() {
+    if (!layoutName) return;
+    const prev = templateRef.current;
+    const layout = prev.layouts?.[layoutName];
+    const idx = layout?.decorations?.length ?? 0;
+    const dec: Decoration = {
+      kind: "image",
+      position: { x: 80, y: 80, anchor: "top-left" },
+      size: { width: 400, height: 400 },
+      src: null,
     };
     const next = setByPath(prev, `layouts.${layoutName}.decorations[${idx}]`, dec) as TemplateData;
     commit(next, JSON.stringify(prev));
@@ -1219,6 +1273,61 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
     commit(next, JSON.stringify(prev));
   }
 
+  /** 지금 선택한 글상자·도형을 클립보드 항목으로 뜬다. 여러 개 선택했으면 전부.
+   *  격자(grid)·배경 오버레이는 배열 항목이 아니라 낱장 자체의 설정이라 뺀다. */
+  function collectSelection(): ClipboardEntry[] {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const actives: any[] = fabricRef.current?.getActiveObjects?.() || [];
+    const metas: FabricMeta[] = actives.map((o) => o?.data).filter(Boolean);
+    const source = metas.length > 0 ? metas : selectedMeta ? [selectedMeta] : [];
+    const entries: ClipboardEntry[] = [];
+    for (const meta of source) {
+      const m = meta.path.match(/\.(decorations|text_slots)\[\d+\]$/);
+      if (!m) continue;
+      const node = getByPath(templateRef.current, meta.path);
+      if (node == null) continue;
+      entries.push({
+        arrayName: m[1] as ClipboardEntry["arrayName"],
+        node: JSON.parse(JSON.stringify(node)),
+      });
+    }
+    return entries;
+  }
+
+  function copySelected(): boolean {
+    const entries = collectSelection();
+    if (entries.length === 0) return false;
+    templateClipboard = entries;
+    return true;
+  }
+
+  /** 복사해 둔 것을 지금 보고 있는 낱장에 붙인다 — 다른 낱장에서 복사한 것도 된다.
+   *  한 번의 commit 으로 묶어 Ctrl+Z 하나에 통째로 되돌아가게 한다. */
+  function pasteEntries(entries: ClipboardEntry[]) {
+    if (!layoutName || entries.length === 0) return;
+    const prev = templateRef.current;
+    let next = prev;
+    let lastMeta: FabricMeta | null = null;
+    for (const entry of entries) {
+      const arr = (getByPath(next, `layouts.${layoutName}.${entry.arrayName}`) as unknown[] | undefined) || [];
+      const idx = arr.length;
+      const node = JSON.parse(JSON.stringify(entry.node)) as { position?: { x?: number; y?: number } };
+      if (node.position) {
+        node.position = {
+          ...node.position,
+          x: (node.position.x || 0) + PASTE_OFFSET,
+          y: (node.position.y || 0) + PASTE_OFFSET,
+        };
+      }
+      const path = `layouts.${layoutName}.${entry.arrayName}[${idx}]`;
+      next = setByPath(next, path, node) as TemplateData;
+      lastMeta = { path, kind: entry.arrayName === "text_slots" ? "text_slot" : "decoration" };
+    }
+    if (next === prev) return;
+    setSelectedMeta(lastMeta);
+    commit(next, JSON.stringify(prev));
+  }
+
   // Keyboard shortcuts: Delete/Backspace, Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z
   useEffect(() => {
     function handler(e: KeyboardEvent) {
@@ -1237,6 +1346,27 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
         return;
       }
       if (inField) return;
+      // 복사·붙여넣기·복제. 입력칸 안(inField)에서는 위에서 이미 빠져나가므로
+      // 속성판의 문자 복붙은 그대로 브라우저가 처리한다.
+      if (mod && e.key.toLowerCase() === "c") {
+        if (copySelected()) e.preventDefault();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "v") {
+        if (templateClipboard.length > 0) {
+          e.preventDefault();
+          pasteEntries(templateClipboard);
+        }
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "d") {
+        const entries = collectSelection();
+        if (entries.length > 0) {
+          e.preventDefault();
+          pasteEntries(entries);
+        }
+        return;
+      }
       if ((e.key === "Delete" || e.key === "Backspace") && selectedMeta) {
         e.preventDefault();
         deleteSelected();
@@ -1257,7 +1387,7 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMeta]);
+  }, [selectedMeta, layoutName]);
 
   async function handleSave() {
     setSaving(true);
@@ -1420,6 +1550,23 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
           title="장식 사각형 추가"
         >
           + 장식
+        </button>
+        <button
+          onClick={addImageArea}
+          disabled={!layoutName}
+          style={{
+            padding: "5px 10px",
+            fontSize: 11,
+            color: "var(--text-secondary)",
+            background: "var(--bg-overlay)",
+            border: "1px solid var(--border)",
+            borderRadius: 5,
+            cursor: layoutName ? "pointer" : "not-allowed",
+            opacity: layoutName ? 1 : 0.5,
+          }}
+          title="빈 사진 칸 추가 (캐러셀의 items 사진이 채운다)"
+        >
+          + 이미지 자리
         </button>
         {(() => {
           const hasGrid = !!(layoutName && template.layouts?.[layoutName]?.grid);

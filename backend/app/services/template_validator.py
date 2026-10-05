@@ -47,7 +47,7 @@ def _clamp(v: int | float, lo: int | float, hi: int | float) -> int:
     return int(max(lo, min(hi, v)))
 
 
-def validate_and_fix_template(template: dict[str, Any]) -> dict[str, Any]:
+def validate_and_fix_template(template: dict[str, Any], *, deoverlap: bool = True) -> dict[str, Any]:
     """Apply all structural corrections to a Gemini-generated template dict.
 
     Order matters: canvas first (everything else clamps to canvas), then per-layout
@@ -66,7 +66,7 @@ def validate_and_fix_template(template: dict[str, Any]) -> dict[str, Any]:
         _dedupe_decorations(layout, layout_name)
         _dedupe_text_slots(layout, layout_name)
         _fix_decorations(layout, W, H, layout_name)
-        _fix_text_slots(layout, W, H, layout_name)
+        _fix_text_slots(layout, W, H, layout_name, deoverlap=deoverlap)
         _fix_grid(layout, W, H, layout_name)
 
     return template
@@ -191,8 +191,9 @@ def _normalize_anchor(item: dict) -> None:
     pos["anchor"] = "top-left"
 
 
-def _fix_text_slots(layout: dict, W: int, H: int, layout_name: str) -> None:
-    """Clamp text slot positions to canvas. Then de-overlap stacked slots."""
+def _fix_text_slots(layout: dict, W: int, H: int, layout_name: str, *, deoverlap: bool = True) -> None:
+    """Clamp text slot positions to canvas. Then de-overlap stacked slots
+    (skipped for hand edits — a person may overlap slots on purpose)."""
     slots = layout.get("text_slots") or []
     cleaned: list[dict] = []
     for s in slots:
@@ -206,6 +207,9 @@ def _fix_text_slots(layout: dict, W: int, H: int, layout_name: str) -> None:
         s["position"] = {**pos, "x": x, "y": y}
         s["size"] = {**size, "width": w, "height": h}
         cleaned.append(s)
+
+    if not deoverlap:
+        return
 
     # Detect roughly-stacked headlines/body that overlap and push them down.
     # Two slots "overlap vertically" if their x-ranges share >50% AND their

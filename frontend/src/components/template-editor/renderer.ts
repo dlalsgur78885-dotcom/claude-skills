@@ -53,13 +53,15 @@ function buildShadowString(spec: ShadowSpec, scale: number): string {
 function applyTextEffects(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   obj: any,
-  src: { shadow?: ShadowSpec | null; stroke?: string | null; stroke_width?: number } | undefined,
+  src: { shadow?: ShadowSpec | null; stroke?: string | null; stroke_width?: number; letter_spacing?: number } | undefined,
   scale: number,
   isText: boolean,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   fabric?: any,
 ) {
   if (!src) return;
+  // 자간 — 표시 단위 ×10 = Fabric charSpacing(1/1000 em). em 기준이라 scale 불필요.
+  if (isText && src.letter_spacing) obj.set("charSpacing", src.letter_spacing * 10);
   if (src.shadow) {
     // fabric v7: direct `obj.shadow = "css string"` bypasses the _set wrapper
     // that converts strings into a `Shadow` instance. The raw string then has
@@ -440,7 +442,8 @@ export async function renderLayoutToCanvas(
     // 세로 기준 "bottom" — y 가 글 블록의 아래 끝이다. 백엔드 렌더러와 같게,
     // 가로만 anchor 로 옮기고 세로는 originY 로 맡긴다(anchor 의 세로 보정은 안 쓴다).
     const vBottom = t.position?.vertical_anchor === "bottom";
-    const tb = new fabric.Textbox(`[${t.role.toUpperCase()}]`, {
+    // 고정 문구가 있으면 미리보기도 그 글자를 보여준다(렌더 결과와 같게).
+    const tb = new fabric.Textbox(t.fixed_text?.trim() || `[${t.role.toUpperCase()}]`, {
       left: tx * scale,
       top: (vBottom ? (t.position?.y || 0) : ty) * scale,
       width: (t.size.width || 400) * scale,

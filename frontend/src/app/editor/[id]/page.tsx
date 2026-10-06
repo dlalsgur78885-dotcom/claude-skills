@@ -283,6 +283,7 @@ export default function EditorPage() {
         caption={typeof carouselMeta.caption === "string" ? carouselMeta.caption : ""}
         hashtags={Array.isArray(carouselMeta.hashtags) ? carouselMeta.hashtags : []}
         sourcePostUrl={sourcePostUrl}
+        uploadCarouselId={id}
       />
     </div>
   );

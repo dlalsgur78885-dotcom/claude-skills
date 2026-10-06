@@ -188,3 +188,47 @@ export interface FabricObject {
   opacity?: number;
   [key: string]: unknown;
 }
+
+// ─── 인스타 업로드 (업로더 외부 API v1) ───
+export interface UploaderAccounts {
+  accounts: { username: string; displayName: string | null; isDefault: boolean }[];
+  presets: { id: string; name: string; isDefault: boolean }[];
+}
+
+export interface UploadForm {
+  caption: string;
+  account: string;
+  /** ISO 시각(+09:00). 빈 문자열이면 바로 게시 */
+  at: string;
+  auto_respond: boolean;
+  preset: string;
+  /** 같은 창에서 두 번 눌러도 한 번만 올라가게 하는 값 */
+  nonce: string;
+}
+
+export type ScheduledStatus = "pending" | "uploading" | "processing" | "published" | "failed" | "deleted";
+
+export interface ScheduledPost {
+  id: string;
+  type: string;
+  mediaCount: number;
+  ref: string | null;
+  status: ScheduledStatus | string;
+  account: string;
+  at: string;
+  createdAt: string;
+  caption: string;
+  permalink: string | null;
+  error: string | null;
+  autoRespond?: boolean;
+  preset?: string | null;
+  carousel?: { id: number; title: string; thumbnail_url: string | null };
+}
+
+export interface ScheduleEdit {
+  caption?: string;
+  at?: string;
+  account?: string;
+  auto_respond?: boolean;
+  preset?: string | null;
+}

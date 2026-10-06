@@ -12,6 +12,7 @@ import { getFabric } from "@/lib/fabric";
 import { loadAllUserFonts, loadUserFont, type UserFont } from "@/lib/fonts";
 import { CanvasSizeSelector } from "@/components/CanvasSizeSelector";
 import { LayoutCatalog } from "@/components/template-editor/LayoutCatalog";
+import UploadModal from "@/components/upload/UploadModal";
 import type { SlideData, TemplateSummary } from "@/lib/types";
 
 const DISPLAY_MAX = 700;
@@ -349,6 +350,8 @@ interface CanvasEditorProps {
   // Surfaced below the caption button as "원본 링크 보기" so users can
   // jump back to the reference without leaving the editor.
   sourcePostUrl?: string;
+  // 있으면 상단에 [업로드] 가 생긴다 — 인스타 업로더로 이 캐러셀을 게시·예약한다(2026-10-06).
+  uploadCarouselId?: number;
 }
 
 export function CanvasEditor({
@@ -366,6 +369,7 @@ export function CanvasEditor({
   caption,
   hashtags,
   sourcePostUrl,
+  uploadCarouselId,
 }: CanvasEditorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -3924,6 +3928,20 @@ export function CanvasEditor({
     };
   }, []);
 
+  // ─── 인스타 업로드 — 장을 JPEG 으로 그려 업로더에 넘긴다(components/upload/UploadModal) ───
+  const [uploadOpen, setUploadOpen] = useState(false);
+
+  async function renderSlidesForUpload(): Promise<Blob[]> {
+    const back = currentSlideIndex;
+    const out: Blob[] = [];
+    try {
+      for (let i = 0; i < slides.length; i++) out.push(await renderSlideImage(i, "jpeg", 1));
+    } finally {
+      switchSlide(back);
+    }
+    return out;
+  }
+
   // ─── Download flow: open modal → user picks slides → user picks save target ───
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [downloadSelection, setDownloadSelection] = useState<Set<number>>(new Set());
@@ -3934,6 +3952,72 @@ export function CanvasEditor({
     // Default = all slides selected
     setDownloadSelection(new Set(slides.map((_, i) => i)));
     setDownloadOpen(true);
+  }
+
+  // 장 하나를 페이지 크기 그대로 그린다 — 다운로드(PNG ×2)와 인스타 업로드(JPEG ×1)가 같이 쓴다.
+  // 업로드는 인스타 사진 규격(JPEG, 가로 1080)에 맞춘다(2026-10-06 업로드 기능).
+  async function renderSlideImage(i: number, format: "png" | "jpeg", multiplier: number): Promise<Blob> {
+    const canvas = fabricRef.current;
+    if (!canvas) throw new Error("캔버스가 아직 준비되지 않았습니다");
+    switchSlide(i);
+    await new Promise((r) => setTimeout(r, 120));
+    // Crop to the page area only. The canvas pixel buffer is page + PAD on
+    // every side (so selection chrome on out-of-page objects stays visible
+    // while editing), but the downloaded PNG should be exactly the 1080×1350
+    // — or whatever — design surface. Hide the page boundary stroke for the
+    // duration of the export so its 1px outline doesn't bleed into the crop
+    // edge, then restore it.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pb = (canvas as any).__pageBoundary;
+    const savedStroke = pb?.stroke;
+    const savedStrokeWidth = pb?.strokeWidth;
+    // Zoom is applied via fabric's viewportTransform; reset to identity-PAD
+    // so the export renders the page at full resolution regardless of the
+    // current editor zoom level.
+    const savedVT = canvas!.viewportTransform?.slice() as number[];
+    canvas!.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (canvas as any).__suppressPageOutline = true;
+    if (pb) {
+      pb.set({ stroke: null, strokeWidth: 0 });
+      canvas!.renderAll();
+    }
+    // Hide user-drawn guides (안내선) for the export. They're editor-only
+    // alignment aids that must NOT appear in the downloaded PNG (feedback
+    // slide 2). Guides aren't excludeFromExport (they persist via toJSON),
+    // and toDataURL renders by `visible`, not excludeFromExport — so hide
+    // them around the capture and restore after. Only the currently-shown
+    // guides are flipped, so the guidesVisible toggle is preserved.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const exportHiddenGuides = (canvas!.getObjects() as any[]).filter(
+      (o) => isGuide(o) && o.visible !== false,
+    );
+    for (const g of exportHiddenGuides) g.visible = false;
+    const { w: pageW, h: pageH } = canvasSizeRef.current;
+    const restoreClips = relaxPageEdgeClips(canvas, pageW, pageH);
+    let dataUrl: string;
+    try {
+      dataUrl = canvas!.toDataURL({
+        format,
+        multiplier,
+        ...(format === "jpeg" ? { quality: 0.92 } : {}),
+        left: PAGE_PAD,
+        top: PAGE_PAD,
+        width: pageW,
+        height: pageH,
+      });
+    } finally {
+      restoreClips();
+    }
+    if (pb) {
+      pb.set({ stroke: savedStroke, strokeWidth: savedStrokeWidth });
+    }
+    for (const g of exportHiddenGuides) g.visible = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (canvas as any).__suppressPageOutline = false;
+    if (savedVT) canvas!.setViewportTransform(savedVT);
+    canvas!.renderAll();
+    return (await fetch(dataUrl)).blob();
   }
 
   async function runDownload() {
@@ -3979,66 +4063,7 @@ export function CanvasEditor({
       }
     }
 
-    async function renderSlideBlob(i: number): Promise<Blob> {
-      switchSlide(i);
-      await new Promise((r) => setTimeout(r, 120));
-      // Crop to the page area only. The canvas pixel buffer is page + PAD on
-      // every side (so selection chrome on out-of-page objects stays visible
-      // while editing), but the downloaded PNG should be exactly the 1080×1350
-      // — or whatever — design surface. Hide the page boundary stroke for the
-      // duration of the export so its 1px outline doesn't bleed into the crop
-      // edge, then restore it.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const pb = (canvas as any).__pageBoundary;
-      const savedStroke = pb?.stroke;
-      const savedStrokeWidth = pb?.strokeWidth;
-      // Zoom is applied via fabric's viewportTransform; reset to identity-PAD
-      // so the export renders the page at full resolution regardless of the
-      // current editor zoom level.
-      const savedVT = canvas!.viewportTransform?.slice() as number[];
-      canvas!.setViewportTransform([1, 0, 0, 1, PAGE_PAD, PAGE_PAD]);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (canvas as any).__suppressPageOutline = true;
-      if (pb) {
-        pb.set({ stroke: null, strokeWidth: 0 });
-        canvas!.renderAll();
-      }
-      // Hide user-drawn guides (안내선) for the export. They're editor-only
-      // alignment aids that must NOT appear in the downloaded PNG (feedback
-      // slide 2). Guides aren't excludeFromExport (they persist via toJSON),
-      // and toDataURL renders by `visible`, not excludeFromExport — so hide
-      // them around the capture and restore after. Only the currently-shown
-      // guides are flipped, so the guidesVisible toggle is preserved.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const exportHiddenGuides = (canvas!.getObjects() as any[]).filter(
-        (o) => isGuide(o) && o.visible !== false,
-      );
-      for (const g of exportHiddenGuides) g.visible = false;
-      const { w: pageW, h: pageH } = canvasSizeRef.current;
-      const restoreClips = relaxPageEdgeClips(canvas, pageW, pageH);
-      let dataUrl: string;
-      try {
-        dataUrl = canvas!.toDataURL({
-          format: "png",
-          multiplier: 2,
-          left: PAGE_PAD,
-          top: PAGE_PAD,
-          width: pageW,
-          height: pageH,
-        });
-      } finally {
-        restoreClips();
-      }
-      if (pb) {
-        pb.set({ stroke: savedStroke, strokeWidth: savedStrokeWidth });
-      }
-      for (const g of exportHiddenGuides) g.visible = true;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (canvas as any).__suppressPageOutline = false;
-      if (savedVT) canvas!.setViewportTransform(savedVT);
-      canvas!.renderAll();
-      return (await fetch(dataUrl)).blob();
-    }
+    const renderSlideBlob = (i: number) => renderSlideImage(i, "png", 2);
 
     function triggerAnchorDownload(blob: Blob, name: string) {
       const url = URL.createObjectURL(blob);
@@ -5410,6 +5435,26 @@ export function CanvasEditor({
           {saveStatus === "error" && "저장 실패"}
         </span>
 
+        {uploadCarouselId ? (
+          <button
+            onClick={() => { handleSave(); setUploadOpen(true); }}
+            title="인스타그램에 바로 게시하거나 예약합니다"
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 5,
+              padding: "6px 14px", fontSize: 12, fontWeight: 500,
+              background: "var(--bg-overlay)", color: "var(--text-primary)",
+              borderRadius: 6, border: "1px solid var(--border)", cursor: "pointer",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--border-strong)")}
+            onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+          >
+            <svg width="13" height="13" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+            </svg>
+            업로드
+          </button>
+        ) : null}
+
         <button
           onClick={handleSave}
           title="즉시 저장 (자동 저장과 별도로 변경 사항을 바로 PATCH)"
@@ -5476,6 +5521,17 @@ export function CanvasEditor({
           다운로드
         </button>
       </div>
+
+      {uploadOpen && uploadCarouselId ? (
+        <UploadModal
+          carouselId={uploadCarouselId}
+          defaultCaption={[caption || "", (hashtags || []).map((t) => (t.startsWith("#") ? t : `#${t}`)).join(" ")]
+            .filter(Boolean).join("\n\n")}
+          slideCount={slides.length}
+          renderSlides={renderSlidesForUpload}
+          onClose={() => setUploadOpen(false)}
+        />
+      ) : null}
 
       {/* Download modal — page selector + save target */}
       {downloadOpen && (

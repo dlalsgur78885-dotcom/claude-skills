@@ -5,16 +5,19 @@ import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { api, proxiedImageUrl, thumbnailUrl } from "@/lib/api";
 import type { Carousel, CarouselListItem } from "@/lib/types";
+import ScheduledList from "@/components/upload/ScheduledList";
 
-type Tab = "all" | "draft" | "finalized";
+type Tab = "all" | "draft" | "finalized" | "scheduled";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "all", label: "전체" },
   { key: "draft", label: "작업 중" },
   { key: "finalized", label: "완성" },
+  // 에디터 [업로드]로 업로더에 보낸 캐러셀 — 예약 확인·수정·취소(2026-10-06 피드백)
+  { key: "scheduled", label: "예약" },
 ];
 
-const VALID_TABS: Tab[] = ["all", "draft", "finalized"];
+const VALID_TABS: Tab[] = ["all", "draft", "finalized", "scheduled"];
 
 function CarouselThumb({ c }: { c: CarouselListItem }) {
   const imgSrc = c.thumbnail_url || "";
@@ -110,6 +113,8 @@ export default function WorksPage() {
   }
 
   const load = useCallback(async () => {
+    // 예약 탭은 업로더 목록을 따로 불러온다(ScheduledList).
+    if (tab === "scheduled") { setItems([]); setLoading(false); return; }
     setLoading(true);
     try {
       const status = tab === "all" ? undefined : tab === "finalized" ? "finalized" : "draft";
@@ -401,7 +406,9 @@ export default function WorksPage() {
         </div>
       )}
 
-      {loading ? (
+      {tab === "scheduled" ? (
+        <ScheduledList />
+      ) : loading ? (
         <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>로딩 중…</p>
       ) : items.length === 0 ? (
         <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>

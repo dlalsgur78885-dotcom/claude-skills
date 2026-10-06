@@ -715,6 +715,46 @@ class ApiClient {
     }
   }
 
+  // ─── 인스타 업로드 — 업로더(instagram-reel-uploader) 외부 API 를 서버가 대신 부른다 ───
+  async uploaderAccounts() {
+    return this.fetch<import("./types").UploaderAccounts>("/uploads/accounts");
+  }
+
+  /** 장 이미지(JPEG)와 게시 정보를 보낸다. `at` 이 비면 바로 게시. */
+  async uploadCarousel(carouselId: number, slides: Blob[], form: import("./types").UploadForm) {
+    const fd = new FormData();
+    slides.forEach((b, i) => fd.append("files", b, `slide_${i + 1}.jpg`));
+    fd.append("caption", form.caption);
+    fd.append("account", form.account);
+    fd.append("at", form.at);
+    fd.append("auto_respond", String(form.auto_respond));
+    fd.append("preset", form.preset);
+    fd.append("nonce", form.nonce);
+    const headers: Record<string, string> = {};
+    if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
+    const res = await fetch(`${API_BASE}/uploads/carousels/${carouselId}`, { method: "POST", headers, body: fd });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(e.detail || "업로드에 실패했습니다");
+    }
+    return (await res.json()) as { item: import("./types").ScheduledPost; duplicate?: boolean };
+  }
+
+  async scheduledPosts() {
+    return this.fetch<{ items: import("./types").ScheduledPost[] }>("/uploads/scheduled");
+  }
+
+  async updateScheduled(itemId: string, change: import("./types").ScheduleEdit) {
+    return this.fetch<{ item: import("./types").ScheduledPost }>(`/uploads/scheduled/${itemId}`, {
+      method: "PATCH",
+      body: JSON.stringify(change),
+    });
+  }
+
+  async deleteScheduled(itemId: string) {
+    return this.fetch<{ ok: boolean }>(`/uploads/scheduled/${itemId}`, { method: "DELETE" });
+  }
+
   // CTA image — reusable call-to-action PNG dropped onto a fresh last slide.
   async getCtaImage(): Promise<{ url: string | null }> {
     return this.fetch("/cta");

@@ -17,6 +17,7 @@ from app.api.settings import router as settings_router
 from app.api.studio_sessions import router as studio_sessions_router
 from app.api.cta import router as cta_router
 from app.api.fonts import router as fonts_router
+from app.api.uploads import router as uploads_router
 
 api_router = APIRouter(prefix="/api")
 
@@ -35,3 +36,4 @@ api_router.include_router(settings_router)
 api_router.include_router(studio_sessions_router)
 api_router.include_router(cta_router)
 api_router.include_router(fonts_router)
+api_router.include_router(uploads_router)

@@ -199,6 +199,9 @@ export default function AxisStudio() {
   const [captionDraft, setCaptionDraft] = useState<string | null>(null);
   const [cta1Draft, setCta1Draft] = useState<StudioCta1 | null>(null);
   const [openStep, setOpenStep] = useState(1);
+  // 훅 후보 하나를 고쳐 쓰는 중이면 그 후보의 자리(묶음-번호)와 고친 줄들(2026-10-06 트립앤라이프 피드백 —
+  // 「살짝만 바꾸면 좋겠는데 고르기만 할 수 있다」. 썸네일이 훅을 보고 그려지니 고른 뒤에 고치면 늦다).
+  const [hookEdit, setHookEdit] = useState<{ key: string; lines: string[] } | null>(null);
   // 사진은 인물만·풍경만 따로 다시 그릴 수 있다 — kind 가 그것이다("" 면 둘 다).
   const [redo, setRedo] = useState<{ step: StudioStep; kind: string } | null>(null);
   // 크게 보고 있는 사진의 주소. "" 면 안 띄운다.
@@ -628,13 +631,51 @@ export default function AxisStudio() {
                 .map(([k, label]) => (
                 <div key={k}>
                   <Group>{label}</Group>
-                  {(c.hooks?.[k] || []).map((h, i) => (
-                    <div key={i} style={{ display: "flex", gap: T.s.xs, alignItems: "center", padding: "8px 0", borderTop: T.line }}>
-                      <div style={{ flex: 1, whiteSpace: "pre-line", lineHeight: 1.45 }}>{h.lines.join("\n")}</div>
-                      <Btn small kind="primary" disabled={busy}
-                           onClick={() => pickHook(h)}>선택</Btn>
-                    </div>
-                  ))}
+                  {(c.hooks?.[k] || []).map((h, i) => {
+                    const key = `${k}-${i}`;
+                    if (hookEdit?.key === key) {
+                      const lines = hookEdit.lines;
+                      const cleaned = lines.map((l) => l.trim());
+                      return (
+                        <div key={i} style={{ display: "grid", gap: T.s.xs, padding: "8px 0", borderTop: T.line }}>
+                          {lines.map((line, j) => (
+                            <label key={j} style={{ display: "flex", gap: T.s.xs, alignItems: "center" }}>
+                              <input
+                                id={`hook-edit-${key}-${j}`}
+                                value={line} autoFocus={j === 0}
+                                aria-label={`${j + 1}줄`}
+                                onChange={(e) => setHookEdit({ key, lines: lines.map((x, n) => (n === j ? e.target.value : x)) })}
+                                style={{
+                                  flex: 1, minWidth: 0, padding: "6px 10px", border: T.line, borderRadius: T.r.md,
+                                  background: "var(--bg-app)", color: T.text, font: "inherit", fontSize: 14, lineHeight: 1.45,
+                                }}
+                              />
+                              {/* 표지 칸이 좁아 지침서가 줄마다 글자 수를 정한다. 막지는 않고 세어 보여준다. */}
+                              <span style={{ color: T.faint, fontSize: 12, minWidth: 34, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                                {line.trim().length}자
+                              </span>
+                            </label>
+                          ))}
+                          <div style={{ display: "flex", gap: T.s.xs, justifyContent: "flex-end" }}>
+                            <Btn small kind="ghost" onClick={() => setHookEdit(null)}>취소</Btn>
+                            <Btn small kind="primary" disabled={busy || cleaned.some((l) => !l)}
+                                 onClick={() => { setHookEdit(null); pickHook({ ...h, lines: cleaned }); }}>
+                              이 문구로 선택
+                            </Btn>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={i} style={{ display: "flex", gap: T.s.xs, alignItems: "center", padding: "8px 0", borderTop: T.line }}>
+                        <div style={{ flex: 1, whiteSpace: "pre-line", lineHeight: 1.45 }}>{h.lines.join("\n")}</div>
+                        <Btn small kind="quiet" disabled={busy}
+                             onClick={() => setHookEdit({ key, lines: [...h.lines] })}>수정</Btn>
+                        <Btn small kind="primary" disabled={busy}
+                             onClick={() => pickHook(h)}>선택</Btn>
+                      </div>
+                    );
+                  })}
                 </div>
               ))}
             </div>

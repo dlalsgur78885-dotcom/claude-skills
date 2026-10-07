@@ -755,6 +755,14 @@ class ApiClient {
     return this.fetch<{ ok: boolean }>(`/uploads/scheduled/${itemId}`, { method: "DELETE" });
   }
 
+  // 끝난 항목을 「예약」 목록에서만 뺀다 — 인스타 게시물은 그대로. `done` 은 게시·삭제된 것 전부.
+  async hideScheduled(target: { id: string } | { done: true }) {
+    return this.fetch<{ ok: boolean; hidden: number }>("/uploads/scheduled/hide", {
+      method: "POST",
+      body: JSON.stringify(target),
+    });
+  }
+
   // CTA image — reusable call-to-action PNG dropped onto a fresh last slide.
   async getCtaImage(): Promise<{ url: string | null }> {
     return this.fetch("/cta");

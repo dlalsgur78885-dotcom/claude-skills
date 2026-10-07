@@ -66,7 +66,23 @@ export default function ScheduledList() {
     }
   }
 
+  // 목록에서만 뺀다 — 인스타 게시물은 그대로라 되묻지 않는다(업로더 예약목록과 같다).
+  async function hide(target: { id: string } | { done: true }, busy: string) {
+    setBusyId(busy);
+    try {
+      await api.hideScheduled(target);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "목록에서 지우지 못했습니다");
+    } finally {
+      setBusyId("");
+    }
+  }
+
   if (items === null) return <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>예약 목록을 불러오는 중…</p>;
+
+  // 일괄 지우기는 실패를 남긴다 — 실패는 이유를 보고 하나씩 지운다(업로더와 같은 규칙).
+  const doneCount = items.filter((i) => i.status === "published" || i.status === "deleted").length;
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -74,7 +90,14 @@ export default function ScheduledList() {
         <p style={{ fontSize: 12, color: "var(--text-tertiary)", margin: 0 }}>
           에디터의 [업로드]로 보낸 캐러셀입니다. 대기 중인 것은 캡션·시각·계정을 고칠 수 있고, 사진을 바꾸려면 취소한 뒤 다시 올려 주세요.
         </p>
-        <button onClick={() => void load()} style={btn}>새로고침</button>
+        <div style={{ display: "flex", gap: 6 }}>
+          {doneCount > 0 ? (
+            <button style={btn} disabled={busyId === "done"} onClick={() => void hide({ done: true }, "done")}>
+              게시·삭제된 항목 모두 지우기 ({doneCount})
+            </button>
+          ) : null}
+          <button onClick={() => void load()} style={btn}>새로고침</button>
+        </div>
       </div>
       {error ? <p role="alert" style={{ fontSize: 12, color: "var(--red)", margin: 0 }}>{error}</p> : null}
       {items.length === 0 ? (
@@ -106,6 +129,9 @@ export default function ScheduledList() {
                   ) : null}
                   {item.status === "published" ? (
                     <button style={btn} disabled={busyId === item.id} onClick={() => void remove(item)}>인스타에서 삭제</button>
+                  ) : null}
+                  {item.status === "published" || item.status === "deleted" || item.status === "failed" ? (
+                    <button style={btn} disabled={busyId === item.id} onClick={() => void hide({ id: item.id }, item.id)}>목록에서 지우기</button>
                   ) : null}
                 </div>
               </div>

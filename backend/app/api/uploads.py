@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -29,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import get_current_user
 from app.config import settings
 from app.database import get_db
+from app.models.app_setting import AppSetting
 from app.models.carousel import GeneratedCarousel
 from app.models.user import User
 
@@ -44,6 +46,12 @@ KEY_FILE = settings.DATA_DIR / "secrets" / "uploader_api_key"
 
 MIN_SLIDES, MAX_SLIDES = 2, 10   # 메타 API 한도(인스타 앱의 20장은 API 로 안 된다)
 _REF_RE = re.compile(r"^carousel-(\d+)-")
+
+# 「목록에서 지우기」 한 업로더 항목 id — 사람마다 `app_settings` 한 줄(JSON 목록)에 둔다.
+# 업로더 v1 API 에는 숨기기가 없어서(대시보드 전용 `queue-hide`) 여기서 걸러 낸다.
+HIDDEN_KEY = "uploads_hidden:"
+HIDEABLE = {"published", "deleted", "failed"}   # 끝난 것만 — 대기·진행 중인 것은 취소로 없앤다
+HIDDEN_CAP = 500                                # 업로더 목록이 최근 100건이라 이만큼이면 넉넉하다
 
 
 def _key() -> str:
@@ -167,10 +175,17 @@ async def upload_carousel(
             p.unlink(missing_ok=True)
 
 
-@router.get("/scheduled")
-async def scheduled(user: User = Depends(get_current_user),
-                    db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    """이 사람의 캐러셀에서 나간 업로드 목록(대기·게시됨·실패). 최근 100건까지(업로더 한도)."""
+async def _hidden(db: AsyncSession, user: User) -> tuple[AppSetting | None, list[str]]:
+    row = await db.get(AppSetting, f"{HIDDEN_KEY}{user.id}")
+    try:
+        ids = json.loads(row.value) if row and row.value else []
+    except ValueError:
+        ids = []
+    return row, [str(i) for i in ids if i] if isinstance(ids, list) else []
+
+
+async def _my_items(db: AsyncSession, user: User) -> list[dict[str, Any]]:
+    """이 사람의 캐러셀에서 나간 업로더 항목 — 캐러셀 제목·썸네일을 붙여서."""
     items = (await _call("GET", "/posts")).get("items") or []
     ids = {cid for cid in (_carousel_id(i.get("ref")) for i in items) if cid is not None}
     mine: dict[int, GeneratedCarousel] = {}
@@ -184,7 +199,50 @@ async def scheduled(user: User = Depends(get_current_user),
         if c is None:
             continue
         out.append({**item, "carousel": {"id": c.id, "title": c.title, "thumbnail_url": _thumb(c)}})
-    return {"items": out}
+    return out
+
+
+@router.get("/scheduled")
+async def scheduled(user: User = Depends(get_current_user),
+                    db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """이 사람의 캐러셀에서 나간 업로드 목록(대기·게시됨·실패). 최근 100건까지(업로더 한도).
+    「목록에서 지우기」 한 항목은 뺀다."""
+    _, hidden = await _hidden(db, user)
+    gone = set(hidden)
+    return {"items": [i for i in await _my_items(db, user) if i.get("id") not in gone]}
+
+
+class HideBody(BaseModel):
+    id: str | None = None   # 한 건
+    done: bool = False      # 게시·삭제된 것 전부
+
+
+@router.post("/scheduled/hide")
+async def hide_scheduled(body: HideBody,
+                         user: User = Depends(get_current_user),
+                         db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """끝난 항목을 이 목록에서만 뺀다 — 인스타 게시물과 업로더 기록은 그대로 둔다.
+
+    2026-10-07 트립앤라이프 피드백 「게시된 캐러셀이 계속 쌓인다」. 규칙은 업로더 예약목록의
+    [목록에서 지우기]·[게시·삭제된 항목 모두 지우기] 그대로다 — 일괄은 실패를 남긴다(이유를 보고
+    하나씩 지운다).
+    """
+    row, hidden = await _hidden(db, user)
+    gone = set(hidden)
+    done = [i for i in await _my_items(db, user)
+            if i.get("id") and i.get("id") not in gone and i.get("status") in HIDEABLE]
+    targets = ([i for i in done if i.get("status") != "failed"] if body.done
+               else [i for i in done if i.get("id") == body.id])
+    if not targets:
+        raise HTTPException(status_code=400, detail="지울 항목이 없습니다.")
+
+    value = json.dumps((hidden + [str(i["id"]) for i in targets])[-HIDDEN_CAP:])
+    if row:
+        row.value = value
+    else:
+        db.add(AppSetting(key=f"{HIDDEN_KEY}{user.id}", value=value))
+    await db.commit()
+    return {"ok": True, "hidden": len(targets)}
 
 
 class ScheduleEdit(BaseModel):

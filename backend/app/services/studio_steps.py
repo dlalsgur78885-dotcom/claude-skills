@@ -1459,6 +1459,32 @@ def _min_rating(topic: str) -> float | None:
     return float(m.group(1)) if m else None
 
 
+def _topic_wo_rating(topic: str) -> str:
+    """주제에서 **평점 약속만** 떼어 낸다 — 가게 이름을 받을 때 쓴다.
+
+    ⚠ 「구글 평점 4.7 이상」이 프롬프트에 들어가면 모델이 **한 곳도 내지 않는다**
+      (2026-10-06 실측 — 같은 주제에서 평점 문구를 떼면 8곳, 붙이면 0곳이었다).
+      평점은 모델이 알 수 없는 값이라 「확실한 곳만」과 겹치면 전부 포기하는 쪽으로 간다.
+      기준은 뒤에서 `place_lookup` 이 받아 온 실제 평점으로 거르므로 여기서 말할 필요가 없다.
+    """
+    out = re.sub(r"(?:구글\s*(?:지도\s*)?)?" + _MIN_RATING.pattern, " ", topic or "")
+    return re.sub(r"\s{2,}", " ", out).strip()
+
+
+def _search_queries(topic: str) -> list[str]:
+    """평점형 주제를 **구글 검색어 몇 개**로 바꾼다.
+
+    한 번 검색하면 20건까지만 오고 그중 기준을 넘는 곳은 절반 남짓이다 — 말을 조금씩
+    바꿔 겹쳐 받아야 여덟 곳이 찬다(「도쿄 신주쿠 이자카야 맛집」·「도쿄 신주쿠 이자카야」·
+    「신주쿠 이자카야」는 결과가 서로 다르다, 2026-10-06 실측).
+    """
+    base = re.sub(r"\s*\d+\s*곳\s*$", "", _topic_wo_rating(topic)).strip()
+    short = re.sub(r"\s*맛집\s*$", "", base).strip()
+    words = short.split()
+    tail = " ".join(words[1:]) if len(words) > 2 else ""
+    return [q for q in dict.fromkeys([base, short, tail]) if q]
+
+
 def _rating_of(place: dict[str, Any]) -> float:
     try:
         return float(str(place.get("rating") or 0).replace(",", "."))
@@ -1633,9 +1659,19 @@ async def _find_places(topic: str, axis: str, want: int
     # 평점 기준이 있으면 거기서 많이 떨어지므로 두 배로 받아 둔다.
     pick = want + PICK_EXTRA * (2 if floor else 1)
 
+    names: list[str] = []
+    if floor:
+        # 평점형 주제는 **구글 검색에서 먼저 고른다.** 모델이 대는 이름은 체인점이 많아
+        # 확인된 열여섯 곳 중 한 곳만 4.7 을 넘었다(2026-10-06 실측 · 신주쿠 이자카야).
+        # 구글은 검색 결과에 평점을 함께 주므로 기준을 넘는 곳만 골라 올 수 있다.
+        names = await place_lookup.names_by_rating(_search_queries(topic), floor, pick)
+        logger.info(f"[studio] 평점 {floor} 이상 — 구글 검색에서 {len(names)}곳 받았습니다")
+
+    # 구글에서 다 찼으면 문구 모델을 부르지 않는다 — 부를 일이 없는 호출이다.
+    need = pick - len(names)
     picked = await _ask(
         "body",
-        f"주제 「{topic}」 에 넣을 가게를 {pick}곳 고르라. "
+        f"주제 「{_topic_wo_rating(topic)}」 에 넣을 가게를 {need}곳 고르라. "
         "**실제로 있는 가게의 이름만** 낸다. 설명·주소·영업시간은 여기서 적지 마라 — "
         "그건 다음 단계에서 구글 지도로 확인해 채운다. "
         "찾기 쉽게 «가게 이름 + 지역» 형태로 쓴다(예: 이치란 시부야점).",
@@ -1645,13 +1681,19 @@ async def _find_places(topic: str, axis: str, want: int
                "쇼핑몰·역·숙박처럼 **그 지역의 명소이긴 하나 주제의 음식을 파는 곳이 아닌** 것은 "
                "한 곳도 넣지 않는다." + chr(10) +
                f"⚠ 낱장에 쓰는 것은 {want}곳이다. 확인·판정에서 떨어지는 곳이 있어 "
-               f"{pick}곳을 받는다 — **확실한 곳만** 대라. 모르면 아는 만큼만 내라. "
+               f"{need}곳을 받는다 — **확실한 곳만** 대라. 모르면 아는 만큼만 내라. "
                "억지로 채운 한 곳이 캐러셀 전체를 망친다."
-               + (f"{chr(10)}⚠ 이 주제는 **구글 지도 평점 {floor} 이상**인 가게만 쓴다. 확인에서 "
-                  f"{floor} 미만은 전부 떨어지니 평점이 확실히 높은 곳만 대라." if floor else "")),
+               + (f"{chr(10)}⚠ **평점은 네가 판단하지 마라.** 다음 단계에서 구글 지도 평점을 받아 "
+                  f"{floor} 미만을 떨어뜨린다. 여기서는 그 지역·분류에서 "
+                  "평이 좋기로 알려진 곳을 **넓게** 대면 된다." if floor else "")),
         schema=S_PLACE_NAMES, axis=axis,
-    )
-    names = [str(n).strip() for n in _list_from(picked, "places", "items") if str(n).strip()]
+    ) if need > 0 else {}
+    seen = {n.lower() for n in names}
+    for n in _list_from(picked, "places", "items"):
+        n = str(n).strip()
+        if n and n.lower() not in seen:
+            seen.add(n.lower())
+            names.append(n)
     if not names:
         raise RuntimeError("가게 이름을 받지 못했습니다.")
 
@@ -1985,6 +2027,10 @@ async def make_body(body: BodyBody) -> dict[str, Any]:
                 "한 항목이 본문 낱장 한 장이고, 그 안의 options 셋이 A·B·C 다.",
                 "세 안의 **결이 서로 달라야** 한다 — 같은 결로 셋을 내면 고를 이유가 없다.",
                 "`tone` 에 그 결을 한 낱말로 적어라(게시물마다 다르다. 정해진 목록이 없다).",
+                # 2026-10-07 트립앤라이프 피드백 — 본문에 참여를 끌어내는 말이 없다. 강제하지 않고 고를 수 있게 한 안만.
+                "**C(세 번째 안)는 참여 유도형**으로 짓는다 — 2줄째를 댓글·공유·의견을 끌어내는 말로"
+                "(예: 「여러분은 어떻게 생각하세요?」 「이건 친구한테 꼭 보내기」 「댓글로 알려 주세요」). "
+                "C 의 `tone` 은 「참여」. A·B 는 지금처럼 결만 다르게 짓는다.",
                 "어느 조합으로 골라도 이어지게 — 앞 장 문장에만 걸리는 지시어를 쓰지 마라.",
                 "줄이 둘이면 줄바꿈(\\n)으로 잇고, 지침서의 글자 수 규칙을 지켜라.",
             ]),

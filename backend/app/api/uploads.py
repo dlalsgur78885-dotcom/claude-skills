@@ -52,6 +52,10 @@ _REF_RE = re.compile(r"^carousel-(\d+)-")
 HIDDEN_KEY = "uploads_hidden:"
 HIDEABLE = {"published", "deleted", "failed"}   # 끝난 것만 — 대기·진행 중인 것은 취소로 없앤다
 HIDDEN_CAP = 500                                # 업로더 목록이 최근 100건이라 이만큼이면 넉넉하다
+# 이 상태의 항목이 있는 캐러셀은 「작업 중·완성」 탭에서 뺀다(예약 탭과 겹치지 않게).
+# 목록에서 지운 게시됨도 포함 — 이미 나간 것이라 「전체」 에서만 보인다(2026-10-07 사람 결정).
+# 실패·인스타에서 삭제됨은 다시 올려야 하므로 돌려보낸다.
+BUSY = {"pending", "uploading", "processing", "published"}
 
 
 def _key() -> str:
@@ -206,10 +210,12 @@ async def _my_items(db: AsyncSession, user: User) -> list[dict[str, Any]]:
 async def scheduled(user: User = Depends(get_current_user),
                     db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """이 사람의 캐러셀에서 나간 업로드 목록(대기·게시됨·실패). 최근 100건까지(업로더 한도).
-    「목록에서 지우기」 한 항목은 뺀다."""
+    「목록에서 지우기」 한 항목은 뺀다. `busy_carousel_ids` 는 「작업 중·완성」 에서 뺄 캐러셀(`BUSY`)."""
     _, hidden = await _hidden(db, user)
     gone = set(hidden)
-    return {"items": [i for i in await _my_items(db, user) if i.get("id") not in gone]}
+    items = await _my_items(db, user)
+    busy = sorted({i["carousel"]["id"] for i in items if i.get("status") in BUSY})
+    return {"items": [i for i in items if i.get("id") not in gone], "busy_carousel_ids": busy}
 
 
 class HideBody(BaseModel):

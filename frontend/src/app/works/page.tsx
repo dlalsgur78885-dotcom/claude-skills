@@ -118,8 +118,15 @@ export default function WorksPage() {
     setLoading(true);
     try {
       const status = tab === "all" ? undefined : tab === "finalized" ? "finalized" : "draft";
-      const data = await api.getCarousels(50, 0, status);
-      setItems(data);
+      // 작업 중·완성 탭은 예약 탭에 간 캐러셀(대기·게시됨)을 뺀다 — 같은 것이 두 곳에 보였다
+      // (2026-10-07 트립앤라이프 피드백). 업로더가 안 되면 빼지 않고 다 보여 준다.
+      const [data, busy] = await Promise.all([
+        api.getCarousels(50, 0, status),
+        status
+          ? api.scheduledPosts().then((r) => new Set(r.busy_carousel_ids ?? [])).catch(() => new Set<number>())
+          : Promise.resolve(new Set<number>()),
+      ]);
+      setItems(busy.size ? data.filter((c) => !busy.has(c.id)) : data);
     } catch {
       /* ignore */
     } finally {

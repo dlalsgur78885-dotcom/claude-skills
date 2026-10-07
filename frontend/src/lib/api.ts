@@ -741,7 +741,7 @@ class ApiClient {
   }
 
   async scheduledPosts() {
-    return this.fetch<{ items: import("./types").ScheduledPost[] }>("/uploads/scheduled");
+    return this.fetch<{ items: import("./types").ScheduledPost[]; busy_carousel_ids: number[] }>("/uploads/scheduled");
   }
 
   async updateScheduled(itemId: string, change: import("./types").ScheduleEdit) {

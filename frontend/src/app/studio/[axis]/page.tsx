@@ -308,14 +308,18 @@ export default function AxisStudio() {
   const items = c.body || [];
   // X인용 — 장마다 고른 안(0=A, 1=B, 2=C). 안 고른 장은 A 가 기본이다.
   const [pickedOpt, setPickedOpt] = useState<Record<number, number>>({});
+  // 사람이 고쳐 쓴 본문 멘트(낱장 번호 → 문구). 있으면 고른 안보다 이것이 들어간다
+  // (2026-10-07 트립앤라이프 피드백 — 「괜찮은 멘트가 없을 때가 많다」).
+  const [bodyEdit, setBodyEdit] = useState<Record<number, string>>({});
   // 바꾼 사진만 담는다(낱장 번호 → 고른 주소). 안 건드린 낱장은 여기 없다.
   const chosenItems = items
     .map((it: StudioBodyItem, i: number) => (swapped[i] ? { ...it, photo: swapped[i] } : it))
     // 본문2 사진은 따로 담는다 — 안 바꿨으면 백엔드가 넣어 둔 `photo2` 가 그대로 간다.
     .map((it: StudioBodyItem, i: number) => (swapped2[i] ? { ...it, photo2: swapped2[i] } : it))
-    // 3안이 있는 장은 **고른 안의 문구**를 text 로 박아 넘긴다. 안 고르면 A 다.
+    // 3안이 있는 장은 **고른 안의 문구**를 text 로 박아 넘긴다. 안 고르면 A 다. 고쳐 쓴 문구가 있으면 그것.
     .map((it: StudioBodyItem, i: number) =>
-      it.options?.length ? { ...it, text: it.options[pickedOpt[i] ?? 0]?.text ?? "" } : it)
+      bodyEdit[i] !== undefined ? { ...it, text: bodyEdit[i] }
+        : it.options?.length ? { ...it, text: it.options[pickedOpt[i] ?? 0]?.text ?? "" } : it)
     .filter((_, i: number) => !excluded.has(i));
   const caption = captionDraft ?? ch.caption ?? c.caption ?? "";
   // CTA1 도 캡션처럼 사람이 고쳐 쓸 수 있다. 고른 것 → 미리 만든 것 순.
@@ -401,6 +405,46 @@ export default function AxisStudio() {
     if (ch.hook_lines?.join("\n") === h.lines.join("\n")) return jump(3);
     send({ chosen: { hook_lines: h.lines, cover_intro: h.intro || [], cover_tags: h.tags || "" },
            pending: c.images?.length ? "" : "images" }, 3);
+  };
+
+  // 본문 멘트 고치기 — 안 고칠 때는 [문구 고치기] 버튼만, 고칠 때는 입력칸·줄별 글자 수·[되돌리기].
+  // 체크박스 라벨 안에 들어가므로 누를 때 체크가 토글되지 않게 막는다.
+  const bodyEditor = (i: number, base: string) => {
+    const stop = (e: React.SyntheticEvent) => { e.preventDefault(); e.stopPropagation(); };
+    if (bodyEdit[i] === undefined) {
+      return (
+        <button type="button" onClick={(e) => { stop(e); setBodyEdit((prev) => ({ ...prev, [i]: base })); }}
+                style={{ alignSelf: "flex-start", background: "none", border: "none", padding: 0,
+                         color: T.accent, fontSize: 13, cursor: "pointer", font: "inherit" }}>
+          문구 고치기
+        </button>
+      );
+    }
+    const text = bodyEdit[i];
+    return (
+      <div style={{ display: "grid", gap: 4 }} onClick={(e) => e.stopPropagation()}>
+        <textarea
+          id={`body-edit-${i}`} value={text} rows={Math.max(2, text.split("\n").length)}
+          aria-label={`본문 ${i + 1} 문구`}
+          onChange={(e) => setBodyEdit((prev) => ({ ...prev, [i]: e.target.value }))}
+          style={{
+            width: "100%", padding: "7px 10px", border: `1px solid ${T.accent}`, borderRadius: T.r.md,
+            background: "var(--bg-app)", color: T.text, font: "inherit", fontSize: 14, lineHeight: 1.5, resize: "vertical",
+          }}
+        />
+        <div style={{ display: "flex", gap: T.s.xs, alignItems: "center", fontSize: 12, color: T.faint }}>
+          {/* 지침서가 줄마다 글자 수를 정한다(X인용 16자 안팎). 막지는 않고 세어 보여준다. */}
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>
+            고친 문구가 들어갑니다 · {text.split("\n").map((l, n) => `${n + 1}줄 ${l.trim().length}자`).join(" · ")}
+          </span>
+          <button type="button" onClick={(e) => { stop(e); setBodyEdit((prev) => { const n = { ...prev }; delete n[i]; return n; }); }}
+                  style={{ marginLeft: "auto", background: "none", border: "none", padding: 0, color: T.faint,
+                           fontSize: 12, cursor: "pointer", font: "inherit" }}>
+            되돌리기
+          </button>
+        </div>
+      </div>
+    );
   };
 
   const pickPhoto = (url: string) => {
@@ -792,7 +836,9 @@ export default function AxisStudio() {
                             return (
                               <button key={oi} type="button"
                                 onClick={(e) => { e.preventDefault(); e.stopPropagation();
-                                                  setPickedOpt((prev) => ({ ...prev, [i]: oi })); }}
+                                                  setPickedOpt((prev) => ({ ...prev, [i]: oi }));
+                                                  // 고치는 중에 다른 안을 누르면 그 안을 바탕으로 다시 고친다.
+                                                  if (bodyEdit[i] !== undefined) setBodyEdit((prev) => ({ ...prev, [i]: op.text ?? "" })); }}
                                 style={{
                                   textAlign: "left", cursor: "pointer", padding: "7px 10px",
                                   borderRadius: T.r.md,
@@ -807,6 +853,14 @@ export default function AxisStudio() {
                               </button>
                             );
                           })}
+                          {bodyEditor(i, it.options[pickedOpt[i] ?? 0]?.text ?? "")}
+                        </div>
+                      ) : typeof it.text === "string" && !it.jp && !it.name ? (
+                        // X인용 「일본 반응」 장처럼 안 없이 문구 한 줄만 있는 장.
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          <div style={{ color: T.faint, fontSize: 13 }}>본문 {i + 1}</div>
+                          {bodyEdit[i] === undefined ? <div>{it.text || "(문구 없음)"}</div> : null}
+                          {bodyEditor(i, it.text)}
                         </div>
                       ) : (
                         <>
@@ -839,7 +893,7 @@ export default function AxisStudio() {
                    }}>
                 이 {chosenItems.length}개로 진행
               </Btn>
-              <Btn kind="ghost" disabled={busy} onClick={() => { setExcluded(new Set()); setSwapped({}); setSwapped2({}); setOpenShots(""); askRedo("body"); }}>다시 뽑기</Btn>
+              <Btn kind="ghost" disabled={busy} onClick={() => { setExcluded(new Set()); setSwapped({}); setSwapped2({}); setBodyEdit({}); setOpenShots(""); askRedo("body"); }}>다시 뽑기</Btn>
             </div>
           </Step>
         ) : null}

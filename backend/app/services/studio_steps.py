@@ -103,6 +103,11 @@ AXES: dict[str, dict[str, Any]] = {
         # 매장명 → headline / 위치 1줄 → subtext / 특징 4줄 → body. tag 는 안 쓴다.
         "body_fields": ["name", "where", "desc", ""],
         "places": 8,          # 실제 가게 8곳 — place_lookup 으로 확인한 뒤 쓴다
+        # 주제 후보를 **내기 전에** 그 주제로 8곳이 채워지는지 확인한다(`_verify_topics`).
+        # 2026-10-07 사람 지시(솔희 방) — 전에는 꺼 둬서, 낮에 1단계를 새로 돌리면 확인 없이
+        # 후보가 나가고 사람이 고른 뒤 **본문 단계에서야** 가게가 없다고 터졌다(10/07 09:48).
+        # 04:00 미리 만들기는 같은 일을 하지만 그 뒤 새로 뽑은 후보에는 그물이 없었다.
+        "verify_topics": True,
         # 인물 5 + 음식 5(2026-09-09 사람 지시 — 「인물 5장, 주제와 관련된 음식 5장」).
         #   풍경은 안 그린다. 본문 낱장 배경은 **구글 지도의 실제 가게 사진**이라 여기서 그릴 게 아니다.
         "cover_shots": {"person": 5, "food": 5},
@@ -753,6 +758,51 @@ S_ONE_LINE = _obj({"text": {"type": "string"}})
 # X인용: 캡처에 갈아 끼울 **한국어 본문**. 원문 줄바꿈을 그대로 살려야 캡처가 원문처럼 보인다.
 S_TRANSLATE = S_ONE_LINE
 
+# 일본어(가나·한자)가 섞인 문구를 한국어 표기로 바꿀 때. 받은 순서·개수 그대로 돌려받는다.
+S_KOREANIZE = _obj({"items": _arr({"type": "string"})})
+_JA_RE = re.compile(r"[぀-ヿㇰ-ㇿ一-鿿々〆]")
+
+
+async def _koreanize(texts: list[str], axis: str = DEFAULT_AXIS) -> list[str]:
+    """일본어가 섞인 문구만 골라 **그 부분만** 한국어 표기로 바꾼다. 나머지는 손대지 않는다.
+
+    2026-10-07 트립앤라이프 피드백 — X인용 훅에 「焼肉きんぐ 앱」 이 그대로 나왔다. 읽는 사람은
+    한국인이고 표지·본문은 한국어여야 한다. 일본어가 없으면 모델을 부르지 않는다.
+    바꾼 결과에 여전히 일본어가 남거나 개수가 어긋나면 원래 문구를 둔다(빈칸보다 낫다).
+    """
+    idx = [i for i, t in enumerate(texts) if _JA_RE.search(t or "")]
+    if not idx:
+        return texts
+    try:
+        data = await _ask(
+            "hooks",
+            "아래 문구마다 섞인 일본어(가나·한자)만 한국어 표기로 바꿔라.",
+            '{"items": ["바꾼 문구(받은 순서 그대로)"]}',
+            extra="\n".join([
+                "- 가게·브랜드·지명·사람 이름은 **한국어 발음**으로 쓴다(焼肉きんぐ → 야키니쿠킹, 蓬莱 → 호라이, 難波 → 난바).",
+                "- 뜻으로 옮기는 게 자연스러운 말은 뜻으로 쓴다(食べ放題 → 무한리필).",
+                "- 일본어가 아닌 부분은 한 글자도 바꾸지 마라. 줄바꿈·띄어쓰기·숫자·기호도 그대로.",
+                "- 받은 문구 수와 같은 수를 같은 순서로 돌려준다.",
+                "",
+                "===== 문구 =====",
+                *[f"{n + 1}. {texts[i]}" for n, i in enumerate(idx)],
+            ]),
+            schema=S_KOREANIZE, axis=axis, model=LIGHT_MODEL, with_rules=False,
+        )
+    except Exception as e:
+        logger.warning(f"[studio] 일본어 표기 바꾸기 실패 — 원래 문구를 둡니다: {str(e)[:150]}")
+        return texts
+    got = _list_from(data, "items")
+    if len(got) != len(idx):
+        logger.warning(f"[studio] 일본어 표기 바꾸기 개수 불일치 {len(got)}/{len(idx)} — 원래 문구를 둡니다")
+        return texts
+    out = list(texts)
+    for i, t in zip(idx, got):
+        t = re.sub(r"^\s*\d+[.)]\s*", "", str(t or "")).strip()
+        if t and not _JA_RE.search(t):
+            out[i] = t
+    return out
+
 # X인용: 후보마다 민감 주제인지(2026-10-06 사람 지시 — 빼지 않고 표시만).
 S_SENSITIVE = _obj({"items": _arr(_obj({
     "id": {"type": "string"},
@@ -966,6 +1016,10 @@ async def _x_topics(axis: str, history: list[str]) -> list[dict[str, Any]]:
     # 지침서 「정렬 — 앞에 둘 글」 그대로 줄 세운다(답글 3개↑ → 48시간 이내 → 댓글 많은 순).
     # 원클릭은 앞에서부터 미리 만들어 두므로 이 순서가 곧 사람이 먼저 보는 순서다.
     ranked = await _mark_sensitive(x_search.sort_candidates(alive), axis)
+    # 주제 제목은 grok 이 붙인다 — 일본 가게·브랜드 이름이 일본어 그대로 올 때가 있다(「焼肉きんぐ 앱에서…」).
+    # 제목은 캐러셀 이름·훅·캡션의 재료라 여기서 한국어 표기로 바꿔 둔다.
+    titles = await _koreanize([str(r.get("topic") or "") for r in ranked], axis)
+    ranked = [{**r, "topic": t} for r, t in zip(ranked, titles)]
     # (답글은 사람이 고른 뒤에 받으므로 여기서 「답글 3개 이상」을 세면 늘 0 이다 — 세지 않는다.)
     logger.info("[x] 후보 %d건 — 사진 있는 글 %d건 · 민감 표시 %d건 · 실패한 묶음 %s",
                 len(ranked),
@@ -1303,10 +1357,21 @@ async def make_hooks(body: TopicBody) -> dict[str, Any]:
     d = data if isinstance(data, dict) else {}
     if two_only:
         d = {**d, "three": []}   # 모델이 그래도 냈으면 여기서 버린다
-    return {
+    out = {
         "three": _list_from(d.get("three"), "items") or (d.get("three") if isinstance(d.get("three"), list) else []),
         "two": _list_from(d.get("two"), "items") or (d.get("two") if isinstance(d.get("two"), list) else []),
     }
+    # 표지에 일본어가 박히지 않게 — 원문을 같이 넘기면서 「焼肉きんぐ 앱」 처럼 이름을 그대로 옮겨 왔다.
+    cands = [h for k in ("three", "two") for h in out[k] if isinstance(h, dict) and isinstance(h.get("lines"), list)]
+    flat = [str(line) for h in cands for line in h["lines"]]
+    fixed = await _koreanize(flat, body.axis)
+    if fixed != flat:
+        pos = 0
+        for h in cands:
+            n = len(h["lines"])
+            h["lines"] = fixed[pos:pos + n]
+            pos += n
+    return out
 
 
 # ─── 4단계 — 본문 ───────────────────────────────────────────────────────────
@@ -2036,7 +2101,14 @@ async def make_body(body: BodyBody) -> dict[str, Any]:
             ]),
             schema=S_BODY_OPTIONS, axis=body.axis,
         )
-        return {"items": _list_from(data, "items", "body", "rows")}
+        items = _list_from(data, "items", "body", "rows")
+        # 본문 문구에도 일본어 이름이 그대로 들어오지 않게 한국어 표기로 바꾼다(훅과 같은 이유).
+        ops = [op for it in items if isinstance(it, dict) for op in (it.get("options") or []) if isinstance(op, dict)]
+        texts = [str(op.get("text") or "") for op in ops]
+        fixed = await _koreanize(texts, body.axis)
+        for op, t in zip(ops, fixed):
+            op["text"] = t
+        return {"items": items}
 
     data = await _ask(
         "body",

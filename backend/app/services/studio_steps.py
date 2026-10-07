@@ -890,7 +890,9 @@ X_TARGET = 40
 # 종류(텍스트·사진)와 기간으로 넷으로 쪼개면 한 묶음이 어긋나도 나머지가 남는다.
 # ⚠ grok 세션(GROK_HOME)은 조사원 봇과 함께 쓴다 — 동시에 부르면 세션 파일에서 부딪히므로
 #   **차례로** 부른다. 한 묶음에 최대 8분, 넷이면 최대 32분이다(그래서 저녁 회차가 20:30).
-X_TOPIC_MAX_SEARCHES = 10
+# 묶음당 X 검색 상한. 2026-10-07 시험(같은 기준) — 10번 16건 $0.91 · 20번 34건 $1.76 → 20(대표 확정).
+# grok 은 검색 한 번에 10건까지만 받으므로 후보 수는 검색 횟수에 거의 비례한다.
+X_TOPIC_MAX_SEARCHES = 20
 X_BATCHES = (
     ("텍스트", 10, "최근 3일"),
     ("사진", 10, "최근 3일"),
@@ -967,7 +969,7 @@ async def _x_topics(axis: str, history: list[str]) -> list[dict[str, Any]]:
         got: list[dict[str, Any]] = []
         for attempt in (1, 2):
             try:
-                # 1단계는 X 검색 10번까지(2026-10-01 대표 확정: 6번이면 후보가 회차당 8건, 12번이면 24건이었다)
+                # 1단계 X 검색 상한은 `X_TOPIC_MAX_SEARCHES`(2026-10-07 20번으로 올림. 10-01 확정 당시: 6번이면 후보가 회차당 8건, 12번이면 24건이었다)
                 raw = await x_search.search(ask, max_searches=X_TOPIC_MAX_SEARCHES)
             except Exception as e:
                 # 한 묶음이 죽어도 회차는 살린다 — 예전에는 한 번 어긋나면 회차가 통째로 0건이었다.
@@ -1576,6 +1578,19 @@ def _topic_wo_rating(topic: str) -> str:
     return re.sub(r"\s{2,}", " ", out).strip()
 
 
+def _topic_core(topic: str) -> str:
+    """주제에서 **가게가 통과해야 하는 조건**만 남긴다 — 위치 + 메뉴.
+
+    2026-10-07 사람 지시로 일본맛집 주제가 「위치, 메뉴, 핵심키워드」 얼품표 꼴이 됐다.
+    핵심키워드(`내돈내산`·`웨이팅 지옥`)는 훅 결이라 가게마다 확인할 수 없다
+    (`일본맛집_1단계_주제후보.md` 「키워드는 가게 통과 조건이 아니다」).
+    가게를 찾고·가릴 때만 떼고, 수치 약속은 `_min_rating` 이 **전원 주제**에서 따로 읽는다.
+    얼품표가 없는 여타 주제는 그대로 돌려준다.
+    """
+    parts = [x.strip() for x in str(topic or "").split(",") if x.strip()]
+    return " ".join(parts[:2]) if len(parts) > 1 else topic
+
+
 def _search_queries(topic: str) -> list[str]:
     """평점형 주제를 **구글 검색어 몇 개**로 바꾼다.
 
@@ -1583,7 +1598,7 @@ def _search_queries(topic: str) -> list[str]:
     바꿔 겹쳐 받아야 여덟 곳이 찬다(「도쿄 신주쿠 이자카야 맛집」·「도쿄 신주쿠 이자카야」·
     「신주쿠 이자카야」는 결과가 서로 다르다, 2026-10-06 실측).
     """
-    base = re.sub(r"\s*\d+\s*곳\s*$", "", _topic_wo_rating(topic)).strip()
+    base = re.sub(r"\s*\d+\s*곳\s*$", "", _topic_wo_rating(_topic_core(topic))).strip()
     short = re.sub(r"\s*맛집\s*$", "", base).strip()
     words = short.split()
     tail = " ".join(words[1:]) if len(words) > 2 else ""
@@ -1776,7 +1791,7 @@ async def _find_places(topic: str, axis: str, want: int
     need = pick - len(names)
     picked = await _ask(
         "body",
-        f"주제 「{_topic_wo_rating(topic)}」 에 넣을 가게를 {need}곳 고르라. "
+        f"주제 「{_topic_wo_rating(_topic_core(topic))}」 에 넣을 가게를 {need}곳 고르라. "
         "**실제로 있는 가게의 이름만** 낸다. 설명·주소·영업시간은 여기서 적지 마라 — "
         "그건 다음 단계에서 구글 지도로 확인해 채운다. "
         "찾기 쉽게 «가게 이름 + 지역» 형태로 쓴다(예: 이치란 시부야점).",
@@ -1825,7 +1840,7 @@ async def _find_places(topic: str, axis: str, want: int
     revs = await place_lookup.reviews_many(good, cap=REVIEW_CAP)
 
     # 실존 확인을 통과했다고 주제에 맞는 것은 아니다 — 여기서 한 번 더 가린다.
-    good, revs, off = await _screen_places(topic, good, revs, axis)
+    good, revs, off = await _screen_places(_topic_core(topic), good, revs, axis)
     dropped += off
     if not good:
         raise TopicUnfit("주제에 맞는 가게가 하나도 남지 않았습니다 — 주제를 좁히거나 바꿔야 합니다.")

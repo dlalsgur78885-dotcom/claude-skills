@@ -146,6 +146,19 @@ def _parse_replies(lines: list[str]) -> list[dict[str, Any]]:
     return out
 
 
+# grok 이 게시물마다 덧붙이는 계정·시각·수치 줄(「@계정 · Thu, 01 Oct 2026 10:14:05 GMT · 조회 4979376 · 좋아요 …」).
+# 제목·요약이 아니므로 고를 때 건너뛴다. 제목에 「조회수 100만」 같은 말이 들어갈 수 있어 수치 낱말 하나로는
+# 판정하지 않는다 — @계정으로 시작하거나, GMT 시각이 있거나, 수치 칸이 둘 이상이면 수치 줄이다.
+_META_HANDLE_RE = re.compile(r"^[*\-\s]*@[A-Za-z0-9_]{1,20}\s*[·|•]")
+_META_TIME_RE = re.compile(r"\d{1,2}:\d{2}(?::\d{2})?\s*(?:GMT|UTC)")
+_META_FIELD_RE = re.compile(r"(?:조회|좋아요|리포스트|댓글|북마크)\s*(?:수)?\s*[:·]?\s*[\d,]+|사진\s*\d+\s*장")
+
+
+def _is_meta(line: str) -> bool:
+    return bool(_META_HANDLE_RE.search(line) or _META_TIME_RE.search(line)
+                or len(_META_FIELD_RE.findall(line)) >= 2)
+
+
 def parse(text: str) -> list[dict[str, Any]]:
     """grok 이 돌려준 글에서 게시물을 줍는다.
 
@@ -177,19 +190,27 @@ def parse(text: str) -> list[dict[str, Any]]:
                 break
             if nxt.strip():
                 after.append(nxt.strip())
-        # 다음 게시물 URL 바로 위 줄은 **다음 게시물의 제목**이다. 요약 없이 「제목·URL」만
-        # 받게 바꾼 뒤(2026-10-05) 이 줄이 앞 게시물의 요약으로 잘못 들어갔다.
-        if hit_next and after:
-            after.pop()
+        # 다음 게시물 URL 위의 줄들은 **다음 게시물의 것**(제목, grok 이 덧붙인 계정·수치 줄)이다.
+        # 요약 없이 「제목·URL」만 받게 바꾼 뒤(2026-10-05) 이 줄들이 앞 게시물의 요약으로 들어갔다 —
+        # 수치 줄을 걷어 내고 그 위의 제목 한 줄까지 뗀다.
+        if hit_next:
+            while after and _is_meta(after[-1]):
+                after.pop()
+            if after:
+                after.pop()
         title = ""
-        for cand in reversed(before):
+        # 「제목 | URL」 처럼 한 줄에 같이 오면 그 줄의 글이 제목이다.
+        same = re.sub(r"[|｜:：\-–—→>]+\s*$", "", _URL_RE.sub("", line)).strip()
+        for cand in [same, *reversed(before)]:
             # ⚠ 앞쪽 번호만 떼면 **뒤에 남은 `**` 가 제목에 딸려 들어간다**
             #   (2026-09-17 첫 회차 — 「서울의 그늘 걷는 권리**」). 양쪽 강조 기호를 다 떼고,
             #   grok 이 붙이는 「요약:」 같은 머리말도 지운다.
             cleaned = _BULLET_RE.sub("", cand).strip()
             cleaned = cleaned.strip("*_` ").strip()
             cleaned = re.sub(r"^(제목|주제|요약)\s*[:：]\s*", "", cleaned).strip()
-            if len(cleaned) >= 4 and not _URL_RE.search(cleaned):
+            # ⚠ 계정·시각·수치 줄은 제목이 아니다(2026-10-07 트립앤라이프 피드백 — 제목이
+            #   「@apricot_candy_a · Thu, 01 Oct 2026 … · 조회 4979376 …」 로 나왔다).
+            if len(cleaned) >= 4 and not _URL_RE.search(cleaned) and not _is_meta(cleaned):
                 title = cleaned
                 break
 
@@ -200,7 +221,7 @@ def parse(text: str) -> list[dict[str, Any]]:
         num = lambda rx: (lambda m: int(m.group(1).replace(",", "")) if m else 0)(rx.search(stats_line))
         summary = next(
             (x for x in body_lines
-             if x is not stats_line and len(x) >= 10 and not _URL_RE.search(x)),
+             if x is not stats_line and len(x) >= 10 and not _URL_RE.search(x) and not _is_meta(x)),
             "",
         )
         summary = re.sub(r"^(요약|내용)\s*[:：]\s*", "", summary.strip("*_` ").strip()).strip()

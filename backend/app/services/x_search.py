@@ -448,7 +448,9 @@ async def cover_images(photo_urls: list[str]) -> list[bytes]:
     """
     async def one(url: str) -> bytes | None:
         try:
-            blob = await asyncio.to_thread(_fetch, url + "?name=large")
+            # ⚠ FxTwitter 주소는 이미 `?name=orig` 가 붙어 온다 — 그대로 덧붙이면 `…?name=orig?name=large`
+            #   가 돼 404 였다(2026-10-05~10-08 X인용 표지가 원본 사진 없이 그림 생성으로 빠졌다).
+            blob = await asyncio.to_thread(_fetch, url.split("?", 1)[0] + "?name=large")
             return await asyncio.to_thread(_crop_cover, blob)
         except Exception as e:
             logger.warning(f"[x] 원본 사진을 못 받았습니다 — {url} ({e})")

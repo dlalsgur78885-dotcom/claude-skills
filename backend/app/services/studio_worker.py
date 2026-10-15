@@ -179,6 +179,20 @@ STYLE = {
         "render any text, signage or logos — leave the space clean instead of generating "
         "lettering."
     ),
+    # 일본숙소 표지 후보의 호텔 컷(2026-10-15 축 신설). 원본은 `일본숙소_3-2단계_썸네일이미지.md`
+    # 「이미지」·「비율·구도」다 — 한쪽을 고치면 같이 고친다.
+    # ⚠ 그린 호텔은 **실제 그 호텔이 아니다** — 이름·간판·로고를 그리면 실제 호텔인 척하게 된다.
+    "hotel": (
+        "Make it look like a real photo a traveler took on a phone during the stay, not a hotel "
+        "advertisement or a 3D render: natural light, unedited phone-camera color (the iPhone photo "
+        "look, no filter or color grading), real materials and a lived-in but tidy room or building. "
+        "No people in the frame — no guests, no staff, no hands. This is not any real hotel: never "
+        "render a hotel name, sign, logo, brand mark or any lettering on the building, in the room or "
+        "on amenities — leave those surfaces plain instead. Compose for a 4:5 portrait frame and keep "
+        "the main subject (the building, the room, the view, the pool or the breakfast) inside the "
+        "central square of the frame, with the scene continuing naturally to every edge — no borders "
+        "or empty bands."
+    ),
 }
 
 # 셀카 결은 **이 축만** 쓴다 (2026-09-30 사람 지시 — 「일본 맛집2 캐러셀 인물 이미지만 셀카를
@@ -472,7 +486,7 @@ FOOD_COLLAGE = (
 
 # 프롬프트에 「인물(person) 5장」처럼 적으려고 쓴다. 영어 키만 주면 무엇을 그리라는 건지
 # 모델이 한 번 더 번역해야 한다.
-KIND_KO = {"person": "인물", "scenery": "풍경", "food": "음식"}
+KIND_KO = {"person": "인물", "scenery": "풍경", "food": "음식", "hotel": "호텔"}
 
 
 async def _scene_context(session_id: str,
@@ -828,6 +842,15 @@ async def _do_images(chosen: dict[str, Any], axis: str,
             "브륄레, 크림·소스가 흘러내리는 것, 한 손에 안 들어오는 크기, 그 지역 재료(말차·호지차·"
             "홋카이도 우유·멜론·밤·딸기)가 눈에 보이는 것처럼 **누구나 먹어보고 싶은 간판 디저트**를 "
             "이름으로 적는다."
+        )
+    # 호텔 컷은 이 축에만 있다(일본숙소). 원본은 `일본숙소_3-2단계_썸네일이미지.md` 「이미지」 —
+    # 지침서에도 있지만 codex 가 긴 문서에서 흘리므로 여기서 다시 못박는다(음식 컷과 같은 이유).
+    if "hotel" in kinds:
+        task += (
+            "\n- **호텔 컷에는 사람이 나오지 않는다.** 그 주제와 이어지는 호텔 장면 — 외관·객실·창밖 뷰·"
+            "수영장·조식 같은 것 — 중에서 주제가 약속하는 것을 고른다(주제가 「대욕장」이면 대욕장, "
+            "「야경」이면 창밖 야경). 주제와 상관없는 일반 호텔 사진으로 도망가지 마라."
+            "\n- **실제 그 호텔이 아니다** — 호텔 이름·간판·로고·글자를 그리지 마라. 장면만 쓴다."
         )
     # 인물 컷의 장면을 어디서 뽑나 — 축마다 다르다. 상황별일본어는 **주제·훅 문구**
     # (`_hook_scene_block`, 2026-10-06), 그 밖의 축은 **본문 줄**(`_lines_block`)이다.
@@ -1252,8 +1275,10 @@ async def _prepare_one(t: dict[str, Any], axis: str, need_places: int,
         got = await _do_body(lower, axis)
         items = list(got.get("body") or [])
         # 자리를 못 채웠으면 여기서 접는다 — 사진까지 짓고 버리면 그만큼 헛돈다.
-        if need_places and len(items) < need_places:
-            return name, None, "unfit", f"{need_places}곳 중 {len(items)}곳뿐"
+        # 주제마다 채울 수가 다를 수 있다 — 일본숙소는 모음 8곳 · 호텔 하나 1곳(`places_for`).
+        need = studio.places_for(axis, name) if need_places else 0
+        if need and len(items) < need:
+            return name, None, "unfit", f"{need}곳 중 {len(items)}곳뿐"
 
         # 본문을 함께 넘긴다 — 인물 컷이 그 줄을 쓰는 순간이어야 한다(`_lines_block`).
         # 훅으로 장면을 잡는 축(`HOOK_SCENE_AXES`)은 훅이 아직 안 골라졌으니 **후보 전체**를

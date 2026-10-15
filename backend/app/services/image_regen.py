@@ -60,6 +60,38 @@ PROMPT = " ".join([
 ])
 
 
+# 일본숙소 축 본문 배경(2026-10-15 저녁 사람 지시 — 「본문 이미지도 원본 이미지 참고해서 직접 찍은 듯한
+# 이미지로 재생성」). 원본은 `일본숙소_3-3단계_본문.md` 「사진 — 실사를 레퍼런스로 다시 그린다」의
+# 「2) 재생성」 문단이고, 아래는 그 영어판이다 — 한쪽을 고치면 같이 고친다.
+# 레퍼런스는 **어느 숙소의 무엇인지**만 알려 준다. 구조·마감·색·창 배열은 가져오고 구도는 새로 잡는다.
+# 맛집 `PROMPT` 를 그대로 쓰면 객실·외관이 「한 접시」로 다시 그려진다 — 그래서 따로 둔다.
+HOTEL_PROMPT = " ".join([
+    "Use this photo only as a reference for which hotel this is and which part of it is shown —",
+    "keep that place's real structure, finishes, colors and window layout.",
+    "Do not copy the reference composition: take that same scene anew, like a single photo a guest",
+    "staying there took on a phone.",
+    "Unedited phone-camera color with no filter and no HDR, natural light coming in from one side",
+    "and one consistent set of shadows — no double shadows, nothing floating without a shadow.",
+    "Do not reproduce the clutter in the reference: notices and signs taped up, piles of towels,",
+    "scattered luggage, other guests.",
+    "No people, no hands, no watermarks. Lettering and signage may stay only on an exterior shot and",
+    "only exactly as they appear in the reference; never add any new lettering.",
+    "Keep the bottom fifth of the frame simple and uncluttered, because text is laid over that strip.",
+    "The reference photo is a different shape than this frame — fill this whole frame with one",
+    "continuous real scene, continuing the same room or building in the same light all the way out to",
+    "every edge; never stretch, mirror, repeat or smear the reference edge, and never leave bars,",
+    "black margins, flat padding or an obviously pasted-in strip.",
+])
+
+# 축의 `regen_prompt` 값 → 프롬프트. 없는 이름이면 기본(맛집)이다.
+PROMPTS = {"hotel": HOTEL_PROMPT}
+
+
+def prompt_for(key: str | None) -> str:
+    """축 설정의 `regen_prompt` 이름으로 프롬프트를 고른다. 비었거나 모르는 이름이면 맛집용 `PROMPT`."""
+    return PROMPTS.get((key or "").strip(), PROMPT)
+
+
 async def _as_data_uri(source_url: str) -> str:
     """fal 이 읽을 수 있게 **바이트를 실어 보낸다.**
 

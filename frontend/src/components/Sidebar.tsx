@@ -88,6 +88,11 @@ const navSections: NavSection[] = [
         icon: icon("M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"),
       },
       {
+        href: "/studio/ja-hotels",
+        label: "일본 숙소 원클릭",
+        icon: icon("M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"),
+      },
+      {
         href: "/studio/map",
         label: "지도 원클릭",
         icon: icon("M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"),

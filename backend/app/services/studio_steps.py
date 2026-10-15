@@ -209,6 +209,73 @@ AXES: dict[str, dict[str, Any]] = {
         # 이 축은 화면에서 [다시 뽑기]로 그때그때 짓는다.
         "prepare_at": [],
     },
+    # 일본 숙소 — 봇이 회차 폴더에서 손으로 돌리던 축을 원클릭으로 옮겼다(2026-10-15).
+    # 규칙은 전부 `일본숙소_*` 지침서와 `솔희_캐러셀기획.md` 「일본숙소 축」에 있다.
+    # 이 축만의 것 — **주제 하나가 두 모양**이다(`places_for`):
+    #   · 모음(「…숙소 8곳」) — `본문(일본숙소)_1` 이 숙소마다 한 장, TAG 는 번호.
+    #   · 호텔 하나 — `_1` 한 장(TAG `single_tag`) 뒤에 장점·특징 `_2` 여러 장. 몇 장인지는 지침서가 정한다.
+    "일본숙소": {
+        "guides": {
+            "topics":  ["일본숙소_1단계_주제후보.md", "일본숙소_2단계_주제선택.md"],
+            "hooks":   ["일본숙소_3-1단계_훅문구.md"],
+            "images":  ["일본숙소_3-2단계_썸네일이미지.md"],
+            "body":    ["일본숙소_3-3단계_본문.md"],
+            "caption": ["일본숙소_5단계_캡션.md", "솔희_캡션공통.md"],
+        },
+        "history": "일본숙소_이력.md",
+        "hook_category": "캐러셀(여행)",
+        "keeps": "일본숙소_보관함.md",
+        "drops": "일본숙소_제외.md",
+        "template_id": 88,            # solhee 기준(2단계 지침서 「템플릿 고정」)
+        "template": "트래블뷰(일본숙소)",
+        # 표지는 훅 줄 수로 `표지_2줄`·`표지_3줄` 이 갈린다 — 그래서 `cover_layout` 을 두지 않는다.
+        # 본문 낱장은 **항목마다** 다르다(`item_layouts`). 아래 둘은 `layout` 이 없는 항목용 옛 자리다.
+        "body_layout": "본문(일본숙소)_1",
+        "body_fields": ["name", "where", "desc", "tag"],
+        # 항목이 들고 오는 `layout` → 칸 매핑(순서는 headline·subtext·body·tag).
+        # ⚠ 이름은 템플릿 88 그대로다(2단계 지침서 표) — 한 글자만 달라도 조용히 표지로 떨어진다.
+        # `_2` 에는 HEADLINE 이 없다 — 글 칸은 SUBHEADLINE·BODY 둘이다(2단계 지침서).
+        "item_layouts": {
+            "본문(일본숙소)_1": ["name", "where", "desc", "tag"],
+            "본문(일본숙소)_2": ["", "where", "desc", "tag"],
+        },
+        # TAG 번호를 매기는 낱장. 이 낱장이 한 장뿐이면 번호 대신 `single_tag` 다(3-3 「HEADLINE 은 이름만, 번호는 TAG」).
+        "tag_layout": "본문(일본숙소)_1",
+        "single_tag": "•",
+        # 호텔 하나의 장점·특징 낱장(`make_lodging_body` 가 항목에 붙인다).
+        "point_layout": "본문(일본숙소)_2",
+        # 주제 하나에 숙소 몇 곳 — 모음은 8곳, 호텔 하나는 1곳(1단계 지침서 표). `places_for` 가 고른다.
+        "places": 8,
+        "places_single": 1,
+        # 이 축만의 갈림 — 숙소를 찾고·가리고·본문을 짓는 말이 맛집과 다르다(`_find_places` ·
+        # `_screen_places` · `make_lodging_body`). 쟈란 요금·성급도 이 키가 켠다.
+        "lodging": True,
+        # 일본맛집과 같은 그물 — 후보를 내기 전에 숙소가 채워지는지 본다(`_verify_topics`).
+        "verify_topics": True,
+        "dup_by_keyword": True,
+        # 나간 숙소를 적어 두는 곳. 처음엔 비어 있다 — 그래서 이력 「숙소」 칸의 이름도 함께
+        # 「이미 쓴 숙소」로 모델에게 넘긴다(`_history_lodgings`).
+        "used_places": "일본숙소_쓴숙소.md",
+        # 숙소당 받아 오는 구글 사진 — 모음은 곳마다 5장(3-3 「숙소 8곳 모음」).
+        "photo_cap": 5,
+        # 호텔 하나는 `_1` 후보 5장과 `_2` 후보를 **서로 다른 사진**으로 받는다(3-3 「호텔 하나」 —
+        # 1번 5장 + 2번 이후 7장). 그래서 한 번에 넉넉히 받아 나눈다(`make_lodging_body`).
+        "photo_cap_single": 12,
+        # 본문 배경은 고른 실사를 레퍼런스로 **다시 그린 그림**이다(3-3 「사진 — 실사를 레퍼런스로
+        # 다시 그린다」). 프롬프트는 숙소용이다 — 맛집 것(음식)을 쓰면 객실이 접시가 된다.
+        "body_photo_regen": True,
+        "regen_prompt": "hotel",
+        # CTA 낱장에 서버가 얹는 35% 검정 막은 저장 전에 지운다 — **CTA 만**이다(일본숙소_4단계
+        # 「넘길 값」). 표지 막까지 지우는 `strip_black_mat` 은 X인용 것이라 여기 쓰지 않는다.
+        "strip_cta_mat": True,
+        # 인물 5 + 호텔 5(3-2단계 지침서 「이미지」).
+        "cover_shots": {"person": 5, "hotel": 5},
+        # 2026-10-15 사람 결정 — 새벽 5시. 앞 축은 X인용 03:00(약 40분) · 일본맛집 04:00 이다.
+        # ⚠ 일본맛집이 길어지면(주제당 5~7분 × 10개를 다섯씩 겹침) 05:00 과 겹칠 수 있다 —
+        #   그때는 codex 를 함께 써서 둘 다 느려질 뿐 멈추지는 않는다.
+        "prepare_at": ["05:00"],
+        "session_ttl_hours": 7 * 24,  # 지난 회차는 일주일 뒤에 지운다(2026-10-05 사람 지시와 같은 값)
+    },
     "지도": {
         "guides": {
             "topics":  ["지도_1단계_주제후보.md", "지도_2단계_주제선택.md"],
@@ -349,6 +416,57 @@ async def template_id_for(conf: dict[str, Any], account: str | None) -> int:
 def axis_account(axis: str | None) -> str | None:
     """그 축의 캐러셀·이미지를 만들 계정. 정해져 있지 않으면 None(기본 계정)."""
     return axis_conf(axis).get("account") or None
+
+
+# 주제 **끝**의 「N곳」 — 모음 주제의 표시다(「…숙소 8곳」·「…숙소 8곳 (도쿄 긴자)」).
+# ⚠ 끝에 붙은 것만 센다. 호텔 하나 주제에도 「곳」이 들어간다 — 「온나손 돌고래·풀 2곳
+#   르네상스 오키나와 리조트」(1단계 43회차 8번). 아무 데서나 찾으면 그 주제가 모음이 된다.
+_SET_RE = re.compile(r"\s*\d+\s*곳\s*(?:[(（][^)）]*[)）])?\s*$")
+
+
+def places_for(axis: str | None, topic: str) -> int:
+    """그 주제가 다룰 장소 수. 모양이 하나뿐인 축은 언제나 `places` 다.
+
+    `places_single` 을 둔 축(일본숙소)만 갈린다 — 끝에 「N곳」이 있으면 모음(`places`),
+    없으면 호텔 하나(`places_single`). 1단계 지침서가 모음에만 「8곳」을 붙이게 정해 두었다.
+    """
+    conf = axis_conf(axis)
+    many = int(conf.get("places") or 0)
+    if conf.get("places_single") is None or _SET_RE.search(topic or ""):
+        return many
+    return int(conf["places_single"])
+
+
+def page_tags(layouts: list[str], tag_layout: str, single_tag: str) -> list[str]:
+    """낱장마다 TAG 칸 글자 — `tag_layout` 낱장에만 붙는다.
+
+    그 낱장이 여럿이면 1·2·3…(모음), 한 장뿐이면 `single_tag`(호텔 하나), 다른 낱장은 빈칸이다
+    (일본숙소_4단계 표 — `_2` 는 `tag: ""`).
+    """
+    total = sum(1 for x in layouts if x == tag_layout)
+    out: list[str] = []
+    n = 0
+    for x in layouts:
+        if x != tag_layout:
+            out.append("")
+            continue
+        n += 1
+        out.append(single_tag if total == 1 else str(n))
+    return out
+
+
+def pages_for_item(conf: dict[str, Any], item: dict[str, Any]) -> list[dict[str, Any]]:
+    """본문 항목 하나가 몇 장·어느 낱장으로 나가나.
+
+    항목이 자기 `layout` 을 들고 오고 그 축의 `item_layouts` 에 있으면 **그 한 장만** 그린다
+    (일본숙소 — `_1`·`_2` 가 항목마다 다르다). 아니면 예전처럼 축의 `body_pages`(없으면
+    `body_layout`)를 항목마다 전부 펼친다.
+    """
+    layout = str((item or {}).get("layout") or "")
+    fields = (conf.get("item_layouts") or {}).get(layout)
+    if fields:
+        return [{"layout": layout, "fields": fields}]
+    return conf.get("body_pages") or [{"layout": conf["body_layout"], "fields": conf["body_fields"]}]
 
 
 
@@ -495,6 +613,53 @@ def _used_places(axis: str = DEFAULT_AXIS) -> dict[str, str]:
     return out
 
 
+def _history_column(axis: str, column: str) -> list[str]:
+    """제작 이력 표에서 **이름이 `column` 인 칸**의 값들. 그 칸이 없는 축은 빈 목록이다."""
+    out: list[str] = []
+    header: list[str] = []
+    for line in _read_doc(axis_conf(axis)["history"]).splitlines():
+        s = line.strip()
+        if not header and s.startswith("| #"):
+            header = [c.strip() for c in s.strip("|").split("|")]
+            continue
+        if not header or column not in header or not _ROW.match(s):
+            continue
+        cells = [c.strip() for c in s.strip("|").split("|")]
+        i = header.index(column)
+        if i < len(cells) and cells[i]:
+            out.append(cells[i])
+    return out
+
+
+def _history_lodgings(axis: str) -> list[str]:
+    """이력 「숙소」 칸에 적힌 숙소 이름들 — 일본숙소 축이 「이미 쓴 숙소」로 함께 넘긴다.
+
+    쓴 숙소 목록(`used_places`)은 원클릭이 붙인 뒤부터만 쌓인다. 그 전 회차는 봇이 손으로
+    만들어 이력에만 남아 있다(이력 규칙 — 「모음 주제는 들어간 숙소 8곳을 함께 적는다」).
+    place_id 가 없어 걸러 내지는 못하고, 모델에게 「빼라」고 알리는 데만 쓴다.
+    """
+    names: list[str] = []
+    for cell in _history_column(axis, "숙소"):
+        names += [n.strip() for n in cell.split("·") if n.strip()]
+    return list(dict.fromkeys(names))
+
+
+def _history_extra(axis: str, topic: str, items: list[dict[str, Any]]) -> dict[str, str]:
+    """이력에 축마다 더 있는 칸 — 일본숙소의 「묶음」·「숙소」. 다른 축은 빈 사전이다.
+
+    숙소 이름은 본문 HEADLINE 그대로(`_1` 낱장의 `name`), 이력에 적혀 온 꼴대로 「 · 」로 잇는다.
+    """
+    if not axis_conf(axis).get("lodging"):
+        return {}
+    names = list(dict.fromkeys(
+        str(it.get("name") or "").strip() for it in items
+        if isinstance(it, dict) and it.get("place_id") and str(it.get("name") or "").strip()))
+    return {
+        "묶음": "모음" if places_for(axis, topic) > 1 else "호텔 하나",
+        "숙소": " · ".join(names),
+    }
+
+
 def _append_used_places(axis: str, topic: str, items: list[dict[str, Any]]) -> int:
     """이번에 나간 가게를 적는다 — 새로 적은 곳 수를 돌려준다.
 
@@ -617,7 +782,13 @@ async def _drop_lookalikes(items: list[dict[str, Any]], seen: list[str],
         ("⚠ 이 축의 주제는 `지역, 분류, 키워드` 세 칸이다. **지역·분류가 같아도 키워드 칸이 "
          "다르면 다른 주제다** — 「오사카, 맛집, 가성비」와 「오사카, 맛집, 현지인 추천」은 "
          "겹치지 않는다. 세 칸이 사실상 같을 때만 고른다."
-         if axis_conf(axis).get("dup_by_keyword") else ""),
+         if axis_conf(axis).get("dup_by_keyword") and not axis_conf(axis).get("lodging") else ""),
+        # 숙소 주제는 세 칸 꼴이 아니다(「난바역 도보 2분 / 8만원대 오사카 호텔」). 위 줄을 그대로
+        # 실으면 모델이 없는 칸을 맞춰 보느라 엉뚱하게 거른다 — 조건 키워드로 가른다(2026-10-15).
+        ("⚠ 이 축의 주제는 숙소 주제다. **지역이 같아도 조건 키워드(가격대·거리·시설·대상)가 "
+         "다르면 다른 주제다** — 「난바역 도보 2분 오사카 호텔」과 「오사카 6만원대 넓은 호텔」은 "
+         "겹치지 않는다. 지역과 조건이 사실상 같을 때만 고른다."
+         if axis_conf(axis).get("lodging") else ""),
         "겹치는 것이 없으면 빈 배열을 준다. 설명 없이 JSON 만 돌려준다.",
         "",
         "===== 이미 있는 주제 =====",
@@ -684,7 +855,8 @@ def _button_key(rows: list[dict[str, Any]], topic: str) -> tuple[str, str, str] 
 
 
 def _append_history(topic: str, carousel_id: int, axis: str = DEFAULT_AXIS,
-                    url: str = "", hook_lines: list[str] | None = None) -> bool:
+                    url: str = "", hook_lines: list[str] | None = None,
+                    extra: dict[str, str] | None = None) -> bool:
     """제작 이력에 한 줄 붙이고 카운트를 갱신한다.
 
     지금은 봇이 손으로 적는다. 화면이 대신 적어 줘야 다음 회차 1단계가 그대로 읽는다
@@ -727,6 +899,9 @@ def _append_history(topic: str, carousel_id: int, axis: str = DEFAULT_AXIS,
     }
 
     def cell(name: str) -> str:
+        # 축마다 더 있는 칸 — 일본숙소의 「묶음」·「숙소」(`_history_extra`). 이름이 맞는 칸에만 들어간다.
+        if extra and name in extra:
+            return extra[name]
         low = name.lower()
         if "url" in low:
             return values["url"]
@@ -933,6 +1108,26 @@ S_PLACE_BODY_DIARY = _obj({"items": _arr(_obj({
     "desc": {"type": "string"},        # 일기형 후기 3줄(소개 1 + 맛 2) → `본문1` BODY
     "tags": {"type": "string"},        # 검색형 해시태그 3개 → `본문1` TAG
 }))})
+
+
+# 일본숙소 본문 — 모양이 둘이다(`places_for`). 칸 이름은 낱장 칸과 1:1 이다:
+#   name → HEADLINE · sub → SUBHEADLINE(`subtext`) · desc → BODY. TAG 는 `build` 가 붙인다.
+# 모음 — 확인된 숙소마다 `본문(일본숙소)_1` 한 장.
+S_LODGING_SET = _obj({"items": _arr(_obj({
+    "name": {"type": "string"},
+    "sub": {"type": "string"},
+    "desc": {"type": "string"},
+}))})
+# 호텔 하나 — `_1` 한 장(intro) + 장점·특징 `_2` 여러 장(points). `_2` 에는 HEADLINE 이 없다.
+# ⚠ 장수(minItems·maxItems)를 스키마에 넣지 않는다 — codex 구조화 출력이 받는지 확인한 적이 없다.
+#   대신 받은 뒤 `LODGING_POINTS` 범위로 거른다(`_lodging_points`).
+S_LODGING_ONE = _obj({
+    "intro": _obj({"name": {"type": "string"}, "sub": {"type": "string"}, "desc": {"type": "string"}}),
+    "points": _arr(_obj({"sub": {"type": "string"}, "desc": {"type": "string"}})),
+})
+# 장점 장 수의 **그물**일 뿐이다 — 몇 장인지는 지침서가 정한다. 지금 지침서 둘이 다르게 적혀 있어
+# (2단계 「`_2` × 7」 · 3-3·4단계 「5장」) 둘 다 받게 넓게 둔다. 이 밖이면 모델이 형식을 놓친 것이다.
+LODGING_POINTS = (3, 7)
 
 
 def s_image_prompts(kinds: list[str]) -> dict:
@@ -1454,6 +1649,10 @@ async def make_hooks(body: TopicBody) -> dict[str, Any]:
 
     # 남의 계정에서 반응 좋았던 표지 훅(2026-09-29). 창고가 비었으면 빈 문자열이라 예전과 같다.
     refs = hook_bank.examples(axis_conf(body.axis).get("hook_category", ""))
+    # 일본숙소 — 훅의 가장 센 재료가 요금·성급이다(3-1 지침서). 확인한 값을 함께 싣는다.
+    # 못 받으면 빈 문자열이라 예전처럼 주제만 보고 짓는다(값을 지어내지 말라는 말은 지침서에 있다).
+    if axis_conf(body.axis).get("lodging"):
+        refs = chr(10).join(filter(None, [refs, await _lodging_hook_facts(body.axis, body.topic)]))
     # 표지가 네 칸인 축(일본맛집2)은 훅만으로 표지가 안 찬다 — 소개 3줄·해시태그까지 함께 짓는다.
     # 날짜 칸은 모델이 아니라 4단계에서 만드는 날로 채운다(지어내면 틀린 날짜가 박힌다).
     if axis_conf(body.axis).get("cover_diary"):
@@ -1652,6 +1851,9 @@ SCREEN_REVIEW_LINES = 12
 # 후보 열 개 중 여덟아홉이 8곳을 못 채웠다(10/06~08 자동 제외 99개 · 완성 12개).
 # 평점형은 전부터 두 배로 받아 20곳이었다 — 이제 평점이 없는 주제도 같은 20곳이다.
 PICK_EXTRA = 12
+# 한 곳만 쓰는 주제(일본숙소 호텔 하나)에서 더 받는 수. 주제가 이름으로 가리키는 호텔 하나라
+# 열두 곳을 더 받을 일이 없다 — 표기만 바꾼 같은 호텔(한국어·영어·일본어) 몇 개면 확인이 붙는다.
+SINGLE_PICK_EXTRA = 2
 # 가게 이름을 받을 때 모델에게 알려 줄 「이미 쓴 가게」 수 — 최근 것부터. 전부 실으면
 # 프롬프트가 수백 줄이 된다(회차마다 여덟 곳씩 쌓인다).
 USED_PROMPT_CAP = 60
@@ -1679,7 +1881,7 @@ def _topic_wo_rating(topic: str) -> str:
     return re.sub(r"\s{2,}", " ", out).strip()
 
 
-def _topic_core(topic: str) -> str:
+def _topic_core(topic: str, axis: str | None = None) -> str:
     """주제에서 **가게가 통과해야 하는 조건**만 남긴다 — 위치 + 메뉴.
 
     2026-10-07 사람 지시로 일본맛집 주제가 「위치, 메뉴, 핵심키워드」 얼품표 꼴이 됐다.
@@ -1687,19 +1889,24 @@ def _topic_core(topic: str) -> str:
     (`일본맛집_1단계_주제후보.md` 「키워드는 가게 통과 조건이 아니다」).
     가게를 찾고·가릴 때만 떼고, 수치 약속은 `_min_rating` 이 **전원 주제**에서 따로 읽는다.
     얼품표가 없는 여타 주제는 그대로 돌려준다.
+
+    일본숙소 축은 쉼표가 칸이 아니다 — 「역 3분, 쇼핑 짐 놓는 이케부쿠로 숙소 8곳」처럼 문장 안의
+    쉼표다. 주제의 낱말이 **전부** 숙소 조건이라(뒤를 떼면 「쇼핑 짐」이 빠진다) 끝의 「N곳」만 뗀다.
     """
+    if axis and axis_conf(axis).get("lodging"):
+        return _SET_RE.sub("", str(topic or "")).strip()
     parts = [x.strip() for x in str(topic or "").split(",") if x.strip()]
     return " ".join(parts[:2]) if len(parts) > 1 else topic
 
 
-def _search_queries(topic: str) -> list[str]:
+def _search_queries(topic: str, axis: str | None = None) -> list[str]:
     """평점형 주제를 **구글 검색어 몇 개**로 바꾼다.
 
     한 번 검색하면 20건까지만 오고 그중 기준을 넘는 곳은 절반 남짓이다 — 말을 조금씩
     바꿔 겹쳐 받아야 여덟 곳이 찬다(「도쿄 신주쿠 이자카야 맛집」·「도쿄 신주쿠 이자카야」·
     「신주쿠 이자카야」는 결과가 서로 다르다, 2026-10-06 실측).
     """
-    base = re.sub(r"\s*\d+\s*곳\s*$", "", _topic_wo_rating(_topic_core(topic))).strip()
+    base = re.sub(r"\s*\d+\s*곳\s*$", "", _topic_wo_rating(_topic_core(topic, axis))).strip()
     short = re.sub(r"\s*맛집\s*$", "", base).strip()
     words = short.split()
     tail = " ".join(words[1:]) if len(words) > 2 else ""
@@ -1747,8 +1954,37 @@ def _place_facts(g: dict[str, Any], revs: list[dict[str, Any]], lines: int = REV
     return chr(10).join(parts)
 
 
+def _lodging_screen(topic: str, menu: str, single: bool) -> tuple[str, str]:
+    """일본숙소 축의 적합성 판정 — (할 일, 덧붙일 말).
+
+    맛집 판정을 그대로 쓰면 안 된다. 그 말은 **숙박시설을 `fit=false`** 로, **체인을 `fit=false`**
+    로 떨어뜨린다 — 숙소 주제에서는 둘 다 정답 쪽이다(도미인·토요코인은 이 축의 단골이다).
+    판정 기준은 「숙소인가 · 주제 조건을 다 채우나 · 쓸 장점이 확인되나」 셋이다.
+    """
+    task = (f"주제 「{topic}」 에 **정말로 맞는 숙소만** 남기려 한다. 아래 각 곳이 이 주제의 "
+            "숙소인지 판정하라.")
+    extra = chr(10).join([
+        "===== 구글 지도에서 확인한 곳 =====", menu, "",
+        "판정 기준 — **주제가 말하는 그 숙소인가.**",
+        "· 호텔·료칸·리조트처럼 **묵는 곳이 아니면** `fit=false` 다 — 식당·카페·역·쇼핑몰·관광지는 "
+        "주제의 지역에 있어도 안 된다.",
+        "· 주제에 적힌 조건(지역·역 거리·시설·객실·조식·대상 등)을 **전부** 채워야 한다. 분류·구글 소개·"
+        "리뷰에서 그 조건이 **하나라도 확인되지 않으면** `fit=false` 고, why 에 빠진 조건을 적는다.",
+        "· 요금(「N만원대」·「가성비」)은 여기서 판정하지 않는다 — 다음 단계에서 쟈란 요금을 따로 조회한다.",
+        "· **체인 호텔이어도 된다.** 숙소는 체인이 흠이 아니다.",
+        "· 조건을 채워도 **이 숙소의 좋은 점을 확인된 사실로 하나도 댈 수 없으면** `fit=false` 다. "
+        "본문은 장점 위주라 쓸 것이 없으면 빈말이 된다. 리뷰를 못 받았고 구글 소개도 없으면 "
+        "why 에 「쓸 장점 없음」이라 적는다.",
+        *(["· 이 주제는 **호텔 하나**다. 주제가 이름으로 가리키는 **그 호텔(같은 지점)** 만 `fit=true` 다 — "
+           "같은 계열의 다른 지점·이름이 닮은 다른 숙소는 `fit=false` 다."] if single else []),
+        "· 애매하면 `false` 로 둔다. 한 곳이 모자란 것보다 엉뚱한 한 곳이 나가는 것이 훨씬 나쁘다.",
+        "· 모든 번호에 대해 한 줄씩 낸다. 번호는 위 대괄호 숫자 그대로 쓴다.",
+    ])
+    return task, extra
+
+
 async def _screen_places(topic: str, places: list[dict[str, Any]],
-                         revs: list[list[dict[str, Any]]], axis: str
+                         revs: list[list[dict[str, Any]]], axis: str, want: int = 0
                          ) -> tuple[list[dict[str, Any]], list[list[dict[str, Any]]], list[str]]:
     """확인된 가게가 **그 주제의 가게인지** 가린다.
 
@@ -1773,13 +2009,12 @@ async def _screen_places(topic: str, places: list[dict[str, Any]],
         f"[{i}] " + _place_facts(g, r, lines=SCREEN_REVIEW_LINES)
         for i, (g, r) in enumerate(zip(places, revs), 1)
     )
-    try:
-        data = await _ask(
-            "body",
-            f"주제 「{topic}」 에 **정말로 맞는 가게만** 남기려 한다. 아래 각 곳이 이 주제의 "
-            "가게인지 판정하라.",
-            '{"items": [{"n": "번호", "fit": true, "why": "아니라면 왜"}]}',
-            extra=("===== 구글 지도에서 확인한 곳 =====" + chr(10) + menu + chr(10) + chr(10) +
+    if axis_conf(axis).get("lodging"):
+        task, extra = _lodging_screen(topic, menu, want == 1)
+    else:
+        task = (f"주제 「{topic}」 에 **정말로 맞는 가게만** 남기려 한다. 아래 각 곳이 이 주제의 "
+                "가게인지 판정하라.")
+        extra = ("===== 구글 지도에서 확인한 곳 =====" + chr(10) + menu + chr(10) + chr(10) +
                    "판정 기준 — **주제가 말하는 그 음식·그 경험을 실제로 파는 곳인가.**" + chr(10) +
                    "· 해변·공원·상점가·쇼핑몰·역·숙박시설처럼 **가게가 아닌 곳**은 `fit=false` 다. "
                    "그 지역의 유명한 명소여도 마찬가지다." + chr(10) +
@@ -1796,8 +2031,12 @@ async def _screen_places(topic: str, places: list[dict[str, Any]],
                    "why 에 「체인점」이라 적는다." + chr(10) +
                    "· 애매하면 `false` 로 둔다. 한 곳이 모자란 것보다 엉뚱한 한 곳이 나가는 것이 "
                    "훨씬 나쁘다." + chr(10) +
-                   "· 모든 번호에 대해 한 줄씩 낸다. 번호는 위 대괄호 숫자 그대로 쓴다."),
-            schema=S_SCREEN, axis=axis,
+                   "· 모든 번호에 대해 한 줄씩 낸다. 번호는 위 대괄호 숫자 그대로 쓴다.")
+    try:
+        data = await _ask(
+            "body", task,
+            '{"items": [{"n": "번호", "fit": true, "why": "아니라면 왜"}]}',
+            extra=extra, schema=S_SCREEN, axis=axis,
         )
     except Exception as e:
         # 판정을 못 받았다고 본문을 통째로 못 내면 더 나쁘다 — 그대로 진행하고 자취를 남긴다.
@@ -1861,6 +2100,39 @@ def _remember_places(axis: str, topic: str, res: tuple) -> None:
         _CHECKED.pop(next(iter(_CHECKED)))
 
 
+def _lodging_pick(topic: str, axis: str, want: int, need: int,
+                  used_names: list[str], floor: float | None) -> tuple[str, str]:
+    """일본숙소 축에서 숙소 **이름만** 받을 때의 (할 일, 덧붙일 말).
+
+    맛집 쪽 말(「그 음식을 파는 집만 · 숙박은 넣지 마라」)을 그대로 쓰면 숙소가 하나도 안 나온다.
+    호텔 하나 주제는 **주제가 이름으로 가리키는 그 호텔**을 대게 한다 — 표기만 바꿔 몇 개.
+    """
+    core = _topic_wo_rating(_topic_core(topic, axis))
+    if want == 1:
+        task = (f"주제 「{core}」 가 가리키는 **그 호텔 하나**의 이름을 내라. "
+                f"구글 지도에서 찾기 쉽게 같은 호텔을 표기만 바꿔 최대 {need}개(한국어·영어·일본어 이름) 낸다. "
+                "**다른 호텔·같은 계열의 다른 지점을 넣지 마라.** 설명·주소는 적지 마라.")
+    else:
+        task = (f"주제 「{core}」 에 넣을 숙소를 {need}곳 고르라. **실제로 있는 숙소의 이름만** 낸다. "
+                "설명·주소·요금은 여기서 적지 마라 — 그건 다음 단계에서 구글 지도·쟈란으로 확인해 채운다. "
+                "찾기 쉽게 «숙소 이름 + 지역» 형태로 쓴다(예: 도미인 프리미엄 삿포로).")
+    lines = [
+        "⚠ **호텔·료칸·리조트처럼 묵는 곳만** 낸다. 그 지역의 명소·식당·역은 넣지 마라.",
+        "⚠ 주제에 적힌 조건(지역·역 거리·시설·객실·조식·대상 등)을 **전부** 채우는 곳만 낸다. "
+        "숫자를 채우려고 조건 하나를 버린 곳을 넣지 마라.",
+    ]
+    if want > 1:
+        lines.append(f"⚠ 낱장에 쓰는 것은 {want}곳이다. 확인·판정에서 떨어지는 곳이 있어 {need}곳을 받는다 — "
+                     "**확실한 곳만** 대라. 모르면 아는 만큼만 내라. 억지로 채운 한 곳이 캐러셀 전체를 망친다.")
+    if used_names and want > 1:
+        lines.append("⚠ **이미 캐러셀에 나간 숙소는 빼라** — 아래 목록에 있는 곳은 한 곳도 넣지 마라. "
+                     "그 자리에 다른 곳을 대라." + chr(10) + " · ".join(used_names[-USED_PROMPT_CAP:]))
+    if floor:
+        lines.append(f"⚠ **평점은 네가 판단하지 마라.** 다음 단계에서 구글 지도 평점을 받아 {floor} 미만을 "
+                     "떨어뜨린다. 여기서는 평이 좋기로 알려진 곳을 **넓게** 대면 된다.")
+    return task, chr(10).join(lines)
+
+
 async def _find_places(topic: str, axis: str, want: int
                        ) -> tuple[list[dict[str, Any]], list[list[dict[str, Any]]], list[str]]:
     """그 주제에 쓸 가게를 모아 **실존·평점·주제 적합성**까지 거른다 — (쓸 곳, 리뷰, 뺀 곳).
@@ -1875,21 +2147,33 @@ async def _find_places(topic: str, axis: str, want: int
     """
     from app.services import place_lookup
 
+    conf = axis_conf(axis)
+    lodging = bool(conf.get("lodging"))
     floor = _min_rating(topic)
-    pick = want + PICK_EXTRA
+    pick = want + (SINGLE_PICK_EXTRA if want == 1 else PICK_EXTRA)
     used = _used_places(axis)
+    # 모델에게 「빼라」고 알릴 이름 — 쓴 목록에 더해 이력의 숙소 칸도 싣는다(`_history_lodgings`).
+    used_names = list(dict.fromkeys(
+        [*(_history_lodgings(axis) if lodging else []), *used.values()]))
 
     names: list[str] = []
     if floor:
         # 평점형 주제는 **구글 검색에서 먼저 고른다.** 모델이 대는 이름은 체인점이 많아
         # 확인된 열여섯 곳 중 한 곳만 4.7 을 넘었다(2026-10-06 실측 · 신주쿠 이자카야).
         # 구글은 검색 결과에 평점을 함께 주므로 기준을 넘는 곳만 골라 올 수 있다.
-        names = await place_lookup.names_by_rating(_search_queries(topic), floor, pick)
+        names = await place_lookup.names_by_rating(_search_queries(topic, axis), floor, pick)
         logger.info(f"[studio] 평점 {floor} 이상 — 구글 검색에서 {len(names)}곳 받았습니다")
 
     # 구글에서 다 찼으면 문구 모델을 부르지 않는다 — 부를 일이 없는 호출이다.
     need = pick - len(names)
-    picked = await _ask(
+    picked: Any = {}
+    if need > 0 and lodging:
+        # 숙소 축은 묻는 말이 다르다 — 아래 맛집 말은 「숙박은 넣지 마라」다(`_lodging_pick`).
+        ask_task, ask_extra = _lodging_pick(topic, axis, want, need, used_names, floor)
+        picked = await _ask("body", ask_task, '{"places": ["숙소 이름", ...]}',
+                            extra=ask_extra, schema=S_PLACE_NAMES, axis=axis)
+    elif need > 0:
+      picked = await _ask(
         "body",
         f"주제 「{_topic_wo_rating(_topic_core(topic))}」 에 넣을 가게를 {need}곳 고르라. "
         "**실제로 있는 가게의 이름만** 낸다. 설명·주소·영업시간은 여기서 적지 마라 — "
@@ -1905,12 +2189,12 @@ async def _find_places(topic: str, axis: str, want: int
                "억지로 채운 한 곳이 캐러셀 전체를 망친다."
                + ((f"{chr(10)}⚠ **이미 캐러셀에 나간 가게는 빼라** — 아래 목록에 있는 곳은 "
                    f"한 곳도 넣지 마라. 그 자리에 다른 곳을 대라.{chr(10)}"
-                   + " · ".join(list(used.values())[-USED_PROMPT_CAP:])) if used else "")
+                   + " · ".join(used_names[-USED_PROMPT_CAP:])) if used_names else "")
                + (f"{chr(10)}⚠ **평점은 네가 판단하지 마라.** 다음 단계에서 구글 지도 평점을 받아 "
                   f"{floor} 미만을 떨어뜨린다. 여기서는 그 지역·분류에서 "
                   "평이 좋기로 알려진 곳을 **넓게** 대면 된다." if floor else "")),
         schema=S_PLACE_NAMES, axis=axis,
-    ) if need > 0 else {}
+      )
     seen = {n.lower() for n in names}
     for n in _list_from(picked, "places", "items"):
         n = str(n).strip()
@@ -1954,7 +2238,7 @@ async def _find_places(topic: str, axis: str, want: int
     revs = await place_lookup.reviews_many(good, cap=REVIEW_CAP)
 
     # 실존 확인을 통과했다고 주제에 맞는 것은 아니다 — 여기서 한 번 더 가린다.
-    good, revs, off = await _screen_places(_topic_core(topic), good, revs, axis)
+    good, revs, off = await _screen_places(_topic_core(topic, axis), good, revs, axis, want)
     dropped += off
     if not good:
         raise TopicUnfit("주제에 맞는 가게가 하나도 남지 않았습니다 — 주제를 좁히거나 바꿔야 합니다.")
@@ -1963,7 +2247,10 @@ async def _find_places(topic: str, axis: str, want: int
     # 캐러셀은 주제에 충족한 것 중 후기 많은 순으로 생성해줘」). 적합 판정이 먼저고 후기 수는
     # 그 안에서의 순서다 — 후기가 많다고 주제에 안 맞는 곳을 올리지 않는다.
     # 후기 수는 리뷰를 받을 때 함께 온 구글 집계다(`place_lookup`). 못 받은 곳은 0 이라 뒤로 간다.
-    ranked = sorted(zip(good, revs), key=lambda gr: _reviews_of(gr[0]), reverse=True)
+    # 한 곳만 쓰는 주제(호텔 하나)는 줄을 세우지 않는다 — 모델이 **맨 앞에 댄 이름이 주제의 그 호텔**이고,
+    # 뒤는 표기만 바꾼 것이다. 후기 순으로 세우면 판정을 빠져나간 다른 지점이 앞설 수 있다.
+    ranked = (list(zip(good, revs)) if want == 1 else
+              sorted(zip(good, revs), key=lambda gr: _reviews_of(gr[0]), reverse=True))
     good = [g for g, _ in ranked]
     revs = [r for _, r in ranked]
     logger.info("[studio] 후기 많은 순: " + ", ".join(
@@ -1991,8 +2278,7 @@ async def _verify_topics(items: list[dict[str, Any]], axis: str) -> list[dict[st
     """
     from app.services import place_lookup
 
-    want = int(axis_conf(axis).get("places") or 0)
-    if not want or not items:
+    if not int(axis_conf(axis).get("places") or 0) or not items:
         return items
     if not place_lookup.is_available():
         # 벤더 폴더가 없으면 조회가 전부 빈손이다 — 멀쩡한 주제를 다 지우느니 그냥 낸다.
@@ -2006,6 +2292,8 @@ async def _verify_topics(items: list[dict[str, Any]], axis: str) -> list[dict[st
         topic = str(it.get("topic") or "").strip()
         if not topic:
             return it, None, "빈 주제"
+        # 주제마다 채울 수가 다를 수 있다 — 일본숙소는 모음 8곳 · 호텔 하나 1곳(`places_for`).
+        want = places_for(axis, topic)
         async with gate:
             try:
                 res = await _find_places(topic, axis, want)
@@ -2020,6 +2308,7 @@ async def _verify_topics(items: list[dict[str, Any]], axis: str) -> list[dict[st
         return it, res, ""
 
     rows = await asyncio.gather(*(one(i) for i in items))
+    want = int(axis_conf(axis).get("places") or 0)   # 아래 로그용 — 모음 기준 수
 
     kept: list[dict[str, Any]] = []
     out: list[tuple[str, str]] = []
@@ -2181,6 +2470,182 @@ async def make_place_body(body: "BodyBody") -> dict[str, Any]:
             it.setdefault("photo", cands[0] if cands else rep)
             it.setdefault("photos", cands)
         it.setdefault("place_id", g.get("place_id") or "")
+    return {"items": items, "dropped": dropped}
+
+
+# ─── 일본숙소 — 숙소 확인 · 쟈란 사실 · 본문 ─────────────────────────────────
+
+async def _lodging_places(axis: str, topic: str
+                          ) -> tuple[list[dict[str, Any]], list[list[dict[str, Any]]], list[str]]:
+    """그 주제의 숙소 — 후보 단계에서 확인해 둔 것이 있으면 그대로, 없으면 지금 찾는다.
+
+    훅(요금·성급을 싣는다)과 본문이 **같은 숙소**를 봐야 해서, 다 채웠으면 `_CHECKED` 에 담아 둔다.
+    모자란 결과는 담지 않는다 — 다시 누르면 처음부터 찾게(맛집 본문이 캐시 없이 다시 찾는 것과 같다).
+    """
+    checked = _CHECKED.get((axis, (topic or "").strip()))
+    if checked:
+        return checked
+    want = places_for(axis, topic)
+    res = await _find_places(topic, axis, want)
+    if len(res[0]) >= want:
+        _remember_places(axis, topic, res)
+    return res
+
+
+def _lodging_fact_lines(good: list[dict[str, Any]], facts: list[dict[str, Any] | None]) -> str:
+    from app.services import jalan_lookup
+    return chr(10).join(f"- {g.get('name')}: {jalan_lookup.fact_line(f)}" for g, f in zip(good, facts))
+
+
+# 쟈란 값을 실을 때 함께 붙이는 말. 규칙(무엇으로 대신 쓰나)은 지침서에 있다 — 여기선 **지어내지 마라**만.
+LODGING_FACTS_NOTE = (
+    "⚠ 성급·요금은 위에 적힌 값만 쓴다. 「확인 못 함」인 값은 **지어내지 마라** — 그 자리는 "
+    "지침서가 정한 대체 꼴을 따른다. 원화는 엔을 환산한 범위다."
+)
+
+
+async def _lodging_hook_facts(axis: str, topic: str) -> str:
+    """훅 프롬프트에 붙이는 쟈란 사실 덩이. 어디서든 실패하면 빈 문자열이다(훅은 그대로 짓는다)."""
+    from app.services import jalan_lookup
+    try:
+        good, _, _ = await _lodging_places(axis, topic)
+        if not good:
+            return ""
+        good = good[:places_for(axis, topic)]
+        facts = await jalan_lookup.facts_many(good)
+    except Exception as e:
+        logger.warning(f"[studio] 훅에 실을 숙소 요금·성급을 못 받았습니다 — {topic}: {type(e).__name__} {e}")
+        return ""
+    return chr(10).join([
+        "===== 쟈란에서 확인한 성급·요금 (확인한 값) =====",
+        _lodging_fact_lines(good, facts),
+        LODGING_FACTS_NOTE,
+    ])
+
+
+def _lines_of(text: Any) -> str:
+    """모델이 준 여러 줄 글 — 글자로 온 `\\n` 을 펴고 빈 줄만 걷는다. **줄 수는 자르지 않는다**(지침서 몫)."""
+    rows = [r.strip() for r in str(text or "").replace(chr(92) + "n", chr(10)).split(chr(10))]
+    return chr(10).join(r for r in rows if r)
+
+
+def _lodging_points(points: Any) -> list[dict[str, str]]:
+    """호텔 하나의 장점 장들 — 빈 것을 빼고 `LODGING_POINTS` 범위를 넘으면 뒤를 자른다.
+
+    모자라면 던진다(일시적 실패로 본다 — 모델이 형식을 놓친 것이라 다시 누르면 된다).
+    """
+    rows = [{"sub": str(p.get("sub") or "").strip(), "desc": _lines_of(p.get("desc"))}
+            for p in (points or []) if isinstance(p, dict)]
+    rows = [r for r in rows if r["sub"] or r["desc"]]
+    low, high = LODGING_POINTS
+    if len(rows) < low:
+        raise RuntimeError(f"장점·특징 장을 {len(rows)}장밖에 받지 못했습니다 — 본문을 다시 뽑아 주세요.")
+    return rows[:high]
+
+
+async def _lodging_shots(place: dict[str, Any], cap: int) -> list[str]:
+    """한 숙소의 사진 후보 — 세로(4:5 배경)에 맞는 것부터. 대표 사진도 후보에 섞는다."""
+    from app.services import place_lookup
+    alts = (await place_lookup.photos_many([place], cap=cap))[0]
+    rep = place.get("photo") or ""
+    cands = _uniq_shots(([rep] if rep and rep not in alts else []) + alts)
+    return await place_lookup.sort_by_orientation(cands, prefer="portrait")
+
+
+async def make_lodging_body(body: "BodyBody") -> dict[str, Any]:
+    """일본숙소 축의 본문 — 숙소를 확인하고, 쟈란 요금·성급을 붙여 짓는다.
+
+    모양이 둘이다(`places_for`):
+      · 모음 — 숙소마다 `본문(일본숙소)_1` 한 장. 항목 = 숙소.
+      · 호텔 하나 — `_1` 한 장 + 장점·특징 `point_layout` 여러 장. `_2` 항목엔 place_id 가 없다.
+    항목마다 `layout` 을 붙여 돌려준다 — `build` 가 그 낱장 하나만 그리고 TAG 를 매긴다.
+    영문 주소는 받지 않는다 — 이 축의 SUBHEADLINE 은 주소가 아니다(3-3 「SUBHEADLINE」).
+    """
+    from app.services import jalan_lookup
+
+    conf = axis_conf(body.axis)
+    want = places_for(body.axis, body.topic)
+    good, revs, dropped = await _lodging_places(body.axis, body.topic)
+    if len(good) < want:
+        # 맛집 본문과 같은 규칙 — 모자라면 짓지 않는다(2026-10-13 사람 지시).
+        raise TopicUnfit(
+            f"확인된 숙소가 {len(good)}곳뿐입니다(필요 {want}곳) — 이 주제로는 본문을 만들지 "
+            "않습니다. 1단계에서 주제를 다시 고르세요.")
+    good, revs = good[:want], revs[:want]
+    facts = await jalan_lookup.facts_many(good)
+    known = (chr(10) * 2).join(
+        _place_facts(g, r) + chr(10) + f"  · 쟈란: {jalan_lookup.fact_line(f)}"
+        for g, r, f in zip(good, revs, facts))
+    extra = chr(10).join([
+        "===== 구글 지도·쟈란에서 확인한 사실 =====", known, "",
+        "⚠ 이 목록에 없는 숙소를 새로 만들지 마라. 시설·객실·조식·특전·거리는 위 「구글 소개」와 「리뷰」에서 "
+        "찾은 것만 쓴다. 리뷰에 없는 것은 지어내지 마라.",
+        LODGING_FACTS_NOTE,
+        "⚠ `desc` 의 줄은 줄바꿈(\\n)으로 나눈다. 화면이 글자 그대로 옮긴다.",
+    ])
+    layout_one = conf["tag_layout"]
+    layout_point = conf["point_layout"]
+
+    if want == 1:
+        written = await _ask(
+            "body",
+            f"주제 「{body.topic}」 는 **호텔 하나** 주제다. 지침서 형식대로 `{layout_one}` 한 장(intro — "
+            f"이름·서브·설명)과 장점·특징 `{layout_point}` 장들(points — 요약 한 줄·보충 설명)을 지어라. "
+            f"`{layout_point}` 의 장수는 지침서가 정한다.",
+            '{"intro": {"name": "숙소 이름", "sub": "서브(SUBHEADLINE)", "desc": "설명(BODY)"}, '
+            '"points": [{"sub": "장점 요약 한 줄(SUBHEADLINE)", "desc": "보충 설명(BODY)"}]}',
+            extra=extra, schema=S_LODGING_ONE, axis=body.axis,
+        )
+        d = written if isinstance(written, dict) else {}
+        intro = d.get("intro") if isinstance(d.get("intro"), dict) else {}
+        points = _lodging_points(d.get("points"))
+        g = good[0]
+        cands = await _lodging_shots(g, int(conf.get("photo_cap_single") or conf.get("photo_cap") or 6))
+        # `_1` 후보와 `_2` 후보는 **서로 다른 사진**이다(3-3 「호텔 하나」). 앞 몫이 `_1`, 나머지가 `_2` 들이다.
+        head_n = int(conf.get("photo_cap") or 5)
+        head, rest = cands[:head_n], (cands[head_n:] or cands)
+        items: list[dict[str, Any]] = [{
+            "layout": layout_one,
+            "name": str(intro.get("name") or g.get("name") or "").strip(),
+            "where": str(intro.get("sub") or "").strip(),
+            "desc": _lines_of(intro.get("desc")),
+            "photo": head[0] if head else "",
+            "photos": head,
+            "place_id": g.get("place_id") or "",
+        }]
+        for n, p in enumerate(points):
+            items.append({
+                "layout": layout_point,
+                "name": "",
+                "where": p["sub"],
+                "desc": p["desc"],
+                # 장마다 **다른 사진**이 기본값이다. 후보가 모자라면 앞에서부터 다시 돈다.
+                "photo": rest[n % len(rest)] if rest else "",
+                "photos": rest,
+            })
+        return {"items": items, "dropped": dropped}
+
+    written = await _ask(
+        "body",
+        f"주제 「{body.topic}」 의 본문을 지침서 형식대로 지어라. 아래 **확인된 숙소 {len(good)}곳**을 "
+        f"목록 순서 그대로 한 곳에 한 항목씩 쓴다(`{layout_one}` 한 장씩).",
+        '{"items": [{"name": "숙소 이름", "sub": "서브(SUBHEADLINE)", "desc": "설명(BODY)"}]}',
+        extra=extra, schema=S_LODGING_SET, axis=body.axis,
+    )
+    rows = [r for r in _list_from(written, "items", "body") if isinstance(r, dict)]
+    cap = int(conf.get("photo_cap") or 6)
+    shots = await asyncio.gather(*(_lodging_shots(g, cap) for g in good))
+    items = []
+    for r, g, cands in zip(rows, good, shots):
+        items.append({
+            "layout": layout_one,
+            "name": str(r.get("name") or g.get("name") or "").strip(),
+            "where": str(r.get("sub") or "").strip(),
+            "desc": _lines_of(r.get("desc")),
+            "photo": cands[0] if cands else (g.get("photo") or ""),
+            "photos": cands,
+            "place_id": g.get("place_id") or "",
+        })
     return {"items": items, "dropped": dropped}
 
 
@@ -2353,6 +2818,9 @@ async def make_body(body: BodyBody) -> dict[str, Any]:
     # 지도 축은 가이드에 이미 있는 장소를 쓴다 — 따로 확인할 것이 없다.
     if conf.get("guide_source"):
         return await make_guide_body(body)
+    # 일본숙소는 장소 축이지만 모양이 둘이고(모음·호텔 하나) 쟈란 사실이 붙는다 — 따로 짓는다.
+    if conf.get("lodging"):
+        return await make_lodging_body(body)
     # 실제 장소를 다루는 축은 확인을 거쳐야 한다.
     if int(conf.get("places") or 0) > 0:
         return await make_place_body(body)
@@ -2609,7 +3077,8 @@ def _field_text(item: dict[str, Any], field: str) -> str:
     return _quoted(text) if field == "meaning" else text
 
 
-async def _regen_backgrounds(photo_at: dict[int, str], account: str | None) -> dict[int, str]:
+async def _regen_backgrounds(photo_at: dict[int, str], account: str | None,
+                             prompt_key: str = "") -> dict[int, str]:
     """본문 배경을 **고른 실사를 레퍼런스로** 다시 그려 올린다 (2026-10-15 사람 지시).
 
     규칙은 일본맛집_3-3단계 「고른 사진은 레퍼런스다 — 배경은 4:5 로 다시 그린다」다.
@@ -2617,12 +3086,17 @@ async def _regen_backgrounds(photo_at: dict[int, str], account: str | None) -> d
 
     여덟 장을 한 번에 부른다(한 장 20~40초). **실패한 자리는 실사를 그대로 둔다** —
     배경이 빈 캐러셀이 나가는 것보다 낫다. 실패한 장수는 로그에 남는다.
+
+    `prompt_key` 는 축의 `regen_prompt` 다 — 일본숙소는 숙소용(`image_regen.HOTEL_PROMPT`).
+    비우면 맛집용 기본 프롬프트다.
     """
     from app.services import image_regen, studio_remote
 
+    prompt = image_regen.prompt_for(prompt_key)
+
     async def one(index: int, url: str) -> tuple[int, str]:
         try:
-            blob = await image_regen.from_reference(url)
+            blob = await image_regen.from_reference(url, prompt=prompt)
             return index, await studio_remote.upload_image(
                 blob, f"{secrets.token_hex(8)}.png", account=account)
         except Exception as e:
@@ -2676,10 +3150,15 @@ async def build(
     # 본문 네 칸 매핑 — 일본어→headline / 읽는 방법→subtext / 의미→body / 상황→tag.
     # 줄바꿈·큰따옴표까지 글자 그대로 넘긴다. 여기서 다듬지 않는다.
     # 한 가게가 **여러 장**인 축(일본맛집2)이 있다 — 낱장 종류가 장마다 다르므로 순번별로 적어 둔다.
-    pages = conf.get("body_pages") or [{"layout": conf["body_layout"], "fields": conf["body_fields"]}]
     body_layout_at: dict[int, str] = {}
     photo_at: dict[int, str] = {}
-    for item in body.items:
+    # 항목이 자기 낱장(`layout`)을 들고 오는 축(일본숙소)은 TAG 를 **여기서** 매긴다 — 사람이 본문
+    # 몇 개를 빼도 번호가 1부터 이어지게(일본숙소_4단계 표 · `page_tags`).
+    page_lists = [pages_for_item(conf, item or {}) for item in body.items]
+    tags = page_tags([pg["layout"] for pl in page_lists for pg in pl],
+                     str(conf.get("tag_layout") or ""), str(conf.get("single_tag") or ""))
+    tag_iter = iter(tags)
+    for item, pages in zip(body.items, page_lists):
         # X인용은 화면에서 A·B·C 중 하나를 골라 `text` 로 넘긴다. 혹시 고르지 않고
         # options 가 그대로 오면 **첫 안(A)** 을 쓴다 — 빈칸으로 내보내지 않는다.
         if not (item or {}).get("text") and (item or {}).get("options"):
@@ -2701,6 +3180,9 @@ async def build(
                 pool.append(url)
         for page_no, page in enumerate(pages):
             index = len(slides)
+            tag = next(tag_iter, "")
+            if conf.get("tag_layout"):
+                item = {**item, "tag": tag}
             slide: dict[str, Any] = {
                 "index": index,
                 "type": "content",
@@ -2797,7 +3279,8 @@ async def build(
     # 실사는 레퍼런스로만 쓰고 깔지 않는다 — 여기서 갈아 끼워야 편집기 자동저장이 되쓰는
     # `canvas_data.user_image_urls` 에도 다시 그린 주소가 들어간다.
     if conf.get("body_photo_regen") and photo_at:
-        user_image_urls.update(await _regen_backgrounds(photo_at, account))
+        user_image_urls.update(await _regen_backgrounds(
+            photo_at, account, str(conf.get("regen_prompt") or "")))
 
     # 세 인자를 **함께** 넘긴다. 하나라도 빠지면 위 주석의 방식으로 조용히 망가진다.
     rendered = await studio_remote.call("/carousels/render", {
@@ -2811,8 +3294,10 @@ async def build(
     canvas_slides = rendered.get("canvas_slides") or []
     if not canvas_slides:
         raise HTTPException(status_code=502, detail="템플릿 적용 결과가 비었습니다")
-    canvas_slides = _tidy_canvas_slides(
-        canvas_slides, {0, cta_index} if conf.get("strip_black_mat") else set())
+    # 검정 막을 뺄 낱장 — 표지·CTA 둘 다(`strip_black_mat`) 또는 CTA 만(`strip_cta_mat` · 일본숙소).
+    strip_at = ({0, cta_index} if conf.get("strip_black_mat")
+                else {cta_index} if conf.get("strip_cta_mat") else set())
+    canvas_slides = _tidy_canvas_slides(canvas_slides, strip_at)
 
     created = await studio_remote.call("/carousels/", {
         "title": body.topic,
@@ -2835,7 +3320,8 @@ async def build(
         raise HTTPException(status_code=502, detail="캐러셀 생성 응답에 id 가 없습니다")
 
     recorded = _append_history(body.topic, carousel_id, body.axis,
-                               url=body.source_url, hook_lines=body.hook_lines)
+                               url=body.source_url, hook_lines=body.hook_lines,
+                               extra=_history_extra(body.axis, body.topic, body.items))
     # 나간 가게를 적어 둔다 — 다음 회차에서 같은 곳이 또 나오지 않게 한다.
     used_rows = _append_used_places(body.axis, body.topic, body.items)
     if used_rows:

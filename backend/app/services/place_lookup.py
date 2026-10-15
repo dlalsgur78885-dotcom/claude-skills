@@ -186,6 +186,47 @@ def _local_address_sync(name: str, country: str, place_id: str, cid: str) -> str
         return ""
 
 
+def _local_name_sync(name: str, country: str, place_id: str, cid: str) -> str:
+    """같은 곳을 **현지 말로 다시 찾아 그 이름**을 받는다 — 일본이면 일본어 상호.
+
+    일본숙소 축이 쟈란에서 숙소를 찾을 때 쓴다(`jalan_lookup`). 쟈란 검색은 일본어 상호로만
+    걸린다 — 「도미인 프리미엄 간다」로는 안 나오고 「ドーミーインPREMIUM神田」로 나온다.
+    `_local_address_sync` 와 같은 길이다 — **place_id(또는 cid)가 같은 것만** 쓴다.
+    검색어가 같아도 다른 지점이 1위로 올라올 수 있어, 못 맞추면 빈 값을 준다.
+    """
+    def go():
+        from modules.finder import Finder  # type: ignore
+        res = Finder().search(name, country=country, lang=_LOCAL_LANG[country])
+        items = res if isinstance(res, list) else (res or {}).get("results") or []
+        for it in items:
+            d = it if isinstance(it, dict) else {
+                k: getattr(it, k, None) for k in ("pid", "place_id", "cid", "name")}
+            if (d.get("place_id") or d.get("pid")) == place_id or (cid and d.get("cid") == cid):
+                return str(d.get("name") or "")
+        return ""
+    try:
+        return _with_path(VENDOR_SEARCH, go) or ""
+    except Exception as e:
+        logger.warning(f"[place] 현지어 이름 검색 실패 — {name}: {type(e).__name__} {e}")
+        return ""
+
+
+async def local_name(place: dict[str, Any], country: str = "jp") -> str:
+    """확인된 장소의 **현지어 이름**. 못 받으면 빈 값이다(부르는 쪽이 그 장소를 건너뛴다).
+
+    검색어는 모델이 부른 이름(`asked`)과 구글 이름 둘 다 써 본다 — 한국어 이름만으로는
+    일본어 검색에서 같은 곳이 안 걸릴 때가 있다.
+    """
+    if not is_available() or country not in _LOCAL_LANG or not place.get("place_id"):
+        return ""
+    for q in dict.fromkeys(x for x in (place.get("name"), place.get("asked")) if x):
+        got = await asyncio.to_thread(
+            _local_name_sync, str(q), country, str(place["place_id"]), str(place.get("cid") or ""))
+        if got:
+            return got
+    return ""
+
+
 def _meta_address_sync(place_id: str) -> str:
     """현지어 검색이 못 맞췄을 때의 마지막 수단 — 리뷰 벤더가 들고 있는 **전체 주소**.
 

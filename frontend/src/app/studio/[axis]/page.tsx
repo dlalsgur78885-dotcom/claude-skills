@@ -50,9 +50,12 @@ const T = {
 
 const SID_PARAM = "s";
 
+/** 「○○만 다시」 확인 창에 쓰는 이름 — 백엔드 `studio_worker.KIND_KO` 와 짝이다. */
+const KIND_LABEL: Record<string, string> = { person: "인물", scenery: "풍경", food: "음식", hotel: "호텔" };
+
 /** 주소 한 조각 → 축 이름. 축을 늘리려면 여기와 백엔드 AXES 두 곳만 고치면 된다. */
 const AXES: Record<string, {
-  axis: string; title: string; scenery?: boolean; food?: boolean; personOnDemand?: boolean;
+  axis: string; title: string; scenery?: boolean; food?: boolean; hotel?: boolean; personOnDemand?: boolean;
 }> = {
   // 인물 말고 무엇을 더 그리는 축인지 — 백엔드 `AXES[축].cover_shots` 와 짝이다.
   // 상황별일본어는 풍경, 일본맛집은 음식이다(본문 배경은 실제 가게 사진이라 여기서 안 그린다).
@@ -61,6 +64,8 @@ const AXES: Record<string, {
   "ja-restaurants": { axis: "일본맛집", title: "일본 맛집", food: true, personOnDemand: true },
   // 일본 맛집과 내용은 같고 **템플릿만 다른 축**(트래블뷰(맛집)_2, 2026-09-28).
   "ja-restaurants-2": { axis: "일본맛집2", title: "일본 맛집 2", food: true, personOnDemand: true },
+  // 일본 숙소 — 표지 후보는 인물 5 + 호텔 5(일본숙소_3-2단계 · 백엔드 cover_shots).
+  "ja-hotels": { axis: "일본숙소", title: "일본 숙소", hotel: true },
   "map": { axis: "지도", title: "지도" },
   // X 게시물을 인용하는 축 — 1단계 주제를 grok 이 X 에서 찾아온다.
   // ⚠ 풍경 5장도 **만들어지고 있었는데** 이 플래그가 없어 화면에서 통째로 숨어 있었다.
@@ -333,6 +338,7 @@ export default function AxisStudio() {
       person: all.filter((i) => i.kind === "person"),
       scenery: all.filter((i) => i.kind === "scenery"),
       food: all.filter((i) => i.kind === "food"),
+      hotel: all.filter((i) => i.kind === "hotel"),
       map: all.filter((i) => i.kind === "map"),
     };
   }, [c.images]);
@@ -781,6 +787,15 @@ export default function AxisStudio() {
                     {photoRow(photos.food)}
                   </>
                 ) : null}
+                {AX.hotel ? (
+                  <>
+                    <Group>
+                      호텔 {photos.hotel.length}장
+                      <Btn small kind="ghost" disabled={busy} onClick={() => askRedo("images", "hotel")}>호텔만 다시</Btn>
+                    </Group>
+                    {photoRow(photos.hotel)}
+                  </>
+                ) : null}
               </>
             )}
             <div style={rowBetween}>
@@ -809,7 +824,8 @@ export default function AxisStudio() {
               const shot2 = swapped2[i] || it.photo2 || "";
               const hasTwoPages = (it.photos2?.length || 0) > 0;
               // 가게를 다루는 축은 칸 이름이 다르다(name/where/desc). 사진도 여기만 있다.
-              const isPlace = !!it.name;
+              // 일본숙소 호텔 하나의 장점 장(`본문(일본숙소)_2`)은 이름이 없다 — 낱장(`layout`)으로 알아본다.
+              const isPlace = !!it.name || !!it.layout;
               return (
                 <div key={i} style={{ borderTop: T.line, opacity: excluded.has(i) ? 0.38 : 1 }}>
                   <label style={{ display: "flex", gap: T.s.sm, padding: "10px 0", cursor: "pointer" }}>
@@ -864,7 +880,7 @@ export default function AxisStudio() {
                         </div>
                       ) : (
                         <>
-                          <div style={{ fontWeight: 500 }}>{isPlace ? it.name : it.jp}</div>
+                          <div style={{ fontWeight: 500 }}>{isPlace ? (it.name || "장점·특징") : it.jp}</div>
                           <div style={{ color: T.muted, fontSize: 14 }}>{isPlace ? it.where : it.reading}</div>
                           <div>{isPlace ? it.desc : it.meaning}</div>
                           {isPlace ? null : <div style={{ color: T.faint, fontSize: 14 }}>{it.situation}</div>}
@@ -1000,7 +1016,7 @@ export default function AxisStudio() {
           }}>
             <p style={{ margin: `0 0 ${T.s.md}px`, fontSize: 15, lineHeight: 1.6 }}>
               <b>다시 뽑으면 밤에 만들어 둔 것이 지워집니다.</b><br />
-              {redo.kind ? (redo.kind === "person" ? "인물 5장만 " : "풍경 5장만 ") : ""}
+              {redo.kind ? `${KIND_LABEL[redo.kind] || "풍경"} 5장만 ` : ""}
               새로 짓는 데 {redo.kind ? "3분" : (REDO_COST[redo.step] || "시간이")} 걸립니다.
             </p>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: T.s.xs }}>

@@ -924,7 +924,7 @@ export type StudioTopic = {
 export type StudioCta1 = { headline: string; subtext: string; body: string; n?: number };
 export type StudioHook = { lines: string[] };
 /** `post` 는 그린 것이 아니라 **원문 게시물에 올라온 사진**이다(X인용). */
-export type StudioImage = { kind: "person" | "scenery" | "food" | "map" | "post"; prompt: string; url: string };
+export type StudioImage = { kind: "person" | "scenery" | "food" | "hotel" | "map" | "post"; prompt: string; url: string };
 /** 본문 낱장 하나. 축마다 쓰는 칸이 다르므로 전부 선택이다.
  *  상황별일본어 — jp / reading / meaning / situation
  *  일본맛집     — name / where / desc + 구글 지도에서 온 사진(photo, 후보 photos) */
@@ -945,6 +945,10 @@ export type StudioBodyItem = {
   photo2?: string;
   photos2?: string[];
   place_id?: string;
+  /** 이 항목이 들어갈 낱장(일본숙소 — `본문(일본숙소)_1`·`_2`). 있으면 그 한 장만 그린다. */
+  layout?: string;
+  /** TAG 칸 — 백엔드 `build` 가 매긴다(번호·「•」). 화면은 보내지 않아도 된다. */
+  tag?: string;
 };
 export type StudioBuildResult = {
   id: number;

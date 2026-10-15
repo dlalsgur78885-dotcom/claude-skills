@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     STUDIO_PREPARE_AT: str = ""
     STUDIO_PREPARE_COUNT: int = 10
 
+    # 엔 → 원 환산율 — **1엔이 몇 원인가**(원 = 엔 × 이 값). 일본숙소 축이 쟈란 요금을
+    # 「2인 N만원대」로 바꿀 때 쓴다(`services/jalan_lookup.py`).
+    # 8.4156 은 2026-10 회차 스크립트(`.work/sukso46/jprice3.py` `R=8.4156`)가 쓰던 값이다 —
+    # 「7,700엔 ≈ 1인 3만 2천원」(1단계 회차 기록)과 맞는 방향이다. 환율이 크게 움직이면
+    # .env 의 JPY_KRW_RATE 로 덮어쓴다. 범위(만원대)로만 쓰므로 소수점까지 맞출 일은 없다.
+    JPY_KRW_RATE: float = 8.4156
+
     # HikerAPI (Instagram data)
     HIKER_API_KEY: str = ""
     HIKER_API_BASE_URL: str = "https://api.hikerapi.com"

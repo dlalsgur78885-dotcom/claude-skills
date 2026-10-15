@@ -125,18 +125,57 @@ STYLE = {
     # 인물 결을 그대로 쓰면 「예쁜 사람 없는 여행 사진」이 된다.
     # 2026-09-22 사람 지시 — 「음식 사진을 좀 더 실제 후기 사진처럼」. 원본은
     # `일본맛집_3-2단계_썸네일이미지.md` 「음식 사진의 결」이다 — 한쪽을 고치면 같이 고친다.
+    # 2026-10-07 사람 지시 — 「구겨진 휴지, 가루 흘린 것까지 너무 리얼하게 만들지 말고,
+    # 사실적으로 찍은 이미지인데 정신없어 보이지 않고 깔끔하게」. 사진 결은 그대로 두고
+    # 상 위의 생활감(쓴 물수건·부스러기·흘린 소스·잡동사니)만 걷어낸다.
+    # 2026-10-07 사람 지시 — 「정갈한 건 좋은데 먹음직스럽지가 않아. 먹음직스럽게」.
+    # 깔끔한 상은 그대로 두고 **음식 자체**를 갓 나온 상태(김·윤기·단면)로 당기고 더
+    # 가까이 찍는다. 광고 사진으로 되돌리는 것이 아니다.
+    # 2026-10-15 사람 지시 — 「좀 더 먹음직스러운 음식으로. 특히 디저트 주제라면 흔한 디저트
+    # 말고 누구나 먹어보고 싶은 디저트로」. ① 2026-10-12 개정(그릇이 화면을 꽉 채우고
+    # 가장자리가 잘려 나간다)을 여기도 반영했다 — 전엔 「짧은 변의 3분의 2 · 둘레를 비워」가
+    # 남아 새 규칙과 어긋났다. ② 디저트 문단을 넣었다(흔한 것 금지 · 층·단면·흘러내림).
     "food": (
         "Make it look like a real customer review photo, not a styled advertisement or magazine "
         "food shot: taken on a phone by a diner sitting at the table, the kind of photo people "
         "post in a Google Maps or blog restaurant review. Shoot from the seat at eye level looking "
         "slightly down (about 45 degrees) or straight down over the table — no tight advertising "
         "macro. Keep the restaurant's real table setting in the frame: its own table, tray or "
-        "wooden counter, chopsticks, a water glass, a wet towel, condiments. No studio props — no "
-        "white backdrop, marble or linen. The food exactly as served: the real portion, a little "
-        "spilled sauce, steam, crumbs; nothing rearranged or garnished for the photo. The "
-        "restaurant's own lighting (ceiling lights, warm bulbs or window light), unedited "
+        "wooden counter. No studio props — no white backdrop, marble or linen. Keep the table "
+        "clean and uncluttered — the food is the only subject: no crumpled tissues, napkins or "
+        "used wet towels, no crumbs, spilled sauce or stains on the table, no half-eaten dishes, "
+        "empty plates or leftover glasses, no clutter such as condiment bottles, toothpick "
+        "holders, menus or flyers, and no hands. At most one or two simple items that belong "
+        "there, such as chopsticks or a water glass. "
+        "Above all the food must look delicious: not a tidied-up plate but a dish just served "
+        "that you want to eat right now. The hero dish fills the whole frame and its rim is "
+        "cropped off by the frame's edge — never shoot it small with space left around it — "
+        "close enough that its texture is visible: noodle strands, the grain of the meat, beads "
+        "of oil. Keeping the table clean is about not looking cluttered, it is not a reason to "
+        "shoot the food from far away. Keep the signs of food straight off "
+        "the stove: steam rising from broth or noodles, the glossy sheen of sauce, oil and "
+        "juices, char marks and a crisp crust where it was grilled, melting cheese or butter, a "
+        "soft egg yolk about to break, condensation on the glass for cold dishes — but only what "
+        "that dish really produces: no blown-in smoke, brushed-on oil or fake droplets. Show "
+        "what is inside: bowls heaped so the toppings spill toward the rim, meat sliced to show "
+        "the pink inside, bread or dessert cut so the layers show. If the dish is a dessert or a "
+        "cafe menu, make it one worth travelling for, never the kind found in any ordinary cafe: "
+        "the visible layers of a tall parfait glass, a souffle, pudding or fondant cut so the "
+        "inside flows out, a tart or fruit sando piled high with fruit, a torched brulee top, "
+        "cream or sauce running down the side, a portion too large for one hand, the local "
+        "ingredient plainly visible (matcha, hojicha, Hokkaido milk, melon, chestnut, "
+        "strawberry) — not a plain slice of cake, a standard tiramisu or cheesecake, a cup of "
+        "soft serve, a few macarons or coffee with a cookie. For desserts the just-made signs "
+        "are melting, dripping, gloss, condensation on the glass and freshly dusted powder "
+        "rather than steam or char. The portion stays real, the "
+        "dish is untouched, and nothing is rearranged or garnished for the photo. The "
+        "restaurant's own lighting (ceiling lights, warm bulbs or window light) falling across "
+        "the food from the side or slightly behind, so the sheen catches and the dish has depth "
+        "— no flat, pale, direct-flash light; unedited "
         "phone-camera color (the iPhone photo look, no filter or color grading), and only a "
-        "slightly soft background — no heavy portrait-mode blur. No people in the frame. Do not "
+        "slightly soft background — no heavy portrait-mode blur. Ingredient colors stay fresh "
+        "and true: no congealed fat, grey meat, dried-out rice or washed-out vegetables. No "
+        "people in the frame, and never a hand lifting noodles or holding chopsticks. Do not "
         "render any text, signage or logos — leave the space clean instead of generating "
         "lettering."
     ),
@@ -172,12 +211,10 @@ AXIS_STYLE = {
             "color of the hand-painted backgrounds in classic Japanese animated films: soft clear "
             "blue skies with white clouds, fresh greens, warm gentle sunlight, clean and gently "
             "saturated colors — fresh and lively but never flashy, neon or oversaturated. Soft "
-            "natural light (gentle morning light or backlight), a calm, open composition with depth "
+            "natural light, a calm, open composition with depth "
             "and plenty of sky, street or wall around the subject so the frame feels airy and "
             "still. A fine film grain. Anyone should tell at a glance that this is Japan: show "
-            "everyday Japanese details that fit the scene, such as narrow streets under overhead "
-            "power lines, tiled roofs, vending machines, railway crossings, noren curtains or "
-            "station platforms. Natural traces of "
+            "everyday Japanese details that fit the scene, such as {motifs}. Natural traces of "
             "people are welcome when they fit the scene — a small passerby in the distance, a "
             "figure seen from behind, a shadow falling on the ground — but no main character, no "
             "face in focus, never crowded. No poster title, credits or logos: the photo only. If "
@@ -200,10 +237,14 @@ SCENERY_PEOPLE = {
 # 풍경 컷 자리를 고를 때 덧붙이는 말(아래 task). 없으면 비운다.
 # 2026-09-22 사람 지시 — 「사진만 봐도 일본이라는 느낌」. 위로할 때 풍경이 병원 대기실·호텔 복도처럼
 # 어느 나라인지 모를 실내로 나왔다.
+# 2026-10-12 사람 신고 — 「풍경 이미지가 거의 다 비슷해보여」. 여기 적혀 있던 일본 요소 6개
+# (전선 골목·기와지붕·자판기·건널목·노렌·역 플랫폼)가 영어 결(`AXIS_STYLE`)에도 같이 있어
+# 두 번 실렸고, 모델이 그 여섯 개 밖으로 안 나갔다. 요소 목록은 `JAPAN_MOTIFS` 가 회차마다
+# 섞어 붙이니 **여기서는 자리 고르는 기준만** 말한다.
 SCENERY_PLACE = {
     "상황별일본어": (
-        "사진만 봐도 일본인 줄 알게, 장면에 어울리는 일본 일상 요소(전선이 지나는 좁은 골목·기와지붕·"
-        "자판기·건널목·노렌·역 플랫폼 등)가 보이는 자리를 고른다. "
+        "사진만 봐도 일본인 줄 알게, 장면에 어울리는 일본 일상 요소가 보이는 자리를 고른다"
+        "(어느 요소를 담을지는 화면이 회차마다 바꿔 붙인다 — 네가 못박지 마라). "
     ),
 }
 
@@ -283,6 +324,58 @@ _SELFIE_ANGLES = (
 )
 
 
+# 풍경 5장이 서로 똑같아 보였다(2026-10-12 사람 신고 — 「상황별 일본어 캐러셀에 풍경 이미지가
+# 거의 다 비슷해보여」). 인물은 컷마다 머리·시선을 돌려 붙이는데(`person_looks`) 풍경은 다섯 장에
+# 같은 결 한 덩이만 붙어, 결에 박힌 「아침 햇살·역광」과 일본 요소 여섯 개로 수렴했다.
+# 그래서 **시간대·빛**과 **거리감**을 컷마다 하나씩 붙인다(`scenery_looks`).
+# ⚠ 「흐린 날·바랜 색」은 넣지 않는다 — 2026-09-22 사람 지시(「풍경이 칙칙하다」)로 지운 것이다.
+#   맑고 산뜻한 쪽에서만 시간대를 나눈다.
+_SCENERY_TIME = (
+    "Time and light: early morning, the low sun coming in from the side so long soft shadows "
+    "stretch across the ground and the air still looks cool and clear.",
+    "Time and light: late morning under a bright clear sky with white clouds, open daylight, "
+    "the colors fresh and the shadows short.",
+    "Time and light: midday with the sun high, strong clean light and crisp shadows, the sky a "
+    "deep clear blue over the scene.",
+    "Time and light: mid-afternoon, warm sunlight slanting in from behind the scene so the edges "
+    "catch the light and a gentle haze sits in the distance.",
+    "Time and light: the golden hour just before sunset, warm amber light washing the walls and "
+    "the sky turning soft orange and pink, still bright and clear — not dark.",
+    "Time and light: right after rain on a bright day, the ground still wet and reflecting the "
+    "sky while the clouds break open and sunlight returns.",
+)
+# 거리감은 「여백이 있는 트인 구도」(2026-09-22 사람 지시) 안에서 나눈다 — 꽉 찬 클로즈업은 없다.
+_SCENERY_DISTANCE = (
+    "Distance and framing: a wide view taken from far back across the street, the place small in "
+    "the middle of a broad open frame.",
+    "Distance and framing: eye level in the middle of the path looking straight ahead, the way "
+    "opening into the distance with room on both sides.",
+    "Distance and framing: one nearby thing (a wall, a post, a doorway, leaves) sitting large at "
+    "the edge of the frame while the open space behind it carries the scene.",
+    "Distance and framing: looking slightly down on the place from a little above, such as from "
+    "steps, a slope or a bridge, so the ground and the road spread out below.",
+    "Distance and framing: looking slightly up from low down, so the roofline, wires or the "
+    "station canopy cut across a wide open sky.",
+)
+# 일본 요소는 **회차마다 섞어** 세 개만 싣는다. 여섯 개를 늘 같이 실으면 골목·건널목·플랫폼만 나온다.
+JAPAN_MOTIFS = (
+    "narrow streets running under overhead power lines",
+    "tiled roofs over old wooden houses",
+    "a vending machine standing at the roadside",
+    "a railway crossing with its striped barrier",
+    "noren curtains hanging in a shop doorway",
+    "a local train platform with its station sign",
+    "a covered shopping street with hanging banners",
+    "a narrow canal lined with low houses and a small bridge",
+    "a stone torii and steps at the edge of the neighborhood",
+    "bicycles parked along a concrete block wall with potted plants",
+    "a bus stop sign on a quiet road with fields behind it",
+    "a small shrine's stone lanterns between the houses",
+    "a river embankment path with cherry trees along it",
+    "paper lanterns and a hand-painted shop sign under the eaves",
+)
+
+
 def _rotate(items: tuple[str, ...], seed: str, n: int) -> list[str]:
     """주제로 시작 자리를 밀어 `n` 개를 겹치지 않게 뽑는다. 회차가 바뀌면 조합도 바뀐다."""
     seed = (seed or "").strip()
@@ -306,6 +399,24 @@ def gaze_index(seed: str) -> int:
     return zlib.crc32(seed.encode("utf-8")) % len(_HAIRS) if seed else 1
 
 
+def scenery_looks(seed: str, n: int) -> list[str]:
+    """풍경 컷마다 붙는 **시간대·빛**과 **거리감**. 컷마다 다르고 조합은 씨앗으로 돌아간다.
+
+    2026-10-12 사람 지시로 넣었다 — 다섯 장이 다 아침 햇살·트인 골목이라 같은 사진처럼 보였다.
+    지침서 `상황별일본어_3-2단계_썸네일이미지.md` 「[풍경 이미지]」와 짝이다 — 한쪽을 고치면 같이 고친다.
+    """
+    if n <= 0:
+        return []
+    times = _rotate(_SCENERY_TIME, seed, n)
+    dists = _rotate(_SCENERY_DISTANCE, f"{seed}·d", n)
+    return [f"{t} {d}" for t, d in zip(times, dists)]
+
+
+def japan_motifs(seed: str, n: int = 3) -> str:
+    """그 회차에 쓸 일본 일상 요소 `n` 개. 회차마다 섞인다(`JAPAN_MOTIFS`)."""
+    return ", ".join(_rotate(JAPAN_MOTIFS, f"{seed}·m", n))
+
+
 def person_looks(seed: str, axis: str = "") -> list[str]:
     """인물 5장의 머리·시선. 앞 세 장(여성)은 머리 셋을 하나씩, 뒤 두 장은 머리를 비운다.
 
@@ -327,21 +438,36 @@ def person_looks(seed: str, axis: str = "") -> list[str]:
     return [f"{look} {_DIFFERENT_PERSON} The person: {face} {angle}"
             for look, face, angle in zip(looks, faces, angles)]
 
-# 일본맛집 음식 컷 중 앞 3장만 후기 사진이고, 4·5번은 누끼 콜라주다(2026-09-22 사람 지시 —
-# 「음식 사진 생성에서 5장 중 2장은 누끼 콜라주 이미지 생성하도록」). 콜라주 장엔 `STYLE["food"]`
-# 대신 아래를 붙인다. 원본은 `일본맛집_3-2단계_썸네일이미지.md` 「누끼 콜라주」다 — 한쪽을 고치면 같이 고친다.
+# 일본맛집 음식 컷 중 앞 3장만 한 접시 후기 사진이고, 4·5번은 **모둠 상차림**이다. 그 두 장엔
+# `STYLE["food"]` 대신 아래를 붙인다. 원본은 `일본맛집_3-2단계_썸네일이미지.md` 「모둠 상차림」이다
+# — 한쪽을 고치면 같이 고친다.
+# 2026-09-22 사람 지시로 처음엔 **누끼 스티커 콜라주**였다(「5장 중 2장은 누끼 콜라주」).
+# 2026-10-12 사람 지시로 **되돌렸다** — 「콜라주 이미지 왜 점점 더 이상해져?」 → 「바꿔줘」.
+# 누끼가 제대로 먹힐수록 크기·원근이 제각각이라 음식이 공중에 뜬 그림이 됐고(갤러리
+# 3b2ba86e26ccceee 4·5번), 팀이 좋다고 한 장들(9/22 홋케·베이커리)은 사실 누끼에 실패해
+# **한 상 차림**으로 나온 것이었다. 2026-10-06 비교에서도 사람이 꽉 찬 상차림 쪽을 골랐다.
+# ⚠ 다시 「오려 붙인 스티커」로 돌리지 마라 — 두 번 확인된 취향이다.
 FOOD_REVIEW_SHOTS = 3
 FOOD_COLLAGE = (
-    "Make it a cut-out food collage cover for an Instagram restaurant roundup. One real "
-    "customer-review style photo of the main dish fills the whole frame as the background, "
-    "full-bleed to every edge: the restaurant's own table, its own lighting and unedited "
-    "phone-camera color (the iPhone photo look, no filter or color grading). On top of it, "
-    "6 to 8 other dishes are pasted like cut-out stickers — each cleanly cut out along its own "
-    "edge with no white border, a soft drop shadow, slightly different sizes and angles, as if "
-    "collected from different restaurants. Scatter the cut-outs evenly across the whole frame, "
-    "the center included — do not leave an empty area for a title. No people in the frame. Do "
-    "not render any text, signage or logos — leave the space clean instead of generating "
-    "lettering."
+    "Make it a full-table spread cover for an Instagram restaurant roundup: ONE single real "
+    "customer-review photo of one table loaded with many dishes, as if the signature dishes of "
+    "several restaurants had all been brought to the same table. Every dish sits in its own real "
+    "bowl, plate or tray resting on that table. This is one photograph, not a collage: do not "
+    "cut out, paste or float any dish, and never give anything a cut-out edge or a drop shadow. "
+    "One shared perspective and one shared light for everything in the frame, so the dishes stay "
+    "true in size to each other. Shoot from the seat looking down at about 45 degrees, or "
+    "straight down over the table. The hero dish sits large in the front and the other 6 to 8 "
+    "dishes fill the space around it, overlapping and crowding the table all the way out to "
+    "every edge so the plates at the border are cropped off by the frame — no bare table showing "
+    "through, no gap left for a title. Keep the restaurant's real setting: its own table, tray or "
+    "wooden counter, its own ceiling lights or warm bulbs, unedited phone-camera color (the "
+    "iPhone photo look, no filter or color grading), and only a slightly soft background. The "
+    "food must look freshly served and delicious — steam, the glossy sheen of sauce and juices, "
+    "a crisp grilled crust, cut surfaces showing what is inside. The table itself stays clean: "
+    "no crumpled tissues or napkins, no crumbs or spilled sauce, no half-eaten dishes, empty "
+    "plates or leftover glasses, no condiment bottles, menus or flyers. No people and no hands "
+    "in the frame. Do not render any text, signage or logos — leave the space clean instead of "
+    "generating lettering."
 )
 
 # 프롬프트에 「인물(person) 5장」처럼 적으려고 쓴다. 영어 키만 주면 무엇을 그리라는 건지
@@ -434,7 +560,62 @@ def _lines_block(items: list[Any]) -> str:
     return ("\n- **아래는 이 캐러셀 본문에 실제로 들어갈 줄이다. 인물 컷은 이 줄들 중 "
             "서로 다른 것을 실제로 쓰는 순간으로 짜라.** 컷마다 어느 줄을 찍은 것인지 정하고, "
             "그 줄의 상황이 사진에 보이게 해라. 본문에 없는 상황을 새로 지어내지 마라.\n"
+            # 2026-10-06 사람 신고 — 본문 줄의 자리를 그대로 옮겨 사무실 휴게실·어학원 교실이 나왔다.
+            # 본문 상황은 「직장 동료에게」·「처음 맡은 일」처럼 여행 밖 자리를 자주 가리킨다.
+            "  ⚠ 줄에 적힌 자리가 **직장·학교·집처럼 여행 중이 아닌 곳**이면, 가져올 것은 "
+            "**그 말을 쓰는 순간(누구에게·어떤 마음으로)**이고 **자리는 여행객이 실제로 있는 곳"
+            "(카페·가게·역·거리·숙소 앞)으로 옮긴다.** 사무실 휴게실·교실로 짓지 마라.\n"
             + "\n".join(f"  · {x}" for x in lines))
+
+
+# 인물 컷의 장면을 **본문 줄이 아니라 주제·훅 문구**에서 뽑는 축 (2026-10-06 사람 지시 —
+# 「표지 이미지는 본문 내용보다 주제, 훅 문구와 관련 이미지로 생성하도록」).
+# 이 단계가 내는 열 장은 모두 **표지(와 CTA) 배경 한 장**을 고르기 위한 것이고 표지에는 훅이
+# 올라간다 — 그래서 본문 표현 하나하나의 상황보다 훅이 약속한 장면이 맞아야 한다.
+# 원본은 `상황별일본어_3-2단계_썸네일이미지.md` 「장면은 주제와 훅 문구에서 뽑는다」다
+# — 한쪽을 고치면 같이 고친다.
+HOOK_SCENE_AXES = {"상황별일본어"}
+# 미리 만들 때 사진 단계에 실어 주는 훅 후보 수. 열 개를 다 실으면 장면보다 목록이 길어진다.
+HOOK_CANDS_KEEP = 6
+
+
+def _hook_candidates(hooks: dict[str, Any]) -> list[str]:
+    """훅 후보를 한 줄짜리 문장으로 펴서 돌려준다(`make_hooks` 는 three·two 로 나눠 준다)."""
+    out: list[str] = []
+    for group in ("three", "two"):
+        for c in (hooks.get(group) or []):
+            lines = c.get("lines") if isinstance(c, dict) else None
+            text = " ".join(str(x).strip() for x in (lines or []) if str(x).strip())
+            if text:
+                out.append(text)
+    return out
+
+
+def _hook_scene_block(hook: str, cands: list[str]) -> str:
+    """표지 사진의 장면을 **주제와 훅 문구**에서 뽑게 한다 (2026-10-06 사람 지시).
+
+    전에는 본문 줄을 실었다(`_lines_block`). 줄마다 「그 말을 쓰는 상황」이 적혀 있어 장면은
+    나왔지만, 적힌 자리를 그대로 옮겨 사무실 휴게실·어학원 교실이 나왔고(2026-10-06 신고)
+    표지 한 장이 본문 한 줄짜리 장면이 됐다.
+    """
+    block = (
+        "\n- **이 열 장은 표지(와 CTA) 배경 한 장을 고르기 위한 것이다. 장면은 본문 표현이 "
+        "아니라 주제와 훅 문구에서 뽑아라.** 훅을 읽은 사람이 표지에서 보기를 기대할 장면, "
+        "주제를 한 장으로 말해 주는 장면으로 짠다. 본문 표현 하나하나의 상황을 찍지 마라.\n"
+        "  · 훅에 적힌 **누가·언제·어디서를 그대로 장면으로 옮긴다** — 「혼자 있을 때」면 "
+        "혼자 있는 자리, 「식당에서」면 식당.\n"
+        "  · 훅에 자리가 없으면 그 주제를 들으면 누구나 먼저 떠올리는 **여행 중의 자리**로 짠다. "
+        "주제와 안 이어지는 일반 여행 사진으로 도망가지 마라.\n"
+    )
+    if not hook.strip() and cands:
+        # 밤에 미리 만들 때다 — 훅을 고르기 전이라 후보 전체를 싣는다. 한 후보만 박으면
+        # 사람이 다른 것을 골랐을 때 표지 사진이 어긋난다.
+        block += (
+            "- **아래는 이 주제의 훅 후보다**(아직 고르기 전이다). 한 후보만 따라가지 말고 "
+            "후보들이 **공통으로 약속하는 것**을 장면으로 잡아라.\n"
+            + "\n".join(f"  · {x}" for x in cands[:HOOK_CANDS_KEEP])
+        )
+    return block
 
 
 async def _do_images(chosen: dict[str, Any], axis: str,
@@ -593,8 +774,28 @@ async def _do_images(chosen: dict[str, Any], axis: str,
         "- **장소는 그 주제를 들으면 누구나 먼저 떠올리는 곳, 한국 여행객이 실제로 가는 곳**으로 한다 "
         "(ATM 이면 편의점·역 ATM, 막차면 역 개찰구·택시 승강장). 페리 터미널·고속도로 휴게소·관공서·"
         "공방처럼 여행객이 잘 안 가는 곳으로 옮기지 마라. "
+        # 2026-10-06 사람 신고 — 「주제와 관련 없는 이미지가 자꾸 나온다」. 실측: 「가족 호칭」
+        # 10장 중 4장이 **일본 사무실 휴게실**, 「자신감을 북돋는 표현」은 10장 중 7장이
+        # **어학원 교실·면접실**이었다. 본문 줄의 상황(「직장 동료에게」·「처음 맡은 일」)을
+        # 자리까지 그대로 옮긴 탓이다(`_lines_block`).
+        "**사무실·회사 휴게실·교실·어학원·면접장·병원·집 안처럼 여행 중에 있을 수 없는 자리도 "
+        "쓰지 마라** — 이 캐러셀을 보는 사람은 일본을 여행하는 사람이다. "
         "다섯 장이 모두 다른 장소일 필요는 없다 — 대표 장소 한두 곳에서 순간·각도를 바꿔도 된다."
     )
+    # 2026-10-12 사람 신고 — 「풍경 이미지가 거의 다 비슷해보여」. 위 「다섯 장이 모두 다른
+    # 장소일 필요는 없다」(2026-09-15 · 인물 컷 이야기)가 풍경에도 걸려 다섯 장이 같은 골목으로
+    # 모였다. 풍경은 반대로 **자리를 나누게** 하고, 시간대·거리감·일본 요소는 화면이 붙인다
+    # (`scenery_looks` · `japan_motifs`).
+    if "scenery" in kinds:
+        task += (
+            "\n- **풍경 5장은 서로 다른 자리로 짜라.** 같은 골목·같은 역을 각도만 바꿔 "
+            "다섯 번 내지 마라(위 「다섯 장이 모두 다른 장소일 필요는 없다」는 인물 컷 "
+            "이야기다). 다섯 장 모두 주제·훅과 이어지는 자리여야 하는 것은 그대로다.\n"
+            "- **풍경 컷의 시간대·빛·거리감은 네가 적지 마라 — 화면이 컷마다 순서대로 "
+            "붙인다.** 아침·낮·해 질 참, 멀리서·눈높이·올려다본 구도 같은 것을 쓰지 말고 "
+            "**그 자리와 무엇이 보이는지만** 쓴다. 담을 일본 일상 요소도 화면이 회차마다 "
+            "바꿔 붙이니 골목·자판기·건널목으로 못박지 마라."
+        )
     # 음식 컷은 이 축에만 있다(일본맛집). 안 적으면 「음식 든 사람」이 나와 인물 컷과 겹친다.
     if "food" in kinds:
         task += (
@@ -603,15 +804,39 @@ async def _do_images(chosen: dict[str, Any], axis: str,
             "젓가락·물컵이 함께 보이게. 가게 간판·메뉴판 글자를 그리지 마라. "
             f"앞 {FOOD_REVIEW_SHOTS}장은 같은 접시 클로즈업으로 채우지 말고 위에서 본 상차림·45° 대표 메뉴·"
             "가른 단면·곁들이까지 담은 자리처럼 시점을 나눈다."
-            # 2026-09-22 사람 지시 — 5장 중 2장은 누끼 콜라주. 모양은 화면이 붙인다(`FOOD_COLLAGE`).
-            f"\n- **음식 컷 중 {FOOD_REVIEW_SHOTS + 1}번째부터는 누끼 콜라주다.** 배경에 깔 대표 메뉴 "
-            "한 가지와, 그 위에 누끼 스티커로 붙일 **그 주제의 다른 메뉴 6~8가지**를 이름으로 적는다. "
-            "여러 가게를 돌며 먹은 것처럼 메뉴가 겹치지 않게 하고, 콜라주 두 장은 배경 메뉴와 "
-            "누끼 구성을 서로 다르게 한다. 배치·그림자 같은 모양은 적지 마라 — 화면이 붙인다."
+            # 2026-10-12 사람 지시 — 누끼 스티커를 버리고 **모둠 상차림**으로. 모양은 화면이 붙인다(`FOOD_COLLAGE`).
+            f"\n- **음식 컷 중 {FOOD_REVIEW_SHOTS + 1}번째부터는 모둠 상차림이다.** 앞에 크게 놓을 대표 메뉴 "
+            "한 가지와, 같은 상에 함께 깔 **그 주제의 다른 메뉴 6~8가지**를 이름으로 적는다. "
+            "여러 가게를 돌며 먹은 것을 한 상에 모은 것처럼 메뉴가 겹치지 않게 하고, 두 장은 대표 메뉴와 "
+            "곁들이 구성을 서로 다르게 한다. 오려 붙이기·배치·그림자 같은 모양은 적지 마라 — 화면이 붙인다."
+            # 2026-10-08 사람 지시 — 「주제가 삿포로 풍경 예쁜 카페라면 디저트를 메인으로 하고
+            # 뒤에 삿포로 풍경이 보이는 창가 자리 사진으로」. 메뉴만 맞추고 주제의 조건(풍경·창가)을
+            # 버리면 아무 주제에나 쓸 수 있는 음식 컷이 된다. 지침서에도 있지만 codex 가 흘린다.
+            "\n- **주제에 자리 조건(풍경·창가·야경·노포·골목·루프탑 같은 것)이 들어 있으면 그 조건이 "
+            "배경에 보이게 짜라.** 주인공은 여전히 그 주제의 메뉴이고, 조건은 창밖·뒤쪽 자리로 보여준다 "
+            "— 「삿포로 풍경 예쁜 카페」면 디저트·커피가 상 앞에 크고 창밖으로 삿포로 거리가 보이는 "
+            "창가 자리다. 모둠 상차림 장도 그 상이 놓인 자리가 그 조건을 들고 있게 한다. "
+            "지역·메뉴만 있는 주제면 조건을 억지로 만들지 마라."
+            # 2026-10-15 사람 지시 — 「좀 더 먹음직스러운 음식으로. 특히 디저트 주제라면 흔한
+            # 디저트 말고 누구나 먹어보고 싶은 디저트로」. 결(`STYLE["food"]`)로는 안 되는
+            # 일이다 — **무슨 메뉴를 적느냐**가 여기서 갈린다.
+            "\n- **메뉴는 그 주제에서 제일 그림이 되는 간판 메뉴로 적는다.** 어느 가게에나 있는 "
+            "평범한 것보다 속이 터질 듯한 것·크기가 눈에 띄는 것·그 지역 재료가 보이는 것 쪽이다."
+            "\n- **디저트·카페 주제면 흔한 디저트를 적지 마라.** 조각 케이크 한 접시·평범한 "
+            "티라미수·치즈케이크·컵 소프트아이스크림·마카롱·커피+쿠키는 쓰지 않는다. 층이 보이는 "
+            "유리잔 파르페, 가르면 속이 흐르는 수플레·푸딩·폰당, 과일이 수북한 타르트·후르츠산도, "
+            "브륄레, 크림·소스가 흘러내리는 것, 한 손에 안 들어오는 크기, 그 지역 재료(말차·호지차·"
+            "홋카이도 우유·멜론·밤·딸기)가 눈에 보이는 것처럼 **누구나 먹어보고 싶은 간판 디저트**를 "
+            "이름으로 적는다."
         )
-    # 인물 컷은 주제 한 줄이 아니라 **본문 줄**을 보고 장면을 잡는다(`_lines_block`).
+    # 인물 컷의 장면을 어디서 뽑나 — 축마다 다르다. 상황별일본어는 **주제·훅 문구**
+    # (`_hook_scene_block`, 2026-10-06), 그 밖의 축은 **본문 줄**(`_lines_block`)이다.
     if "person" in kinds:
-        task += _lines_block(list(chosen.get("items") or []))
+        if (axis or studio.DEFAULT_AXIS) in HOOK_SCENE_AXES:
+            task += _hook_scene_block(
+                hook, [x for x in (chosen.get("hook_candidates") or []) if x])
+        else:
+            task += _lines_block(list(chosen.get("items") or []))
     plan = await studio._ask(
         "images", task,
         "{" + ", ".join(f'"{k}": ["prompt", ...]' for k in kinds) + "}",
@@ -633,12 +858,21 @@ async def _do_images(chosen: dict[str, Any], axis: str,
     # 결을 여기서 붙인다(`STYLE`). 모델이 쓴 것은 장면뿐이다. 인물은 컷마다 머리·시선도(`person_looks`).
     style = {**STYLE, **AXIS_STYLE.get(axis or studio.DEFAULT_AXIS, {})}
     looks = person_looks(look_seed, axis or studio.DEFAULT_AXIS)
+    # 풍경은 **누를 때마다** 시간대·요소가 바뀌어야 한다(2026-10-12) — 주제로만 돌리면
+    # 「풍경만 다시」를 눌러도 같은 아침 햇살·같은 요소가 다시 나온다.
+    scenery_seed = f"{topic}·{secrets.token_hex(4)}"
+    scenery = scenery_looks(scenery_seed, shots.get("scenery", 0))
+    motifs = japan_motifs(scenery_seed)
     texts = []
     nth: dict[str, int] = {}
     for kind, p in prompts:
         n = nth[kind] = nth.get(kind, -1) + 1
         look = looks[n] if kind == "person" and n < len(looks) else ""
+        if kind == "scenery" and n < len(scenery):
+            look = scenery[n]
         kind_style = FOOD_COLLAGE if kind == "food" and n >= FOOD_REVIEW_SHOTS else style.get(kind, "")
+        # 결에 비워 둔 일본 요소 자리를 그 회차 것으로 채운다(`JAPAN_MOTIFS`).
+        kind_style = kind_style.replace("{motifs}", motifs)
         texts.append("\n\n".join(x for x in (p, look, kind_style) if x))
     # 가로로 그리는 축이 있다(`AXES[축].cover_size` — 일본맛집2). 없으면 codex 기본값(세로)이다.
     size = studio.axis_conf(axis or studio.DEFAULT_AXIS).get("cover_size")
@@ -721,50 +955,79 @@ async def _do_body_x(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     else:
         items = [{"text": "", "photo": url}]
 
-    # 3) 「일본 반응」 장 — 답글 3개를 맨 뒤에 한 장으로 붙인다(3-3 지침서 2026-09-21).
-    #    3개가 안 되면 만들지 않는다 — 억지로 채우지 않는다.
+    # 3) 「일본 반응」 장 — 답글 **1개 = 1장**으로 2~3장을 맨 뒤에 붙인다(3-3 지침서 2026-10-13).
+    #    2026-09-21~10-12 은 답글 3개를 손으로 그려 **한 장**에 몰았다. 사람 지시로 폐기 —
+    #    「지금 캡처하는 건 1장밖에 없어 … 그것보다 더 선택지가 많아야 해」.
     #
     #    답글은 **이 자리에서 받는다**(2026-09-23 사람 지시 ①). 1단계에서 후보마다 찾게
-    #    했더니 그 무게로 grok 이 제한 시간 안에 결론을 못 냈다 — 게다가 40건×3개를 찾아
-    #    실제로 쓰는 건 고른 한 건의 3개뿐이었다.
-    quotes = list(chosen.get("reply_quotes") or [])
+    #    했더니 그 무게로 grok 이 제한 시간 안에 결론을 못 냈다.
+    #    ⚠ 1단계가 grok 으로 받아 둔 답글(`reply_quotes`)에는 **id 가 없다** — 캡처를 못
+    #      띄우므로 그건 버리고 FxTwitter 로 다시 받는다.
+    quotes = [q for q in (chosen.get("reply_quotes") or []) if (q or {}).get("id")]
     if not quotes:
         quotes = await x_search.fetch_replies(str(chosen.get("url") or ""), post_id)
     if x_search.replies_ready(quotes):
         try:
-            items.append(await _reply_slide(quotes, chosen, axis))
+            slides = await _reply_slides(quotes, chosen, axis)
         except Exception as e:
             # 반응 장은 **있으면 좋은 것**이다. 여기서 죽으면 본문 전체가 날아간다.
             logger.warning(f"[studio-worker] 일본 반응 장을 만들지 못했습니다: {str(e)[:200]}")
+            slides = []
+        if slides:
+            # 본문은 **5장 안쪽** — 반응을 3장 쓰면 글·사진 장은 2장까지다(3-3 「장수」).
+            # 겹치는 사진 장을 사람이 고르는 자리가 아니므로 **뒤에서부터** 뺀다.
+            #   첫 장은 원문 캡처라 반드시 남긴다.
+            keep = max(1, x_search.BODY_SLIDES_MAX - len(slides))
+            if len(items) > keep:
+                logger.info(f"[studio-worker] 반응 {len(slides)}장 — 글·사진 장을 {len(items)}→{keep}장으로 줄입니다")
+            items = items[:keep] + slides
     else:
-        logger.info(f"[studio-worker] 옮겨 쓸 답글이 {len(quotes)}개뿐 — 일본 반응 장은 건너뜁니다")
+        logger.info(f"[studio-worker] 찍을 수 있는 답글이 {len(quotes)}개 — 일본 반응 장은 건너뜁니다")
     return {"body": items}
 
 
-async def _reply_slide(quotes: list[dict[str, Any]], chosen: dict[str, Any],
-                       axis: str) -> dict[str, Any]:
-    """답글 3개로 「일본 반응」 낱장 하나를 만든다 — 카드 그림 + 여는 문구.
+async def _reply_slides(quotes: list[dict[str, Any]], chosen: dict[str, Any],
+                        axis: str) -> list[dict[str, Any]]:
+    """답글을 **1개 = 1장**으로 찍어 반응 장을 2~3장 만든다 (3-3 지침서 2026-10-13).
 
-    답글 글이 일본어로만 와 있으면 **먼저 한국어로 옮긴다**(3-3 「일본어는 한국어로 바꿔
-    넣는다」). 카드에는 한국어만 들어간다 — 읽을 사람은 한국인이다.
+    `quotes` 는 수치로 줄이 서 있고(`x_search._rank_replies` — 좋아요 바닥 5 →
+    좋아요÷조회수), 그중 **쓸 것만** 모델이 고른다(`studio.pick_replies` — 못 알아들을 것·
+    결 겹침·글이 안 되는 것·공격·혐오). 고른 것만 번역·캡처해 **3장까지** 채운다.
+
+    답글 글이 일본어로만 와 있으면 **먼저 한국어로 옮긴다**(3-3 「번역 — 우리가 옮긴다」).
+    캡처에는 한국어만 들어간다 — 읽을 사람은 한국인이다.
+    한 장이 실패해도 나머지는 살린다. 한 장도 못 찍으면 그때 올려 보낸다.
     """
     from app.services import studio_steps as studio
     from app.services import studio_remote, x_search
 
-    ready: list[dict[str, Any]] = []
-    for q in quotes[:x_search.REPLIES_NEEDED]:
+    # 수치만으로는 「한국 비하」·「일본 내부 밈」·「한 글자」가 그대로 1순위로 올라온다
+    # (2026-10-13 실측 — 원글 4건에서 상위 3개 중 4장이 못 쓸 것이었다). 거기서 한 번 거른다.
+    picked = await studio.pick_replies(
+        chosen.get("topic", ""), quotes, x_search.REPLY_SLIDES_MAX, axis)
+    if not picked:
+        logger.info("[studio-worker] 쓸 만한 답글이 없어 일본 반응 장은 건너뜁니다")
+        return []
+
+    out: list[dict[str, Any]] = []
+    for q in picked:
         korean = str((q or {}).get("korean") or "").strip()
         if not korean:
             korean = await studio.translate_post(str((q or {}).get("text") or ""), axis)
-        if korean:
-            ready.append({"korean": korean, "likes": int((q or {}).get("likes") or 0)})
-    if not x_search.replies_ready(ready):
-        raise RuntimeError("옮길 수 있는 답글이 3개가 안 됩니다.")
-
-    card = await x_search.capture_replies(ready)
-    url = await studio_remote.upload_image(card, f"{secrets.token_hex(8)}.png")
-    text = await studio.make_reply_line(chosen.get("topic", ""), ready, axis)
-    return {"text": text, "photo": url}
+        if not korean:
+            continue
+        try:
+            shot = await x_search.capture_reply({**q, "korean": korean})
+        except Exception as e:
+            logger.warning(f"[studio-worker] 답글 캡처 실패({(q or {}).get('id')}): {str(e)[:200]}")
+            continue
+        url = await studio_remote.upload_image(shot, f"{secrets.token_hex(8)}.png")
+        # 문구는 **그 답글 한 개**를 여는 한 줄이다 — 장마다 따로 짓는다.
+        text = await studio.make_reply_line(chosen.get("topic", ""), [{"korean": korean}], axis)
+        out.append({"text": text, "photo": url})
+    if not out:
+        raise RuntimeError("답글 캡처를 한 장도 만들지 못했습니다.")
+    return out
 
 
 async def _do_body(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
@@ -834,6 +1097,90 @@ async def _do_build(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
         source_url=str(chosen.get("url") or ""),
     ))
     return {"__result__": r}
+
+
+# 링크 한 건으로 만들 때 본문에 쓸 원문 사진 수 상한. 본문은 5장 안쪽이라(3-3 지침서)
+# 그보다 많이 받아도 쓸 자리가 없다.
+LINK_PHOTO_LIMIT = 4
+
+
+async def _do_link(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
+    """**링크 하나로 캐러셀까지** 만든다 (2026-10-13 트립앤라이프 지시).
+
+    X·인스타·한국 커뮤니티(루리웹·디시) 주소를 받아 `link_ingest` 로 글·사진을 뽑고,
+    그 뒤는 이 축의 평소 단계를 그대로 쓴다 — 훅 → 본문 문구 → 캡션 → 캐러셀 생성.
+    사람이 고를 자리를 건너뛰고 **첫 안(A)** 으로 만든다. 마음에 안 들면 화면에서
+    그 단계만 다시 뽑으면 된다.
+
+    ⚠ 본문 사진은 **이 PC 가 받아 서버로 올린다** — 루리웹 이미지 호스트가 서버(AWS)에서
+      응답하지 않고, 디시는 레퍼러를 요구한다(`link_ingest.download_photos`).
+    ⚠ X 링크라도 `_do_body_x`(캡처+답글)를 타지 않는다. 트립초초처럼 **원문 사진·글만**
+      쓰는 길이다(2026-10-13 사람 승인).
+    """
+    from app.services import link_ingest, studio_remote, x_search
+    from app.services import studio_steps as studio
+
+    url = str(chosen.get("link_url") or "").strip()
+    if not url:
+        raise RuntimeError("링크가 없습니다 — link_url 을 넣어 주세요.")
+
+    rec = await link_ingest.fetch(url)
+    topic = str(rec.get("topic") or "").strip()
+    # X·인스타는 제목 자리에 **원문 첫 줄**이 들어온다 — 일본어 글이면 그대로 일본어다
+    # (2026-10-13 시험에서 캐러셀 이름이 「初！マムズタッチ…」가 됐다). 1단계가 쓰는
+    # 제목 채우기를 그대로 빌려 한국어 한 줄로 만든다. 커뮤니티 글은 페이지 제목이 곧 제목이다.
+    if rec.get("source") != link_ingest.SOURCE_WEB and rec.get("text"):
+        filled = await studio._fill_titles([{**rec, "topic": ""}], axis)
+        topic = str((filled[0] if filled else {}).get("topic") or "").strip() or topic
+    if not topic:
+        raise RuntimeError("링크에서 제목을 찾지 못했습니다 — 주소를 확인해 주세요.")
+    logger.info(f"[studio-worker] 링크({rec.get('source')}) — 「{topic[:40]}」 사진 {rec.get('photos')}장")
+
+    # 1) 사진 — 원문 것을 받아 서버로 옮긴다. 표지는 4:5 로 잘라 따로 올린다.
+    blobs = await link_ingest.download_photos(list(rec.get("photo_urls") or []), LINK_PHOTO_LIMIT)
+    body_photos: list[str] = []
+    for blob in blobs:
+        body_photos.append(await studio_remote.upload_image(blob, f"{secrets.token_hex(8)}.jpg"))
+    cover_url = ""
+    if blobs:
+        # 표지 자르기는 X인용이 쓰던 것을 그대로 쓴다 — 비율·여백 규칙이 같다.
+        cover = await asyncio.to_thread(x_search._crop_cover, blobs[0])
+        cover_url = await studio_remote.upload_image(cover, f"{secrets.token_hex(8)}.png")
+
+    # 2) 훅 — 원문을 함께 넘긴다(그래야 훅이 글 내용을 짚는다).
+    hooks = await studio.make_hooks(studio.TopicBody(
+        axis=axis, topic=topic, source=_hook_source(rec)))
+    first = next((c for group in ("two", "three") for c in (hooks.get(group) or [])
+                  if (c or {}).get("lines")), None)
+    hook_lines = [str(x).strip() for x in ((first or {}).get("lines") or []) if str(x).strip()]
+    if not hook_lines:
+        raise RuntimeError("훅 문구를 받지 못했습니다 — 잠시 뒤 다시 눌러 주세요.")
+
+    # 3) 본문 문구 — 지침서대로 codex 가 짓고, 장마다 원문 사진을 앞에서부터 붙인다.
+    got = await studio.make_body(studio.BodyBody(
+        axis=axis, topic=topic, hook=" ".join(hook_lines)))
+    items: list[dict[str, Any]] = []
+    for i, item in enumerate(list(got.get("items") or [])):
+        items.append({**item, "photo": body_photos[i]} if i < len(body_photos) else dict(item))
+    # 사진이 글보다 많으면 남은 사진만으로 장을 더 붙인다 — 원문 사진을 버리지 않는다.
+    for extra in body_photos[len(items):]:
+        items.append({"text": "", "photo": extra})
+
+    # 4) 캡션
+    caption = await studio.make_caption(studio.CaptionBody(
+        axis=axis, topic=topic, hook=" ".join(hook_lines), items=items))
+
+    # 5) 화면이 같은 것을 보게 올려 두고(사람이 단계별로 다시 뽑을 수 있다) 캐러셀을 만든다.
+    picked = {
+        "topic": topic,
+        "hook_lines": hook_lines,
+        "image_url": cover_url or (body_photos[0] if body_photos else ""),
+        "items": items,
+        "caption": caption.get("caption") or "",
+        **{k: rec[k] for k in ("url", "text", "account", "author", "post_id", "source")
+           if rec.get(k) not in (None, "", [])},
+    }
+    return {"__chosen__": picked, **await _do_build({**chosen, **picked}, axis)}
 
 
 async def _do_keep(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
@@ -909,7 +1256,11 @@ async def _prepare_one(t: dict[str, Any], axis: str, need_places: int,
             return name, None, "unfit", f"{need_places}곳 중 {len(items)}곳뿐"
 
         # 본문을 함께 넘긴다 — 인물 컷이 그 줄을 쓰는 순간이어야 한다(`_lines_block`).
-        images = await _do_images({**lower, "items": items}, axis, used_scenes)
+        # 훅으로 장면을 잡는 축(`HOOK_SCENE_AXES`)은 훅이 아직 안 골라졌으니 **후보 전체**를
+        # 넘긴다 — 한 후보만 박으면 사람이 다른 것을 골랐을 때 어긋난다(2026-10-06).
+        images = await _do_images(
+            {**lower, "items": items, "hook_candidates": _hook_candidates(hooks)},
+            axis, used_scenes)
         entry: dict[str, Any] = {
             "hooks": hooks,
             "body": items,
@@ -945,8 +1296,9 @@ async def _do_prepare(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     만들어져 있어 **고르기만** 하면 된다. 지금까지는 누를 때마다 만들기 시작해 사진에서
     6분씩 기다려야 했다(2026-09-03 요구).
 
-    ⚠ 사진·본문은 평소 「고른 훅」을 보고 짓지만, 여기서는 훅을 고르기 전이라 **주제만
-      보고 짓는다.** 본문은 그 주제의 일본어 표현이라 훅과 거의 무관하고 사진도 마찬가지다.
+    ⚠ 본문은 평소 「고른 훅」을 보고 짓지만 여기서는 훅을 고르기 전이라 **주제만 보고
+      짓는다** — 그 주제의 일본어 표현이라 훅과 거의 무관하다. 사진은 주제·훅을 보고 짓는
+      축이 있어(`HOOK_SCENE_AXES`) **훅 후보 전체**를 실어 준다(2026-10-06).
       마음에 안 들면 화면에서 그 단계만 다시 뽑으면 된다.
 
     한 주제에 사진 10장이 붙어 제일 오래 걸린다(주제당 약 7분). 주제 수는 `prepare_count`
@@ -1057,15 +1409,33 @@ async def _do_prepare(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
                 topics.append(t)
                 used_scenes += [str(x.get("prompt") or "") for x in (entry.get("images") or [])]
             elif status == "unfit":
-                logger.warning(f"[studio-worker] 주제를 제외합니다 — {name}: {detail}")
-                studio.exclude_topic(name, axis)
+                # 제외 목록에 넣지 않는다 — 이 회차에서만 버린다(2026-10-08 사람 지시 ·
+                # `studio_steps._verify_topics` 와 같은 규칙).
+                logger.warning(f"[studio-worker] 주제를 이번 회차에서 뺍니다 — {name}: {detail}")
                 excluded.append(name)
             else:
                 logger.warning(f"[studio-worker] 미리 만들기 실패 — {name}: {detail}")
 
+    # X인용처럼 **모아 온 게시물이 곧 후보**인 축은 미리 만든 `count` 개 말고 **받은 것을 전부**
+    # 화면에 올린다 (2026-10-14 트립앤라이프 — 「후보 10개만 올라와 있다」). 1단계가 지침서대로
+    # 40개를 모아도 화면에는 미리 만든 10개만 보여, 나머지를 보려면 [다시 뽑기] 로 32분을 또
+    # 기다려야 했다. 미리 만들지 않은 줄은 고르는 순간 그 자리에서 만들어진다(보관 주제와 같다).
+    # ⚠ 장소를 확인하는 축(일본맛집·지도)은 그대로 둔다 — 「자리를 채운 주제만 사람에게 준다」
+    #   (2026-09-09 사람 지시). 확인 안 한 주제를 끼워 주면 그 규칙이 깨진다.
+    shown = list(topics)
+    if needs_source:
+        seen_names = {str(t.get("topic") or "").strip() for t in topics} | set(excluded)
+        for t in pool:
+            name = str(t.get("topic") or "").strip()
+            if not name or name in seen_names:
+                continue
+            seen_names.add(name)
+            shown.append(t)
+
     logger.info(f"[studio-worker] 미리 만들기 끝 — {len(topics)}/{count} 주제"
+                + (f" · 후보 {len(shown)}개" if len(shown) != len(topics) else "")
                 + (f" · 제외 {len(excluded)}개" if excluded else ""))
-    return {"topics": topics,
+    return {"topics": shown,
             "kept": [k for k in kept if k not in excluded],
             "dropped": [*(first.get("dropped") or []), *excluded],
             "prepared": prepared}
@@ -1073,6 +1443,7 @@ async def _do_prepare(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
 
 HANDLERS = {
     "topics": _do_topics,
+    "link": _do_link,          # 링크 한 건 → 캐러셀까지
     "prepare": _do_prepare,
     "keep": _do_keep,
     "hooks": _do_hooks,
@@ -1182,6 +1553,9 @@ async def _handle(job: dict[str, Any]) -> None:
         return
 
     body: dict[str, Any] = {"pending": ""}      # 이제 사람이 고를 차례
+    # 링크로 만드는 단계는 고른 것까지 스스로 채운다 — 화면이 같은 것을 보게 함께 올린다.
+    if "__chosen__" in out:
+        body["chosen"] = out.pop("__chosen__")
     if "__result__" in out:
         body["result"] = out["__result__"]
     else:

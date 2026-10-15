@@ -148,6 +148,20 @@ def _check_host(host: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _sniff_image(body: bytes) -> str | None:
+    """첫 바이트로 그림인지 본다. 그림이면 그 종류를, 아니면 None."""
+    head = body[:12]
+    if head[:4] == bytes((0x89, 0x50, 0x4E, 0x47)):
+        return "image/png"
+    if head[:3] == bytes((0xFF, 0xD8, 0xFF)):
+        return "image/jpeg"
+    if head[:4] == b"GIF8":
+        return "image/gif"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 def _referer_for(host: str) -> str:
     """Pick a host-appropriate Referer so hotlink-blocking CDNs accept us."""
     h = host.lower()
@@ -161,6 +175,10 @@ def _referer_for(host: str) -> str:
         return "https://www.pinterest.com/"
     if "instagram" in h or "cdninstagram" in h:
         return "https://www.instagram.com/"
+    # 디시 본문 사진(dcimg*.dcinside.co.kr)은 레퍼러가 없으면 403 이다(2026-10-13 실측).
+    # 자기 호스트를 넣어도 안 되고 갤러리 주소여야 받아진다.
+    if "dcinside" in h:
+        return "https://gall.dcinside.com/"
     # Default: pretend the request originated from the image's own site
     return f"https://{host}/"
 
@@ -244,7 +262,12 @@ async def proxy_external_image(
 
     media_type = r.headers.get("content-type") or "image/jpeg"
     if not media_type.lower().startswith("image/"):
-        raise HTTPException(status_code=415, detail=f"이미지가 아닙니다 ({media_type})")
+        # 디시 본문 사진은 `application/octet-stream` 으로 내려온다(2026-10-13 실측) —
+        # 헤더만 보고 415 로 막으면 멀쩡한 사진을 버린다. 첫 바이트로 확인한다.
+        sniffed = _sniff_image(r.content)
+        if not sniffed:
+            raise HTTPException(status_code=415, detail=f"이미지가 아닙니다 ({media_type})")
+        media_type = sniffed
 
     # Persist to cache so a future 404 from the origin doesn't kill the editor view
     ext = mimetypes.guess_extension(media_type.split(";")[0].strip()) or ".jpg"

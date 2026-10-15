@@ -49,7 +49,9 @@ KEY_PREFIX = "studio:"
 # keep 은 화면에 보이는 단계가 아니라 「보관함에 적어 달라」는 잔심부름이다.
 # prepare 는 **출근 전에 미리 다 만들어 두는** 일이다 — 주제 10개 각각의 훅·사진·
 # 본문·캡션을 한꺼번에 짓는다. 사람은 아침에 고르기만 한다(2026-09-03 요구).
-STEPS = ("topics", "hooks", "images", "body", "cta1", "caption", "build", "keep", "prepare")
+# link 는 **링크 하나로 캐러셀까지** 만드는 잔심부름이다(2026-10-13) — 화면·봇이
+# `chosen.link_url` 과 함께 넣으면 일꾼이 글·사진을 뽑아 훅·본문·캡션·생성을 한 번에 한다.
+STEPS = ("topics", "link", "hooks", "images", "body", "cta1", "caption", "build", "keep", "prepare")
 
 
 def _blank(axis: str, owner: int, pending: str = "topics") -> dict[str, Any]:

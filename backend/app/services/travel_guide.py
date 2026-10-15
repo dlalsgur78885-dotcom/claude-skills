@@ -36,6 +36,7 @@
 import asyncio
 import logging
 import random
+import re
 import time
 from typing import Any
 
@@ -225,6 +226,38 @@ _JP = {
 }
 
 
+# 로마자로 적힌 일본 도도부현 (2026-10-06 추가 — 일본 가이드 실측).
+#
+# ⚠ 「도쿄타워 스팟」·「오사카 미슐랭 맛집」 가이드의 주소는 한자가 아니라 로마자로 온다
+#   (`4 Chome-8-1 Shibakoen, Minato City, Tokyo 105-0011`). 위 `_JP` 로는 한 곳도 안 걸려
+#   버튼이 전부 「전국」으로 찍혔다 — 일본 주제인데 주제 문구와 지도가 전국이 됐다.
+# ⚠ **국내 주소를 먼저 가려낸 뒤에** 본다. 주소에 가게 이름이 섞여 들어오기 때문에
+#   (「오사카라멘, 서울 …」) 로마자를 먼저 보면 국내 가게가 일본으로 세어진다.
+_JP_ROMAJI = {
+    "hokkaido": "홋카이도", "aomori": "아오모리", "iwate": "이와테", "miyagi": "미야기",
+    "akita": "아키타", "yamagata": "야마가타", "fukushima": "후쿠시마", "ibaraki": "이바라키",
+    "tochigi": "도치기", "gunma": "군마", "saitama": "사이타마", "chiba": "지바",
+    "tokyo": "도쿄", "kanagawa": "가나가와", "niigata": "니가타", "toyama": "도야마",
+    "ishikawa": "이시카와", "fukui": "후쿠이", "yamanashi": "야마나시", "nagano": "나가노",
+    "gifu": "기후", "shizuoka": "시즈오카", "aichi": "아이치", "mie": "미에",
+    "shiga": "시가", "kyoto": "교토", "osaka": "오사카", "hyogo": "효고",
+    "nara": "나라", "wakayama": "와카야마", "tottori": "돗토리", "shimane": "시마네",
+    "okayama": "오카야마", "hiroshima": "히로시마", "yamaguchi": "야마구치", "tokushima": "도쿠시마",
+    "kagawa": "가가와", "ehime": "에히메", "kochi": "고치", "fukuoka": "후쿠오카",
+    "saga": "사가", "nagasaki": "나가사키", "kumamoto": "구마모토", "oita": "오이타",
+    "miyazaki": "미야자키", "kagoshima": "가고시마", "okinawa": "오키나와",
+}
+
+_JP_ROMAJI_RE = re.compile(
+    r"\b(" + "|".join(sorted(_JP_ROMAJI, key=len, reverse=True)) + r")\b", re.IGNORECASE
+)
+
+
+# 「… Ward」·「…-ku」 로 끝나는 구 이름. 한자에 붙어 오기도 한다(「大阪市福島区Fukushima Ward」)
+# 라서 앞을 낱말 경계로 끊지 않고 로마자만 집는다.
+_JP_WARD_RE = re.compile(r"([A-Za-z]+)[\s-]*(?:ward|ku)\b", re.IGNORECASE)
+
+
 def region_of_place(place: dict[str, Any]) -> str:
     """장소 하나가 **어디에 있는지** 한 낱말로. 모르면 빈 문자열이다."""
     addr = str(place.get("address") or "").strip()
@@ -238,6 +271,18 @@ def region_of_place(place: dict[str, Any]) -> str:
     for key, name in _SIDO.items():
         if head.startswith(key):
             return name
+    # 한자도 국내 시·도도 아니면 로마자 일본 주소인지 본다.
+    #
+    # ⚠ **구 이름과 같은 도도부현은 뺀다.** 「Osaka, Fukushima Ward, Fukushima, 5 Chome…」
+    #   는 오사카 후쿠시마구다 — 그냥 집으면 오사카 가게가 후쿠시마로 세어진다(2026-10-06 실측 12곳).
+    #   `Ward`·`-ku` 가 붙은 낱말은 그 주소에서 **모든 자리를 다** 버린다(구 이름이 두 번 나온다).
+    # ⚠ 남은 것 중 **맨 뒤**를 쓴다. 우편번호가 앞에 오면 도도부현도 앞, 없으면 맨 끝에 온다.
+    found = [m for m in _JP_ROMAJI_RE.finditer(addr)]
+    if found:
+        wards = {m.group(1).lower() for m in _JP_WARD_RE.finditer(addr)}
+        rest = [m for m in found if m.group(1).lower() not in wards]
+        if rest:
+            return _JP_ROMAJI[rest[-1].group(1).lower()]
     return ""
 
 

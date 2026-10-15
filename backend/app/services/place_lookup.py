@@ -21,11 +21,11 @@ API 키가 필요 없다. 대신 **봇 폴더가 있어야 돈다** — 없으�
 """
 
 import asyncio
+import io
 import logging
 import re
 import sys
 import threading
-import time
 import unicodedata
 from pathlib import Path
 from typing import Any
@@ -103,6 +103,57 @@ def _search_sync(name: str, country: str) -> dict[str, Any] | None:
     except Exception as e:
         logger.warning(f"[place] 검색 실패 — {name}: {type(e).__name__} {e}")
         return None
+
+
+def _search_list_sync(query: str, country: str) -> list[dict[str, Any]]:
+    """검색 결과를 **목록 그대로** 준다 — `_search_sync` 는 첫 건만 쓴다.
+
+    한 번에 20건이 오고 평점이 함께 붙어 온다(2026-10-06 실측). 평점으로 가게를 고를 때 쓴다.
+    """
+    def go():
+        from modules.finder import Finder  # type: ignore
+        res = Finder().search(query, country=country)
+        items = res if isinstance(res, list) else (res or {}).get("results") or []
+        out: list[dict[str, Any]] = []
+        for it in items:
+            d = it if isinstance(it, dict) else {
+                k: getattr(it, k, None) for k in ("pid", "place_id", "name", "address", "category", "rating")}
+            if d.get("name"):
+                out.append(d)
+        return out
+    try:
+        return _with_path(VENDOR_SEARCH, go)
+    except Exception as e:
+        logger.warning(f"[place] 목록 검색 실패 — {query}: {type(e).__name__} {e}")
+        return []
+
+
+async def names_by_rating(queries: list[str], floor: float, cap: int,
+                          country: str = "jp") -> list[str]:
+    """키워드로 검색해 **평점 기준을 넘는 가게 이름만** 모아 준다.
+
+    평점형 주제(「구글 평점 4.7 이상 …」)에서 쓴다. 평점은 문구 모델이 알 수 없는 값이라
+    모델이 대는 이름은 체인점이 많아 기준을 거의 못 넘는다(2026-10-06 실측 — 16곳 중 1곳).
+    구글 검색은 평점을 함께 주므로 **여기서 미리 걸러** 넘기는 것이 맞다.
+    """
+    if not is_available():
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for q in queries:
+        for d in await asyncio.to_thread(_search_list_sync, q, country):
+            try:
+                rating = float(str(d.get("rating") or 0).replace(",", "."))
+            except ValueError:
+                rating = 0.0
+            name = str(d.get("name") or "").strip()
+            key = name.lower()
+            if rating >= floor and name and key not in seen:
+                seen.add(key)
+                out.append(name)
+                if len(out) >= cap:
+                    return out
+    return out
 
 
 def _local_address_sync(name: str, country: str, place_id: str, cid: str) -> str:
@@ -286,7 +337,7 @@ async def verify(name: str, country: str = "jp") -> dict[str, Any]:
         "address": local_addr or detail.get("address") or hit.get("address") or "",
         "category": detail.get("category") or hit.get("category") or "",
         "rating": detail.get("rating") or hit.get("rating"),
-        "reviews": detail.get("reviews_count") or detail.get("review_count"),
+        "reviews": detail.get("votes") or detail.get("reviews_count") or detail.get("review_count"),
         "hours": detail.get("hours") or detail.get("opening_hours") or "",
         "photo": detail.get("photo") or hit.get("photo") or "",
         # 구글이 직접 적어 두는 가게 소개. 짧지만 **그 가게에만 해당하는 말**이라
@@ -418,6 +469,71 @@ async def photos_many(places: list[dict[str, Any]], cap: int = 6, limit: int = 3
     return list(await asyncio.gather(*(one(p) for p in places)))
 
 
+# ── 사진 후보를 **낱장 모양에 맞는 비율** 순으로 세운다 (2026-10-12 사람 지시) ──
+#
+# 구글 사진첩은 비율을 가려 주지 않는다 — 받은 순서 그대로 쓰면 첫 장이 가로컷일 때가 많다
+# (2026-10-12 실측: 멘야 잇토 5장 중 4장이 4:3 가로). 82 축은 그 사진을 4:5 세로 배경으로
+# 깔아 좌우를 잘라 내므로, 솔희 방에서 「본문 이미지가 자꾸 가로형」이라는 말이 나왔다.
+#
+# 비율은 **같은 주소를 `=s48` 로 한 번 받아** 재어 본다. 구글이 비율을 지키며 줄여 주므로
+# 2KB 짜리 한 장으로 가로·세로가 가려진다(원본은 600KB 다). 화질은 재지 않는다 —
+# 구글 사진첩은 썸네일을 섞어 주지 않아서, 지침서의 「화질 1순위」가 갈릴 자리가 없다.
+_PROBE_PX = 48
+_PROBE_LIMIT = 8        # 동시 조회 — 8곳 × 6장이 한 번에 몰리지 않게
+_PROBE_TIMEOUT = 8.0
+
+
+def _thumb_url(url: str, px: int = _PROBE_PX) -> str:
+    """같은 사진의 **아주 작은** 주소. 끝의 `=s2048`·`=s1024` 를 `=s48` 로 갈아 끼운다."""
+    tail = url.rsplit("/", 1)[-1]
+    return (url[:url.rindex("=")] if "=" in tail else url) + f"=s{px}"
+
+
+async def _probe_ratio(client: Any, url: str) -> float | None:
+    """가로/세로 비. 못 받으면 None — 그 장은 순서를 건드리지 않는다."""
+    try:
+        from PIL import Image
+        r = await client.get(_thumb_url(url))
+        r.raise_for_status()
+        w, h = Image.open(io.BytesIO(r.content)).size
+        return (w / h) if h else None
+    except Exception as e:
+        logger.info(f"[place] 비율 못 재 — {type(e).__name__}: {url[:60]}")
+        return None
+
+
+async def sort_by_orientation(urls: list[str], prefer: str = "portrait") -> list[str]:
+    """사진 후보를 `prefer` 비율이 앞에 오게 다시 세운다.
+
+    `prefer` 는 그 사진이 **들어갈 자리**의 모양이다 — 4:5 세로 배경이면 `portrait`,
+    일본맛집2 처럼 980×594 가로 칸이면 `landscape`.
+
+    같은 칸(세로·정사각·가로) 안에서는 **받은 순서를 그대로 지킨다**(안정 정렬).
+    비율을 못 잰 장은 가운데에 둔다 — 틀린 확신으로 맨 뒤로 밀지 않는다.
+    """
+    if len(urls) < 2:
+        return list(urls)
+    import httpx
+
+    gate = asyncio.Semaphore(_PROBE_LIMIT)
+
+    async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT, follow_redirects=True) as client:
+        async def one(u: str) -> float | None:
+            async with gate:
+                return await _probe_ratio(client, u)
+        ratios = await asyncio.gather(*(one(u) for u in urls))
+
+    def rank(ratio: float | None) -> int:
+        if ratio is None:
+            return 1                                  # 못 잰 것 — 가운데
+        if 0.95 <= ratio <= 1.05:
+            return 1                                  # 정사각
+        tall = ratio < 0.95
+        return 0 if tall == (prefer == "portrait") else 2
+
+    return [u for _, u in sorted(zip(ratios, urls), key=lambda z: rank(z[0]))]
+
+
 def _reviews_sync(place_id: str, cap: int) -> list[dict[str, Any]]:
     def go():
         from elfsight_reviews import fetch_reviews  # type: ignore
@@ -426,42 +542,40 @@ def _reviews_sync(place_id: str, cap: int) -> list[dict[str, Any]]:
     return _with_path(VENDOR_ELFSIGHT, go) or []
 
 
-# 빈손일 때 다시 받기 전에 쉬는 시간(초). 횟수는 이 목록 길이 + 1 이다.
+# ── 리뷰는 구글맵 장소 카드에서 직접 받는다 (2026-10-07 사람 지시 — 「elfsight 말고 gmaps_resolver」) ──
 #
-# **빈손은 가게를 타는 게 아니라 때를 탄다** (2026-09-30 실측). 리뷰가 30건씩 잘 오던
-# 다섯 곳이 3분 뒤 한꺼번에 전부 0건이 됐다가, 2분 더 지나니 도로 30건이 왔다. 벤더가
-# 잠깐씩 통째로 빈손을 주는 구간이 있다는 뜻이다. 5초·30초로는 그 구간을 못 넘긴다 —
-# 같은 날 주제 확인에서 스무 곳 넘게 0건으로 떨어졌고, 그 가게들도 8분 뒤엔 24~30건이
-# 그대로 왔다.
-REVIEW_WAITS = (10, 60, 120)
-REVIEW_TRIES = len(REVIEW_WAITS) + 1
-
-# 빈손이 연달아 나오면 **다 같이 쉰다.** 한 구간에서 저마다 재시도를 태워 버리면
-# 모두가 빈손으로 끝난다 — 그러면 멀쩡한 가게가 「쓸 장점 없음」으로 걸러지고,
-# 주제까지 통째로 버려진다(2026-09-30 솔희 방 신고의 실제 경로).
-COOLDOWN_AFTER = 3      # 연속 빈손 이만큼이면
-COOLDOWN_SECS = 120.0   # 이만큼 쉬었다 다시 부른다
-_empty_streak = 0
-_cooldown_until = 0.0
+# 전에는 Elfsight 위젯 데모 창구로 받았다. 그쪽이 몇 분씩 통째로 빈손을 주는 구간이 있어
+# 120초 쉬기·네 번 다시 받기를 붙였는데, 그 기다림이 주제 뽑기 한 번을 39분으로 늘렸다
+# (2026-10-07 16시대 120초 대기 13번, 끝내 빈손 34곳). `도구/gmaps_resolver.py` 는 구글맵
+# 웹앱이 장소를 열 때 부르는 RPC 를 그대로 불러 **한 곳에 3~5초, 리뷰 8개**를 준다.
+# 그날 Elfsight 가 빈손을 준 가게(Bashamichi Jyubankan·코메다 나고야 에키니시점)도 바로 왔다.
+# 리뷰가 Elfsight(최대 30개)보다 적지만 본문 넉 줄의 재료로는 충분하다.
+#
+# 리졸버가 못 받으면 Elfsight 를 **한 번만**, 기다리지 않고 불러 본다.
+TOOLS_DIR = BOT_ROOT.parent / "도구"
+_RESOLVER_LOCK = threading.Lock()
+_resolver = None
 
 
-async def _wait_out_cooldown() -> None:
-    """벤더가 빈손 구간이면 그 구간이 지날 때까지 기다린다."""
-    left = _cooldown_until - time.monotonic()
-    if left > 0:
-        await asyncio.sleep(left)
+def _gmaps_reviews_sync(place: dict[str, Any], cap: int) -> list[dict[str, Any]]:
+    global _resolver
+    p = str(TOOLS_DIR)
+    if p not in sys.path:
+        sys.path.append(p)
+    from gmaps_resolver import Resolver  # type: ignore
 
-
-def _note_reviews(got: bool) -> None:
-    global _empty_streak, _cooldown_until
-    if got:
-        _empty_streak = 0
-        return
-    _empty_streak += 1
-    if _empty_streak >= COOLDOWN_AFTER and time.monotonic() >= _cooldown_until:
-        _cooldown_until = time.monotonic() + COOLDOWN_SECS
-        _empty_streak = 0
-        logger.info(f"[place] 리뷰가 연달아 빈손 — {COOLDOWN_SECS:.0f}초 쉬었다 다시 받습니다")
+    # 세션(쿠키)을 쥐고 있는 객체라 한 줄로 세운다.
+    with _RESOLVER_LOCK:
+        if _resolver is None:
+            _resolver = Resolver()
+        d = _resolver.detail(str(place.get("name") or ""), place_id=place["place_id"])
+    # 구글이 집계한 **후기 수**가 같은 응답에 함께 온다(`votes`). 받아 두지 않으면 가게를
+    # 후기 많은 순으로 고를 수 없어 조회를 한 번 더 돌게 된다(2026-10-12).
+    if d.get("ok") and isinstance(d.get("votes"), int):
+        place["reviews"] = d["votes"]
+    revs = d.get("reviews") if d.get("ok") else None
+    return [{"rating": r.get("rating"), "text": r["text"][:300]}
+            for r in (revs or []) if r.get("text")][:cap]
 
 
 async def reviews(place: dict[str, Any], cap: int = 30) -> list[dict[str, Any]]:
@@ -471,30 +585,22 @@ async def reviews(place: dict[str, Any], cap: int = 30) -> list[dict[str, Any]]:
     `verify` 가 주는 이름·주소·평점·영업시간만으로는 어느 집에나 붙는 말밖에 못 쓴다.
     같은 주제로 8곳을 쓰면 여덟 장이 전부 비슷해진다(2026-09-07 사람 신고 — 삿포로 징기스칸).
     **웨이팅·예약·자리 수·간판 메뉴·값은 리뷰에만 있다.**
-
-    빈손이면 조금 쉬었다 다시 받는다 (2026-09-22). 벤더가 오류 없이 빈 목록을 줄 때가 있다
-    — 아구로 바이센 커피가 같은 place_id 로 0건 → 5초 뒤 13건. 리뷰가 없으면 본문 판정에서
-    「쓸 장점이 없는 가게」로 빠지므로, 벤더가 어긋난 탓에 멀쩡한 가게를 잃지 않게 한다.
-
-    **기다리는 시간을 5초에서 5·30초로 늘렸다** (2026-09-30 솔희 방 신고 — 「일본맛집2 본문
-    내용 제대로 생성 안돼」). 그날 주제 확인에서 덴푸라·우동·야키토리 가게가 스무 곳 넘게
-    한꺼번에 빈손으로 떨어져 「쓸 장점 없음」으로 걸러졌고, 남은 주제가 신오쿠보 한국 간식
-    하나뿐이라 **일본 맛집이 아닌 캐러셀**이 나왔다. 떨어진 가게를 뒤에 다시 부르니 전부
-    리뷰가 왔다 — 가게 탓이 아니라 벤더가 프로필을 만드는 데 걸리는 시간 탓이었다.
     """
-    if not is_available() or not place.get("place_id"):
+    if not place.get("place_id"):
         return []
     try:
-        for attempt in range(REVIEW_TRIES):
-            if attempt:
-                await asyncio.sleep(REVIEW_WAITS[attempt - 1])
-            await _wait_out_cooldown()
-            got = await asyncio.to_thread(_reviews_sync, place["place_id"], cap)
-            _note_reviews(bool(got))
-            if got:
-                return got
-        logger.info(f"[place] 리뷰 {REVIEW_TRIES}번 모두 빈손 — {place.get('name')}")
+        got = await asyncio.to_thread(_gmaps_reviews_sync, place, cap)
+        if got:
+            return got
+    except Exception as e:
+        logger.warning(f"[place] 구글맵 리뷰 실패 — {place.get('name')}: {type(e).__name__} {e}")
+    if not is_available():
         return []
+    try:
+        got = await asyncio.to_thread(_reviews_sync, place["place_id"], cap)
+        if not got:
+            logger.info(f"[place] 리뷰 없음 — {place.get('name')}")
+        return got
     except Exception as e:
         logger.warning(f"[place] 리뷰 실패 — {place.get('name')}: {type(e).__name__} {e}")
         return []
@@ -504,12 +610,8 @@ async def reviews_many(places: list[dict[str, Any]], cap: int = 30,
                        limit: int = 12) -> list[list[dict[str, Any]]]:
     """여러 가게의 리뷰를 받는다.
 
-    ⚠ 실제로는 `_with_path` 자물쇠 때문에 한 줄로 선다(벤더 임포트가 프로세스 전역이라
-      동시에 돌 수 없다). 8곳이면 30초 안팎이다 — 밤에 미리 도는 작업이라 괜찮다.
-
-    동시 개수를 3 에서 12 로 올렸다(2026-09-30). 벤더를 더 세게 두드리려는 게 아니다 —
-    호출은 위 자물쇠가 어차피 한 줄로 세운다. **빈손일 때 기다리는 시간이 겹치게** 하려는
-    것이다. 셋씩이면 한 곳이 3분을 기다리는 동안 나머지가 줄을 서서 주제 하나에 30분이 든다.
+    ⚠ 실제로는 자물쇠(`_RESOLVER_LOCK`) 때문에 한 줄로 선다. 한 곳에 3~5초라 8곳이면
+      30초 안팎이다.
     """
     gate = asyncio.Semaphore(limit)
 

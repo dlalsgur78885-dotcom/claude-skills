@@ -23,7 +23,9 @@ import io
 import json
 import logging
 import re
+import secrets
 import shutil
+import tempfile
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -467,8 +469,12 @@ async def cover_images(photo_urls: list[str]) -> list[bytes]:
 # 찍는 절차는 봇의 `scripts/x-capture.js` 에 있다(playwright 가 거기 깔려 있다).
 
 CAPTURE_HELPER = BOT_ROOT / "scripts" / "x-capture.js"
-# 「일본 반응」 장 — 답글 3개를 X 답글 화면처럼 그린다(3-3 지침서 2026-09-21).
-REPLIES_HELPER = BOT_ROOT / "scripts" / "x-replies.js"
+# 「일본 반응」 장 — 답글도 **임베드를 그대로 찍는다**(3-3 지침서 2026-10-13 교체).
+# 손으로 그리던 봇의 `scripts/x-replies.js` 는 더 쓰지 않는다 — 좋아요·게시 시각이 실제로
+# 찍힌 화면을 쓴다. 답글에도 공개 임베드 주소가 있다(2026-10-13 확인).
+REPLY_HELPER = Path(__file__).resolve().parents[2] / "scripts" / "x-reply-card.mjs"
+# 그 헬퍼는 이 레포 안에 있어 playwright 를 스스로 못 찾는다 — 봇 폴더의 것을 알려 준다.
+PW_ENTRY = BOT_ROOT / "node_modules" / "playwright" / "index.js"
 
 # 본문 이미지 칸 비율. 문서가 정한 값이다 — 안 맞추면 칸이 꽉 채우며 위아래를 잘라 먹는다.
 BODY_W, BODY_H = 739, 825
@@ -510,12 +516,21 @@ async def capture_card(post_id: str, korean: str = "") -> bytes:
 
 
 # 「일본 반응」 장을 만들 최소 답글 수. 규칙 문장은 3-3 지침서가 원본이다
-# (「3개 이상이면 만들고, 모자라면 만들지 않는다 — 두 개짜리로 억지로 채우지 않는다」).
-REPLIES_NEEDED = 3
+# (2026-10-13 교체 — 「답글 1개 = 1장, 2~3장. 1개뿐이면 1장만, 쓸 만한 게 없으면 안 만든다」).
+# 2026-09-21~10-12 은 3개를 한 장에 모아 그렸고 그래서 최소도 3이었다.
+REPLIES_NEEDED = 1
 
-# grok 에게 **달라고 할** 답글 수. 쓰는 것은 위 3개뿐인데 넉넉히 부르는 이유는
-# `fetch_replies` 주석에 적었다(달라는 개수를 상한으로 잡고 멈추는 버릇 — 2026-09-23 실측).
-_REPLY_ASK = 6
+# 반응 장은 **최대 3장**, 본문 전체는 **5장 안쪽**이다(3-3 「장수」 · 2026-10-13).
+# 반응을 3장 쓰면 글·사진 장은 2장까지 — 줄이는 쪽은 글·사진 장이다.
+REPLY_SLIDES_MAX = 3
+BODY_SLIDES_MAX = 5
+
+# **받아 둘** 답글 수. 쓰는 것은 2~3개뿐인데 15개를 받는 이유는 사람 지시다
+# (2026-10-13 — 「지금 캡처하는 건 1장밖에 없어 … 그것보다 더 선택지가 많아야 해」).
+_REPLY_ASK = 15
+
+# 좋아요 바닥. 이게 없으면 **조회 9 에 좋아요 1** 짜리가 비율 1위가 된다(2026-10-13 실측).
+_REPLY_LIKE_FLOOR = 5
 
 
 _FX_CONVERSATION = "https://api.fxtwitter.com/2/conversation/"
@@ -528,6 +543,9 @@ def _fx_replies_sync(post_id: str, pages: int = 3) -> tuple[list[dict[str, Any]]
     원글 작성자 자신의 답글·원글이 아닌 글에 단 답글은 뺀다. 번역은 비워 두면
     `studio_worker` 가 `translate_post` 로 채운다.
     ⚠ 다 받은 뒤에도 cursor 가 남고 그 다음 쪽은 404 다 → 둘째 쪽부터의 실패는 끝으로 본다.
+
+    **답글 id 를 함께 들고 온다**(2026-10-13) — 캡처가 그 id 로 임베드를 연다. 조회·답글·
+    재게시도 같이 받는다. 임베드는 좋아요만 보여 주므로 나머지 수치는 여기서 온 값을 그린다.
     """
     seen: dict[str, dict[str, Any]] = {}
     cursor, author, total = "", "", None
@@ -550,108 +568,125 @@ def _fx_replies_sync(post_id: str, pages: int = 3) -> tuple[list[dict[str, Any]]
                 continue
             if r.get("replying_to_status") and str(r.get("replying_to_status")) != post_id:
                 continue
-            text = re.sub(r"^(@\w+\s+)+", "", str(r.get("text") or "")).strip()
+            text = re.sub(r"^(@\w+\s+)+", "", str(r.get("text") or ""))
+            # 캡처 카드는 한 줄로 그린다 — 줄바꿈을 살리면 글상자가 들쭉날쭉해진다.
+            text = " ".join(text.split())
             if text:
-                seen[str(r.get("id"))] = {"text": text, "korean": "", "likes": int(r.get("likes") or 0)}
+                seen[str(r.get("id"))] = {
+                    "id": str(r.get("id")),      # 캡처가 이 id 로 임베드를 연다
+                    "text": text, "korean": "",
+                    "likes": int(r.get("likes") or 0),
+                    "views": int(r.get("views") or 0),
+                    "replies": int(r.get("replies") or 0),
+                    "reposts": int(r.get("reposts") or 0),
+                    "at": str(r.get("created_at") or ""),
+                }
         cursor = str((data.get("cursor") or {}).get("bottom") or "")
         if not cursor or not data.get("replies"):
             break
-    return sorted(seen.values(), key=lambda q: -q["likes"]), total
+    return _rank_replies(list(seen.values())), total
+
+
+def _rank_replies(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """고르는 순서 (3-3 「고르는 법」 · 2026-10-13 사람 지시 — 좋아요만 보지 않는다).
+
+    좋아요 5 이상만 깐 뒤 **좋아요÷조회수**가 높은 것부터 본다. 조회수만 큰 답글은
+    원글 덕에 노출된 것일 수 있다. 비율이 같으면 **말이 오간 답글**(답글·재게시)을 앞세운다.
+    바닥을 넘는 것이 하나도 없으면 바닥을 접고 있는 것으로 줄을 세운다.
+
+    ⚠ 「결이 겹치지 않게」·「한국인이 못 알아듣는 답글은 뺀다」는 이 함수가 못 하는 판단이다.
+      사람이 대화로 만들 때는 그 둘까지 보고 고른다(원클릭은 여기까지다).
+    """
+    strong = [r for r in rows if int(r.get("likes") or 0) >= _REPLY_LIKE_FLOOR]
+    pool = strong or rows
+    return sorted(pool, key=lambda r: (
+        -(int(r.get("likes") or 0) / max(int(r.get("views") or 0), 1)),
+        -(int(r.get("replies") or 0) + int(r.get("reposts") or 0)),
+    ))
 
 
 async def fetch_replies(url: str, post_id: str) -> list[dict[str, Any]]:
-    """**고른 글 하나**의 답글을 grok 으로 받아, 좋아요 많은 순으로 돌려준다.
+    """**고른 글 하나**의 답글을 FxTwitter 로 받아, 고를 순서대로 돌려준다.
 
     1단계에서 게시물마다 답글까지 찾게 했더니 그 무게로 grok 이 제한 시간 안에 결론을
-    못 냈다(2026-09-23 사람 지시 ① — 1단계에서 빼고 고른 뒤에 받는다). 한 건만 보면
-    되므로 여기서는 빨리 끝난다(실측 62~134초).
+    못 냈다(2026-09-23 사람 지시 ① — 1단계에서 빼고 고른 뒤에 받는다).
 
-    ⚠ **필요한 수보다 넉넉히 요청한다.** grok 은 달라는 개수를 상한으로 잡고 중간에
-      멈추는 버릇이 있다 — 답글 405개짜리 글에서 「3개」를 달라니 2개만 주고, 같은 글에
-      「5개」를 달라니 좋아요 1563·937·933·826·617 다섯을 다 줬다(2026-09-23 실측).
-      그래서 넉넉히 받아 **우리가 3개를 고른다.**
+    ⚠ **grok 경로는 없앴다**(2026-10-13). grok 은 원문과 좋아요만 주고 **답글 id 를 주지
+      않는다** — id 가 없으면 임베드를 못 열어 캡처를 못 띄운다(3-3 「받아 올 것」).
+      FxTwitter 가 실패하면 반응 장을 **안 만든다**.
 
     못 받아도 예외를 내지 않는다 — 빈 목록이면 「일본 반응」 장을 안 만들 뿐이다.
     """
-    # ① FxTwitter 로 먼저 받는다(토큰 0). 실패하거나, 답글이 있다는데 하나도 못 받으면 ② grok 으로 넘어간다.
     m = _URL_RE.search(url or "")
     pid = str(post_id or (m.group(2) if m else ""))
-    if pid:
-        try:
-            got, total = await asyncio.to_thread(_fx_replies_sync, pid)
-            # 답글이 5개 미만인데 0개면 숨김·본인 답글뿐이다 — grok 도 못 찾으니 넘기지 않는다(2026-10-01 40편 실측)
-            if got or (total or 0) < 5:
-                logger.info(f"[x] 답글 {len(got)}개 받음(FxTwitter · 전체 {total}) — {url or pid}")
-                return got[:_REPLY_ASK]
-        except Exception as e:
-            logger.warning(f"[x] FxTwitter 답글 실패 → grok 으로 — {str(e)[:150]}")
-    if not is_available():
+    if not pid:
         return []
-    ask = "\n\n".join([
-        f"아래 X 게시물 **한 건**의 답글만 봐 줘.\n{url or f'https://x.com/i/status/{post_id}'}",
-        "\n".join([
-            "===== 해 줄 일 =====",
-            f"이 글에 달린 답글 중 **좋아요가 많은 순서로 {_REPLY_ASK}개**를 골라 적는다.",
-            "원글 내용에 반응한 답글만 고른다 — 광고·스팸·원글과 무관한 답글은 넣지 않는다.",
-            f"{_REPLY_ASK}개가 안 되면 있는 만큼만 적는다. 없으면 「없음」이라고만 쓴다.",
-            "",
-            "===== 돌려줄 형식 =====",
-            "한 줄에 하나씩, 이 모양 그대로:",
-            *[f"답글{i}: <일본어 원문> / <한국어 번역> · 좋아요 N"
-              for i in range(1, _REPLY_ASK + 1)],
-            "좋아요 수는 본 그대로 적고, 확인 안 되면 0 으로 둔다.",
-        ]),
-    ])
     try:
-        raw = await search(ask)
+        got, total = await asyncio.to_thread(_fx_replies_sync, pid)
     except Exception as e:
-        logger.warning(f"[x] 답글을 받지 못했습니다 — {str(e)[:200]}")
+        logger.warning(f"[x] FxTwitter 답글 실패 — 반응 장은 건너뜁니다: {str(e)[:150]}")
         return []
-    quotes = _parse_replies([ln.strip() for ln in raw.splitlines() if _REPLY_RE.match(ln.strip())])
-    # 좋아요 많은 순으로 줄을 세운다 — grok 이 순서를 흘려도 우리가 바로잡는다.
-    quotes.sort(key=lambda q: -int(q.get("likes") or 0))
-    logger.info(f"[x] 답글 {len(quotes)}개 받음(요청 {_REPLY_ASK}개) — {url or post_id}")
-    return quotes
+    logger.info(f"[x] 답글 {len(got)}개 받음(FxTwitter · 전체 {total}) — {url or pid}")
+    return got[:_REPLY_ASK]
 
 
 def replies_ready(quotes: list[dict[str, Any]] | None) -> bool:
-    """「일본 반응」 장을 만들 만큼 **옮겨 쓸 답글**이 있는지."""
-    return len([q for q in (quotes or []) if (q or {}).get("korean") or (q or {}).get("text")]) \
-        >= REPLIES_NEEDED
+    """「일본 반응」 장을 만들 만큼 **찍을 수 있는 답글**이 있는지.
 
-
-async def capture_replies(quotes: list[dict[str, Any]]) -> bytes:
-    """답글 3개를 **X 답글 화면처럼** 한 장으로 그려 본문 칸 비율로 돌려준다.
-
-    임베드로 못 찍는다 — 답글에는 공개 임베드 주소가 없다. 그래서 1단계가 받아 둔 글로
-    직접 그린다(`scripts/x-replies.js`). 이 축에서 그린 카드를 쓰는 유일한 자리다.
-
-    이미 739:825 로 그리므로 여백을 덧붙이지 않는다.
+    글만 있고 **id 가 없는 답글은 세지 않는다** — 캡처가 id 로 임베드를 연다(2026-10-13).
     """
-    if not NODE or not REPLIES_HELPER.exists():
-        raise RuntimeError(f"답글 카드 헬퍼를 찾지 못했습니다 ({REPLIES_HELPER}).")
+    return len([q for q in (quotes or [])
+                if (q or {}).get("id") and ((q or {}).get("korean") or (q or {}).get("text"))])         >= REPLIES_NEEDED
 
-    payload = json.dumps({"replies": quotes[:REPLIES_NEEDED]}, ensure_ascii=False)
+
+async def capture_reply(quote: dict[str, Any]) -> bytes:
+    """답글 **한 개**를 X 임베드 화면 그대로 찍어 본문 칸 비율(739:825)로 돌려준다.
+
+    3-3 「캡처 — 답글도 X 임베드로 찍는다」(2026-10-13). 위에 딸려 나오는 원글 카드는
+    헬퍼가 잘라내고, 쓴 사람 한 줄도 헬퍼가 브라우저에서 블러한다 — 여기서는 여백만 붙인다
+    (글 캡처의 `_finish_body` 와 달리 PIL 블러를 다시 넣지 않는다. 두 번 흐려질 자리다).
+    """
+    if not NODE or not REPLY_HELPER.exists():
+        raise RuntimeError(f"답글 캡처 헬퍼를 찾지 못했습니다 ({REPLY_HELPER}).")
+
+    rid = str(quote.get("id") or "")
+    if not rid:
+        raise RuntimeError("답글 id 가 없어 임베드를 열 수 없습니다.")
+
+    out = Path(tempfile.gettempdir()) / f"xreply-{rid}-{secrets.token_hex(4)}.png"
+    payload = json.dumps({
+        "id": rid,
+        "korean": str(quote.get("korean") or ""),
+        "views": int(quote.get("views") or 0),
+        "replies": int(quote.get("replies") or 0),
+        "reposts": int(quote.get("reposts") or 0),
+        "likes": int(quote.get("likes") or 0),
+        "out": str(out),
+    }, ensure_ascii=False)
     proc = await asyncio.create_subprocess_exec(
-        NODE, str(REPLIES_HELPER),
-        cwd=str(BOT_ROOT),
+        NODE, str(REPLY_HELPER),
+        cwd=str(REPLY_HELPER.parent),
+        env={**os.environ, "PW_ENTRY": str(PW_ENTRY)},
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     try:
-        out, err = await asyncio.wait_for(
-            proc.communicate(payload.encode("utf-8")), timeout=180)
+        got, err = await asyncio.wait_for(
+            proc.communicate(payload.encode("utf-8")), timeout=240)
     except asyncio.TimeoutError:
         proc.kill()
-        raise RuntimeError("답글 카드 그리기가 180초를 넘겼습니다.")
+        raise RuntimeError("답글 캡처가 240초를 넘겼습니다.")
 
-    line = out.decode("utf-8", errors="replace").strip().splitlines()[-1:] or [""]
-    shot = Path(line[0]) if line[0] else None
-    if not shot or not shot.exists():
-        detail = err.decode("utf-8", errors="replace").strip()[-400:]
-        raise RuntimeError(f"답글 카드를 그리지 못했습니다. {detail}")
-    return shot.read_bytes()
+    detail = err.decode("utf-8", errors="replace").strip()[-400:]
+    if not out.exists():
+        raise RuntimeError(f"답글 캡처에 실패했습니다. {detail}")
+    if detail:
+        logger.warning(f"[x] 답글 캡처 경고({rid}): {detail}")
+    try:
+        return await asyncio.to_thread(_pad_body, out.read_bytes())
+    finally:
+        out.unlink(missing_ok=True)
 
 
 def _pad_body(blob: bytes) -> bytes:

@@ -109,9 +109,9 @@ STYLE = {
         "phone, with visible skin texture and stray flyaway hairs left as they are — "
         "the kind of photo that shows up in an Instagram feed. Natural light as if shot on an "
         "iPhone, with unedited phone-camera color (the iPhone photo look, no filter or color "
-        "grading), and a refined travel-photo mood. Keep other people out of the frame as much "
-        "as possible; if someone must appear, show only a small, out-of-focus part of them with "
-        "no visible face."
+        "grading), and a refined travel-photo mood. Keep anyone other than the people described "
+        "in the scene out of the frame as much as possible; if someone else must appear, show "
+        "only a small, out-of-focus part of them with no visible face."
     ),
     "scenery": (
         "Shoot it like a beautiful, emotive Instagram travel photo taken on location: natural "
@@ -175,9 +175,13 @@ STYLE = {
         "phone-camera color (the iPhone photo look, no filter or color grading), and only a "
         "slightly soft background — no heavy portrait-mode blur. Ingredient colors stay fresh "
         "and true: no congealed fat, grey meat, dried-out rice or washed-out vegetables. No "
-        "people in the frame, and never a hand lifting noodles or holding chopsticks. Do not "
-        "render any text, signage or logos — leave the space clean instead of generating "
-        "lettering."
+        "people in the frame, and never a hand lifting noodles or holding chopsticks. "
+        "Lettering that really belongs in such a scene may stay — a short shop name on the bowl, "
+        "plate, chopstick sleeve or tray, a noren, sign or menu board behind the table — rendered "
+        "short, accurate and clearly legible. Never render carousel copy, long sentences, broken "
+        "glyphs, fake characters, random letters or distorted numbers; where accurate lettering is "
+        "not possible, let that surface fall out of focus in the background instead of wiping it "
+        "blank."
     ),
     # 일본숙소 표지 후보의 호텔 컷(2026-10-15 축 신설). 원본은 `일본숙소_3-2단계_썸네일이미지.md`
     # 「이미지」·「비율·구도」다 — 한쪽을 고치면 같이 고친다.
@@ -208,6 +212,33 @@ PERSON_SELFIE = (
     "photo someone else took from a distance and not a tripod shot. "
 )
 
+# 인물 컷을 **음식 인증샷**으로 짜는 축 (2026-10-15 사람 지시 — 「일본 맛집 캐러셀에 인물 이미지가
+# 들어가는 경우 인물이 음식을 먹고 있거나, 그릇을 들어 음식을 보여주는 듯한 인증샷을 찍는 느낌으로」).
+# 원본은 `일본맛집_3-2단계_썸네일이미지.md` 「인물 컷은 음식 인증샷」이다 — 한쪽을 고치면 같이 고친다.
+# 장면을 짓는 쪽(아래 `_do_images` 의 인증샷 블록)과 결을 붙이는 쪽(`AXIS_STYLE`)이 짝이다.
+# 2026-10-15 사람 지시 — 「한발자국 더 뒤에서 찍은 듯한 사진으로, 인물 얼굴이 10% 더 작아지게」.
+# 2026-10-16 사람 지시 — 「더 멀리서 찍은 사진으로. 중앙 1:1 비율에 인물 얼굴과 음식이 모두 보이게」.
+#   「한 발자국 · 10%」를 **몇 걸음 뒤 · 머리~허리와 상이 한 프레임**으로 더 물렀고, 되는지 안 되는지를
+#   **중앙 1:1 안에 얼굴과 음식이 둘 다 들어오나**로 본다(방 지침서 「구도 — 중앙 1:1」과 같은 자).
+# 뒤로 물러나는 것은 **인물 컷만**이다 — 음식 5장은 그릇이 화면을 꽉 채우는 규칙(`STYLE["food"]`) 그대로다.
+PERSON_FOOD_AXES = {"일본맛집"}
+PERSON_FOOD_PROOF = (
+    "The person is in the middle of eating, the way a traveler takes a proof shot of what they "
+    "ordered: either lifting a bite to their mouth with chopsticks or a spoon, or holding the bowl "
+    "or plate up in both hands toward the camera to show what is inside. The dish sits close to the "
+    "camera and is large, sharp and unmistakable in the frame next to the person — never a plate so "
+    "small or so far behind them that you cannot tell what it is. They are at the shop's table or "
+    "counter, with the tray, chopsticks and water glass in view. "
+    "Take the photo from well back, not up close: the camera stands a few steps away from the "
+    "table and frames the person from the head down to around the waist together with the table "
+    "in front of them, so the face is clearly small in the frame and the seat, the table and the "
+    "shop around them are all visible — never a close-up where the face fills the frame. Both the "
+    "person's face and the dish must sit inside the central square (1:1) area of the portrait "
+    "frame, the face in the upper part of that square and the dish below it in the same square, "
+    "so neither is pushed out past the top or bottom edge. The dish still stays the near subject "
+    "in front, large and sharp enough to tell exactly what it is. "
+)
+
 # 축마다 결이 다른 종류만 덮어쓴다. 없으면 위 `STYLE` 그대로다.
 # 2026-09-22 사람 지시 — 「일본 영화 포스터 느낌이 나는 풍경. 지나가는 사람·그림자 같은 흔적은 있어도 된다」.
 # 원본은 `상황별일본어_3-2단계_썸네일이미지.md` 「[풍경 이미지]」다 — 한쪽을 고치면 같이 고친다.
@@ -217,6 +248,7 @@ PERSON_SELFIE = (
 # 사진이 아니라 그림으로 그릴 수 있다. 「여백」도 쓰지 않는다(테두리를 그린다 — 지침서 「여백 금지」).
 AXIS_STYLE = {
     SELFIE_AXIS: {"person": PERSON_SELFIE + STYLE["person"]},
+    "일본맛집": {"person": PERSON_FOOD_PROOF + STYLE["person"]},
     "상황별일본어": {
         "scenery": (
             "Make it feel like the key visual of a quiet Japanese slice-of-life film poster — the "
@@ -283,6 +315,93 @@ _HAIRS = (
     "hair tied back in a ponytail or a loose bun",
     "long hair worn down",
 )
+
+# 인물의 **옷·나이·인원**을 코드가 정하는 축 (2026-10-16 사람 지시 — 「여자는 흰옷, 남자는
+# 검정옷으로 거의 고정된 것 같은데 옷도 좀 더 다양하게 계절에 맞춰서」·「주제에 여러명이서
+# 대화하는 경우 2명까지, 연령도 주제에 맞춰서」).
+# 옷은 **코드가 컷마다 붙이고**(머리·시선과 같은 이유 — 시켜 두면 모델이 흘린다),
+# 나이·인원은 장면을 짓는 쪽이 주제를 보고 정한다(아래 `_do_images` 의 cast 블록).
+# 원본은 `상황별일본어_3-2단계_썸네일이미지.md` 「[인물 이미지]」다 — 한쪽을 고치면 같이 고친다.
+PERSON_CAST_AXES = {"상황별일본어"}
+
+# 주제에 계절·날씨 단서가 있으면 그 계절, 없으면 **만드는 날짜**의 계절이다(사람 지시).
+# 짧은 조각이 아니라 **그 계절에만 쓰는 말**만 넣는다 — 「눈」 같은 한 글자는 눈치·눈빛에 걸린다.
+_SEASON_WORDS = {
+    "봄": ("봄", "벚꽃", "하나미", "꽃구경", "꽃놀이", "신학기", "입학"),
+    "여름": ("여름", "장마", "무더", "더위", "더울", "폭염", "불꽃놀이", "하나비",
+             "유카타", "해수욕", "피서", "빙수", "납량"),
+    "가을": ("가을", "단풍", "낙엽", "모미지", "추석"),
+    "겨울": ("겨울", "첫눈", "눈이 오", "눈 오", "폭설", "설경", "스키", "스노보드",
+             "연말", "크리스마스", "설날", "한파", "추위", "추울", "코타츠"),
+}
+_SEASON_EN = {"봄": "spring", "여름": "summer", "가을": "autumn", "겨울": "winter"}
+
+# 앞 세 장(여성)용. 흰 상의·올블랙으로 수렴하던 것을 계절마다 다른 색·겹으로 나눈다.
+_OUTFITS_W = {
+    "봄": (
+        "a light beige trench coat over a pale blue tee and straight jeans",
+        "a soft pink cardigan over a small-floral midi dress",
+        "a denim jacket over a striped long-sleeve top and a pleated skirt",
+        "a mint knit sweater with wide cotton trousers",
+        "a cropped light-blue jacket, a cream blouse and cuffed jeans",
+        "a crisp white shirt with a black pleated skirt",
+    ),
+    "여름": (
+        "a sleeveless linen top and a flowing pale yellow midi skirt",
+        "a short-sleeve blue cotton shirt tucked into denim shorts",
+        "a sky-blue gingham sundress",
+        "an oversized apricot tee over wide black linen pants",
+        "a camisole under a sheer open shirt with cropped trousers",
+        "a plain white cotton tee with a black linen wrap skirt",
+    ),
+    "가을": (
+        "a mustard cardigan over a cream turtleneck and brown corduroy pants",
+        "a check wool blazer over a beige knit and a long pleated skirt",
+        "a rust-colored knit sweater with straight dark jeans",
+        "a camel trench coat over a brown long dress",
+        "an olive quilted jacket over a striped tee and wide pants",
+        "a black turtleneck under a white oversized shirt with dark jeans",
+    ),
+    "겨울": (
+        "a long charcoal wool coat over a cream turtleneck with a knit scarf",
+        "an ivory puffer jacket over a grey hoodie and black jeans",
+        "a camel duffle coat with a red check muffler and a beret",
+        "a brown shearling jacket over a chunky oatmeal knit",
+        "a navy wool coat with a wide burgundy scarf and leather gloves",
+        "a black long coat over a white knit with a grey scarf",
+    ),
+}
+# 마지막 두 장용(20대 한국인 남성이나 주제에 어울리는 다른 인물). 누가 입어도 어색하지 않게 적는다.
+_OUTFITS_X = {
+    "봄": (
+        "a light grey zip-up windbreaker over a white tee and chinos",
+        "a beige cotton blazer over a pale blue oxford shirt",
+        "a denim shirt worn open over a plain tee with light-wash jeans",
+        "a pale green crewneck sweatshirt and straight khakis",
+        "a white oxford shirt with black slim trousers",
+    ),
+    "여름": (
+        "a navy short-sleeve linen shirt open over a grey tee and light chinos",
+        "a loose white cotton tee with olive shorts",
+        "a blue gingham short-sleeve shirt and cropped beige pants",
+        "a sand-colored camp-collar shirt and linen trousers",
+        "a plain white tee with black shorts",
+    ),
+    "가을": (
+        "a brown corduroy shirt-jacket over a cream tee",
+        "a dark green knit sweater with beige wide-leg pants",
+        "a grey hooded sweatshirt under a navy coach jacket",
+        "a tan suede jacket over a striped long-sleeve tee",
+        "a black knit sweater over a white collared shirt",
+    ),
+    "겨울": (
+        "a navy wool coat over a grey knit with a charcoal scarf",
+        "a dark khaki padded jacket over a hoodie and dark denim",
+        "a camel duffle coat with a cream turtleneck",
+        "a deep green parka with a beanie and gloves",
+        "a black wool coat over a white turtleneck",
+    ),
+}
 
 # 셀카 축(`SELFIE_AXIS`)의 인물 5장이 **같은 사람·같은 각도**로 나왔다(2026-10-02 사람 신고 —
 # 「왜 자꾸 같은 사람이 나와. 다른 사람, 다른 각도로」). 머리·시선만 나눠 붙이고 나머지가 다섯 장
@@ -431,13 +550,75 @@ def japan_motifs(seed: str, n: int = 3) -> str:
     return ", ".join(_rotate(JAPAN_MOTIFS, f"{seed}·m", n))
 
 
+def season_now(today: datetime | None = None) -> str:
+    """만드는 날짜의 계절. 주제에 단서가 없을 때 쓴다(2026-10-16 사람 지시)."""
+    m = (today or datetime.now()).month
+    if 3 <= m <= 5:
+        return "봄"
+    if 6 <= m <= 8:
+        return "여름"
+    if 9 <= m <= 11:
+        return "가을"
+    return "겨울"
+
+
+def topic_season(topic: str) -> str:
+    """주제에 적힌 계절. 단서가 없으면 빈 문자열이다(`_SEASON_WORDS`)."""
+    t = topic or ""
+    for season, words in _SEASON_WORDS.items():
+        if any(w in t for w in words):
+            return season
+    return ""
+
+
+def season_outfits(topic: str, seed: str, n: int, women: int = 3) -> list[str]:
+    """인물 컷마다 입힐 옷. 계절은 주제 단서 우선, 없으면 오늘 날짜다.
+
+    2026-10-16 사람 지시로 넣었다 — 「여자는 흰옷, 남자는 검정옷으로 거의 고정」.
+    옷을 아무도 안 적어 모델이 매번 같은 기본값으로 갔다. 머리·시선과 같은 이유로 코드가 붙인다.
+    지침서 `상황별일본어_3-2단계_썸네일이미지.md` 「[인물 이미지]」와 짝이다 — 한쪽을 고치면 같이 고친다.
+    """
+    if n <= 0:
+        return []
+    season = topic_season(topic) or season_now()
+    en = _SEASON_EN[season]
+    items = (_rotate(_OUTFITS_W[season], seed, min(women, n))
+             + _rotate(_OUTFITS_X[season], f"{seed}·x", max(n - women, 0)))
+    return [
+        f"Outfit: {o}, dressed for {en} in Japan. If the scene itself calls for other "
+        f"clothing, adapt it but keep it right for {en}."
+        for o in items
+    ]
+
+
+def season_note(topic: str) -> str:
+    """컷마다 붙일 계절 한 줄. 계절은 주제 단서 우선, 없으면 만드는 날짜다.
+
+    2026-10-16 사람 지시 — 「썸네일 이미지는 계절에 맞게 생성해줘」. 옷(`season_outfits`)만
+    계절을 받고 있어서 배경·나무·빛은 10월에도 봄처럼 나왔다. 축을 가리지 않고 모든 컷에 붙인다.
+    """
+    en = _SEASON_EN[topic_season(topic) or season_now()]
+    return (
+        f"Season: it is {en} in Japan. Everything in frame that shows the time of year — the "
+        f"trees and plants, the sky and the light, what people on the street wear — looks like "
+        f"{en}. Do not draw another season's markers: no cherry blossoms unless it is spring, "
+        f"no snow unless it is winter, no red autumn foliage unless it is autumn."
+    )
+
 def person_looks(seed: str, axis: str = "") -> list[str]:
     """인물 5장의 머리·시선. 앞 세 장(여성)은 머리 셋을 하나씩, 뒤 두 장은 머리를 비운다.
 
     셀카 축(`SELFIE_AXIS`)은 렌즈를 보는 것이 기본이고 딴 곳을 보는 것이 두 장
     (여성 한 장 `gaze_index` · 5번째)이다. 다른 축은 그 반대로, 딴 곳이 기본이고
     카메라를 보는 것이 두 장(여성 한 장 `gaze_index` · 4번째)이다(2026-09-30).
+
+    단 `PERSON_FOOD_AXES`(일본맛집)는 **시선을 붙이지 않는다** — 고정하지 말고 주제·장면에
+    맞게 그때그때 쓰라는 2026-10-15 사람 지시다. 머리만 순서대로 붙인다.
     """
+    if axis in PERSON_FOOD_AXES:
+        # 2026-10-15 사람 지시 — 이 축은 시선을 고정하지 않는다. 머리만 순서대로 붙이고 시선은
+        # 장면을 짓는 쪽이 그 컷에 맞게 쓴다(`gaze_task`). 뒤 2장은 머리도 비운다.
+        return [f"Hairstyle: {h}." for h in _HAIRS] + ["", ""]
     selfie = axis == SELFIE_AXIS
     away, toward = (_AWAY_SELFIE, _TOWARD_SELFIE) if selfie else (_AWAY, _TOWARD)
     odd, rest = (away, toward) if selfie else (toward, away)
@@ -650,14 +831,31 @@ async def _do_images(chosen: dict[str, Any], axis: str,
         from app.services import x_search
 
         urls = [u for u in (chosen.get("photo_urls") or []) if u]
+        # 영상·GIF 글은 사진이 0장이다 — **영상 가운데에서 선명한 프레임**을 떠서 쓴다
+        # (2026-10-16 트립앤라이프 「중간 프레임에서 좋은 걸 가져와」). 첫 화면은 번져 있다.
+        # 사진과 영상이 함께 붙은 글이면 둘 다 후보로 올린다 — 고르는 것은 사람이다.
+        frames, fits = (await x_search.video_covers(str(chosen.get("post_id") or ""))
+                        if chosen.get("post_id") else ([], False))
+        for blob in frames:
+            url = await studio_remote.upload_image(blob, f"{secrets.token_hex(8)}.png")
+            post_images.append({"kind": "post", "prompt": "원본 영상 장면", "url": url})
+        # 원본에서 쓸 장면이 없을 때 **웹에서 찾아 온다**(2026-10-16 트립앤라이프
+        # 「웬만하면 네가 이미지를 찾고 정 안 될 때만 내가 찾는다」). 두 경우다 —
+        #  · 프레임 석 장이 다 주제를 못 담았다(치이카와 글 — 붙은 영상이 모래사장뿐이었다)
+        #  · 사진도 영상도 없는 **글만 있는 글**(2026-10-16 같은 사람 「글만 있는 소재에도 붙여줘」)
+        # 사진이 붙어 있으면(`urls`) 그걸 쓰므로 검색하지 않는다.
+        if not urls and not fits:
+            for blob in await x_search.web_covers(topic):
+                url = await studio_remote.upload_image(blob, f"{secrets.token_hex(8)}.png")
+                post_images.append({"kind": "post", "prompt": f"웹에서 찾은 사진 · {topic}", "url": url})
         if urls:
             blobs = await x_search.cover_images(urls)
             for blob in blobs:
                 url = await studio_remote.upload_image(blob, f"{secrets.token_hex(8)}.png")
                 # 그린 것이 아니라 원본이라는 표시 — 화면이 「생성」과 따로 보여준다.
                 post_images.append({"kind": "post", "prompt": "원본 게시물 사진", "url": url})
-            if not post_images:
-                logger.warning("[studio-worker] 원본 사진을 한 장도 못 받았습니다.")
+        if (urls or frames) and not post_images:
+            logger.warning("[studio-worker] 원본 사진을 한 장도 못 받았습니다.")
         # ⚠ 원문 사진이 있어도 **생성분을 건너뛰지 않는다** (2026-09-18 피드백 1번 —
         #   「생성 사진 5장 + 원문 사진 중 택 1 가능하도록」). 전에는 원문이 있으면
         #   그것만 돌려줘서 고를 것이 하나뿐이었다. 아래로 내려가 그리고, 끝에 합친다.
@@ -720,6 +918,17 @@ async def _do_images(chosen: dict[str, Any], axis: str,
         "다섯 장은 **서로 다른 사람**이다. 너는 그 사람이 어디서 무엇을 하는 순간인지만 쓰고, "
         "얼굴·머리·옷·체형·카메라 위치는 비워 둔다.\n"
     ) if (axis or studio.DEFAULT_AXIS) == SELFIE_AXIS else (
+        # 2026-10-15 사람 지시 — 「3장은 카메라를 보지 않게 되어 있는데, 고정하지 말고 생성 주제에
+        # 맞게 그때그때 변경해서 자연스럽게」. 이 축만 시선 자리를 못박지 않는다 — 몇 번째가 렌즈를
+        # 보는지 세지 않고 그 컷의 장면(먹는 중·그릇을 들어 보이는 중)이 정한다.
+        # 짝: `person_looks`(이 축엔 시선을 안 붙인다) · `일본맛집_3-2단계_썸네일이미지.md`.
+        "- **머리 모양은 네가 적지 마라 — 화면이 인물 컷마다 순서대로 붙인다**"
+        "(1번 단발·2번 묶은 머리·3번 긴 머리). 뒤 2장은 여성이 아니라 머리를 비운다.\n"
+        "- **시선은 네가 그 장면에 맞게 정한다 — 카메라를 보는 컷이 몇 장이라는 정해진 수는 없다.** "
+        "먹는 중이면 음식·젓가락 쪽, 그릇을 들어 보여주는 컷이면 렌즈 쪽처럼 그 순간에 자연스러운 "
+        "쪽으로 쓰고, 주제·자리에 따라 회차마다 다르게 짠다. 다섯 장이 전부 같은 시선이 되지만 "
+        "않게 하면 된다.\n"
+    ) if (axis or studio.DEFAULT_AXIS) in PERSON_FOOD_AXES else (
         "- **머리 모양과 시선은 네가 적지 마라 — 화면이 인물 컷마다 순서대로 붙인다.** "
         f"1번 단발·2번 묶은 머리·3번 긴 머리이고, **{gaze_index(look_seed) + 1}번과 4번만 카메라를 보는 "
         "컷**이다. 그 두 장은 친구가 불러 돌아볼 만한 장면으로 짜고, 나머지는 옆의 풍경·가게·음식을 "
@@ -852,6 +1061,36 @@ async def _do_images(chosen: dict[str, Any], axis: str,
             "「야경」이면 창밖 야경). 주제와 상관없는 일반 호텔 사진으로 도망가지 마라."
             "\n- **실제 그 호텔이 아니다** — 호텔 이름·간판·로고·글자를 그리지 마라. 장면만 쓴다."
         )
+    # 인물 컷을 음식 인증샷으로 짜는 축(`PERSON_FOOD_AXES`, 2026-10-15 사람 지시 — 「인물이 음식을
+    # 먹고 있거나, 그릇을 들어 음식을 보여주는 듯한 인증샷을 찍는 느낌으로」). 결은 코드가 붙이지만
+    # (`PERSON_FOOD_PROOF`) **무슨 메뉴를 들고 있나**는 장면을 짓는 쪽이 적어야 한다.
+    if "person" in kinds and (axis or studio.DEFAULT_AXIS) in PERSON_FOOD_AXES:
+        task += (
+            "\n- **인물 컷은 음식 인증샷이다.** 그 주제의 간판 메뉴를 **먹고 있는 순간**(젓가락·숟가락으로 "
+            "입에 가져가는 중)이나 **그릇·접시를 두 손으로 들어 카메라 쪽으로 보여주는 순간**으로 짜고, "
+            "**무슨 메뉴인지 이름으로 적는다**. 음식은 사람과 함께 화면 앞쪽에 크게 보이는 자리다 — "
+            "가게 앞에 그냥 서 있는 컷, 음식을 멀리 두고 사람만 찍은 컷으로 짜지 마라.\n"
+            "- 자리는 **그 가게 테이블·카운터**다 — 위 「말이 오가는 자리(점원 앞·역무원 앞…)」 줄보다 "
+            "이 줄이 우선이다. 이자카야·술집·바·가라오케 금지는 그대로다.\n"
+        )
+    # 인물의 **나이·인원**은 주제가 정한다 (2026-10-16 사람 지시 — 「주제에 여러명이서 대화하는
+    # 경우 2명까지 생성 가능하고, 연령도 주제에 맞춰서. 주제에 특별한 언급이 없다면 지금처럼」).
+    # 옷은 코드가 붙이므로(`season_outfits`) 여기서는 적지 말라고 못박는다.
+    if "person" in kinds and (axis or studio.DEFAULT_AXIS) in PERSON_CAST_AXES:
+        task += (
+            "\n- **옷은 네가 적지 마라 — 화면이 컷마다 그 계절에 맞는 옷을 붙인다.** "
+            "옷·색·계절을 프롬프트에 쓰지 말고 그 사람이 어디서 무엇을 하는 순간인지만 쓴다.\n"
+            "- **나이는 주제에 맞춘다.** 주제가 특정 나이대를 가리키면(아이에게 쓰는 말·"
+            "어르신께 쓰는 말·학생끼리 쓰는 말처럼) 그 나이대의 한국인으로 적고, 주제에 "
+            "그런 말이 없으면 위 기본(20대) 그대로다.\n"
+            "- **주제가 둘이 주고받는 말이면 인물을 2명까지 넣어도 된다** — 친구끼리·"
+            "연인끼리·점원과 손님처럼 말이 오가는 주제면 두 사람이 마주 보거나 나란히 "
+            "있는 컷으로 짜도 된다. **3명 이상은 쓰지 마라.** 주고받는 말이 아니면 지금처럼 "
+            "1명이다. 둘 다 주인공이니 위 「주인공 말고 다른 사람을 넣지 마라」는 그 두 "
+            "사람이 아니라 배경 사람 이야기다.\n"
+            "- 두 사람이 나오는 컷에서 **화면이 붙이는 머리·옷은 앞에 선 주인공 한 사람의 "
+            "것**이다. 상대는 누구인지만(친구·점원·가족) 적고 머리·옷은 적지 마라.\n"
+        )
     # 인물 컷의 장면을 어디서 뽑나 — 축마다 다르다. 상황별일본어는 **주제·훅 문구**
     # (`_hook_scene_block`, 2026-10-06), 그 밖의 축은 **본문 줄**(`_lines_block`)이다.
     if "person" in kinds:
@@ -860,6 +1099,12 @@ async def _do_images(chosen: dict[str, Any], axis: str,
                 hook, [x for x in (chosen.get("hook_candidates") or []) if x])
         else:
             task += _lines_block(list(chosen.get("items") or []))
+    # 계절은 코드가 붙인다(`season_note`, 2026-10-16 사람 지시 — 「썸네일 이미지는 계절에 맞게」).
+    task += (
+        "\n- **계절은 네가 적지 마라 — 화면이 컷마다 붙인다.** 벚꽃·단풍·눈·장마처럼 계절이 "
+        "드러나는 말을 쓰지 말고 그 자리와 무엇이 보이는지만 쓴다. 단 **주제에 계절이 적혀 "
+        "있으면 그 계절은 그대로 쓴다**(「벚꽃 명소」면 벚꽃)."
+    )
     plan = await studio._ask(
         "images", task,
         "{" + ", ".join(f'"{k}": ["prompt", ...]' for k in kinds) + "}",
@@ -881,11 +1126,18 @@ async def _do_images(chosen: dict[str, Any], axis: str,
     # 결을 여기서 붙인다(`STYLE`). 모델이 쓴 것은 장면뿐이다. 인물은 컷마다 머리·시선도(`person_looks`).
     style = {**STYLE, **AXIS_STYLE.get(axis or studio.DEFAULT_AXIS, {})}
     looks = person_looks(look_seed, axis or studio.DEFAULT_AXIS)
+    # 옷은 계절에 맞춰 컷마다 바꿔 붙인다(`season_outfits`, 2026-10-16 사람 지시).
+    # 씨앗은 **누를 때마다 새로** — 같은 주제로 다시 눌러도 다섯 벌이 그대로이면 고친 뜻이 없다.
+    if (axis or studio.DEFAULT_AXIS) in PERSON_CAST_AXES:
+        fits = season_outfits(topic, f"{topic}·{secrets.token_hex(4)}", len(looks))
+        looks = [" ".join(x for x in (look, fit) if x) for look, fit in zip(looks, fits)]
     # 풍경은 **누를 때마다** 시간대·요소가 바뀌어야 한다(2026-10-12) — 주제로만 돌리면
     # 「풍경만 다시」를 눌러도 같은 아침 햇살·같은 요소가 다시 나온다.
     scenery_seed = f"{topic}·{secrets.token_hex(4)}"
     scenery = scenery_looks(scenery_seed, shots.get("scenery", 0))
     motifs = japan_motifs(scenery_seed)
+    # 계절은 모든 컷에 같은 줄로 붙는다(주제 계절 우선, 없으면 오늘 — `season_note`).
+    season = season_note(topic)
     texts = []
     nth: dict[str, int] = {}
     for kind, p in prompts:
@@ -896,7 +1148,7 @@ async def _do_images(chosen: dict[str, Any], axis: str,
         kind_style = FOOD_COLLAGE if kind == "food" and n >= FOOD_REVIEW_SHOTS else style.get(kind, "")
         # 결에 비워 둔 일본 요소 자리를 그 회차 것으로 채운다(`JAPAN_MOTIFS`).
         kind_style = kind_style.replace("{motifs}", motifs)
-        texts.append("\n\n".join(x for x in (p, look, kind_style) if x))
+        texts.append("\n\n".join(x for x in (p, look, season, kind_style) if x))
     # 가로로 그리는 축이 있다(`AXES[축].cover_size` — 일본맛집2). 없으면 codex 기본값(세로)이다.
     size = studio.axis_conf(axis or studio.DEFAULT_AXIS).get("cover_size")
     blobs = await codex_image.generate_images(texts, **({"size": size} if size else {}))
@@ -1276,7 +1528,8 @@ async def _prepare_one(t: dict[str, Any], axis: str, need_places: int,
         items = list(got.get("body") or [])
         # 자리를 못 채웠으면 여기서 접는다 — 사진까지 짓고 버리면 그만큼 헛돈다.
         # 주제마다 채울 수가 다를 수 있다 — 일본숙소는 모음 8곳 · 호텔 하나 1곳(`places_for`).
-        need = studio.places_for(axis, name) if need_places else 0
+        # 문턱은 노리는 수보다 낮을 수 있다 — 일본맛집은 6곳이면 그대로 만든다(`min_places`).
+        need = studio.min_places_for(axis, name) if need_places else 0
         if need and len(items) < need:
             return name, None, "unfit", f"{need}곳 중 {len(items)}곳뿐"
 
@@ -1626,6 +1879,14 @@ async def _has_fresh_batch(axis: str, account: str | None = None) -> bool:
     return timedelta(0) <= age < timedelta(hours=FRESH_HOURS)
 
 
+# 하루만 건너뛰는 예외 — (축, 시각) → 건너뛸 날짜. **날짜가 지나면 저절로 풀린다.**
+# 되돌리는 일을 사람에게 떠넘기지 않으려고 이렇게 둔다(`prepare_at` 을 지우면 복구를 잊는다).
+# 2026-10-16 트립앤라이프 — 「오늘만 20:30 회차 생략하고 더 일찍 해줘 15:30 에」.
+_SKIP_ONCE: dict[tuple[str, str], str] = {
+    ("X인용", "20:30"): "2026-10-16",
+}
+
+
 async def _maybe_start_nightly(done: set[str]) -> None:
     """정해진 시각이 되면 축마다 **미리 만들기**를 스스로 연다.
 
@@ -1667,6 +1928,10 @@ async def _maybe_start_nightly(done: set[str]) -> None:
                 done.discard(old)
         # 시각마다 도는 요일이 다를 수 있다(`prepare_days`). 안 적은 시각은 매일 돈다 —
         # X인용만 주말을 쉰다(월=0 … 일=6).
+        if _SKIP_ONCE.get((axis, at)) == f"{now:%Y-%m-%d}":
+            logger.info(f"[studio-worker] {at} — 「{axis}」 오늘은 건너뜁니다(사람 지시 · 하루만)")
+            continue
+
         days = (conf.get("prepare_days") or {}).get(at)
         if days is not None and now.weekday() not in days:
             logger.info(f"[studio-worker] {at} — 「{axis}」 오늘({_DAYS_KO[now.weekday()]})은 쉽니다")

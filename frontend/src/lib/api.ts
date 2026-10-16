@@ -824,10 +824,13 @@ class ApiClient {
   // 원클릭 스튜디오 — 회차 상태만 주고받는다.
   // 문구·그림은 codex 가 있는 PC 의 일꾼이 만들어 여기에 올린다. 화면은 기다렸다 보여주고,
   // 사람이 고른 것을 다시 여기에 적는다. 그래서 평범한 로그인·API 주소를 그대로 쓴다.
-  studioCreate(axis = "상황별일본어", pending = "topics") {
+  /** 회차를 연다. `chosen` 은 여는 순간 함께 넣을 값 —
+   *  링크 한 건으로 만들 때(`pending: "link"`) `{ link_url }` 을 여기 넣는다.
+   *  연 뒤 PATCH 로 넣으면 일꾼이 먼저 집어가 링크가 빈 채로 돈다. */
+  studioCreate(axis = "상황별일본어", pending = "topics", chosen?: Record<string, unknown>) {
     return this.fetch<StudioSession>("/studio-sessions/", {
       method: "POST",
-      body: JSON.stringify({ axis, pending }),
+      body: JSON.stringify({ axis, pending, ...(chosen ? { chosen } : {}) }),
     });
   }
   /** 밤에 미리 만들어 둔 회차. 없으면 id 가 없는 빈 답이 온다. */
@@ -855,6 +858,8 @@ export type StudioStep =
   | "topics" | "hooks" | "images" | "body" | "caption" | "build" | "keep"
   // 지도 축에만 있는 3-4단계
   | "cta1"
+  // 링크 한 건으로 훅·본문·캡션·생성을 한 번에 하는 일(2026-10-13)
+  | "link"
   // 출근 전에 주제 10개의 훅·사진·본문·캡션을 통째로 미리 만들어 두는 일
   | "prepare";
 

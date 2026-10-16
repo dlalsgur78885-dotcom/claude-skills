@@ -14,7 +14,7 @@ import re
 
 import httpx
 
-from .base import ImageResult, ImageSearchProvider
+from .base import ImageResult, ImageSearchProvider, logger
 from .proxy_pool import next_proxy
 
 _URL = "https://search.naver.com/search.naver"
@@ -46,15 +46,30 @@ class NaverImageProvider(ImageSearchProvider):
             "headers": {"User-Agent": _UA, "Accept-Language": "ko-KR"},
             "follow_redirects": True,
         }
+        async def fetch(use_proxy: bool) -> str:
+            kwargs = dict(client_kwargs)
+            if use_proxy and proxy:
+                # httpx 0.28+ uses `proxy` (singular); older versions used `proxies` (mapping)
+                kwargs["proxy"] = proxy
+            async with httpx.AsyncClient(**kwargs) as client:
+                r = await client.get(_URL, params=params)
+                r.raise_for_status()
+                return r.text
+
+        # ⚠ 네이버는 **프록시 IP 를 막는다**(2026-10-16 이 PC 실측 — 프록시로 403,
+        #   직접 50건). 프록시는 서버 IP 가 막힐 때 쓰는 것이라, 막히거나 빈손이면 한 번 더
+        #   **직접** 물어본다. bing 과 같은 길이다(`bing.py`) — 둘 다 막힌 곳에서는 빈손이다.
+        body = ""
         if proxy:
-            # httpx 0.28+ uses `proxy` (singular); older versions used `proxies` (mapping)
-            client_kwargs["proxy"] = proxy
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            r = await client.get(_URL, params=params)
-            r.raise_for_status()
+            try:
+                body = await fetch(True)
+            except Exception as e:
+                logger.info(f"[naver] 프록시가 막혀 직접 물어봅니다 — {str(e)[:80]}")
+        if not _RECORD_RE.search(body):
+            body = await fetch(False)
 
         results: list[ImageResult] = []
-        for m in _RECORD_RE.finditer(r.text):
+        for m in _RECORD_RE.finditer(body):
             results.append(ImageResult(
                 source=self.name,
                 source_url=_unescape(m.group("orig")),

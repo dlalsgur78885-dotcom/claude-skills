@@ -5,7 +5,7 @@ Two routing profiles coexist (carousel studio feedback #15-16):
 - **default** (legacy): naver → pexels → pixabay → unsplash. The original
   routing that the existing "🔄 재검색" button and Step-2 auto-search rely on.
 
-- **v2** (재검색2): bing → naver → wikimedia. Drops stock providers because
+- **v2** (재검색2): bing → naver → wikimedia → namu. Drops stock providers because
   carousels target specific places/items they rarely cover; Bing's image
   scrape catches the broader (incl. Japanese/Chinese) web, Naver carries
   Korean blog reviews, Wikimedia curates landmarks/encyclopedia subjects.
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from .base import ImageResult, ImageSearchProvider
 from .bing import BingImageProvider
+from .namu import NamuImageProvider
 from .naver import NaverImageProvider
 from .pexels import PexelsProvider
 from .pixabay import PixabayProvider
@@ -29,6 +30,7 @@ PROVIDERS: dict[str, ImageSearchProvider] = {
     "bing":      BingImageProvider(),
     "naver":     NaverImageProvider(),
     "wikimedia": WikimediaProvider(),
+    "namu":      NamuImageProvider(),
     "unsplash":  UnsplashProvider(),
     "pexels":    PexelsProvider(),
     "pixabay":   PixabayProvider(),
@@ -41,7 +43,9 @@ DEFAULT_ORDER = ["naver", "pexels", "pixabay", "unsplash"]
 # #15-16). Add new profiles here; callers without a profile= get the legacy.
 ORDER_PROFILES: dict[str, list[str]] = {
     "default": DEFAULT_ORDER,
-    "v2":      ["bing", "naver", "wikimedia"],
+    # 나무위키는 **체인 꼬리**다(2026-10-16 트립앤라이프 「나무위키도 붙여줘」) — 앞의 셋이
+    # 빈손일 때만 돈다. 캐릭터·IP·제품 소재에서 문서 사진이 bing 의 굿즈 썸네일보다 낫다.
+    "v2":      ["bing", "naver", "wikimedia", "namu"],
 }
 
 

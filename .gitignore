@@ -35,3 +35,6 @@ uvicorn.log*
 tmp/
 .codex-prompt.txt
 **/.env.bak*
+
+# 봇·스튜디오 작업용 임시 폴더(651MB 캐시·백업) — 커밋하지 않는다
+.tmp/

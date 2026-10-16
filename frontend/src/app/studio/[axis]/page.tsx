@@ -56,6 +56,7 @@ const KIND_LABEL: Record<string, string> = { person: "인물", scenery: "풍경"
 /** 주소 한 조각 → 축 이름. 축을 늘리려면 여기와 백엔드 AXES 두 곳만 고치면 된다. */
 const AXES: Record<string, {
   axis: string; title: string; scenery?: boolean; food?: boolean; hotel?: boolean; personOnDemand?: boolean;
+  link?: boolean;
 }> = {
   // 인물 말고 무엇을 더 그리는 축인지 — 백엔드 `AXES[축].cover_shots` 와 짝이다.
   // 상황별일본어는 풍경, 일본맛집은 음식이다(본문 배경은 실제 가게 사진이라 여기서 안 그린다).
@@ -71,7 +72,9 @@ const AXES: Record<string, {
   // ⚠ 풍경 5장도 **만들어지고 있었는데** 이 플래그가 없어 화면에서 통째로 숨어 있었다.
   //   그래서 사람이 「생성 사진 5장」으로 알고 있었다(2026-09-18 피드백 1번).
   //   X인용_3-2단계 지침서는 「인물 5장 · 풍경 5장」이다 — 백엔드 cover_shots 와도 짝이다.
-  "x-quote": { axis: "X인용", title: "X인용", scenery: true },
+  // link — 「링크로 만들기」 칸을 붙인다(2026-10-15 트립앤라이프 지시). X·인스타·커뮤니티·뉴스
+  // 주소 한 줄로 훅·본문·캡션·생성까지 일꾼이 한 번에 한다(백엔드 `studio_worker._do_link`).
+  "x-quote": { axis: "X인용", title: "X인용", scenery: true, link: true },
 };
 
 /** 화면에 보이는 단계. 진행 띠와 주소(#step-n)가 이 순서를 쓴다.
@@ -94,6 +97,8 @@ const WAITING: Record<StudioStep, string> = {
   build: "캐러셀을 만드는 중… 10초쯤",
   keep: "보관함·제외 목록에 적는 중…",
   prepare: "주제 10개를 통째로 미리 만드는 중… 한 시간 넘게 걸립니다",
+  // 링크 한 건 — 글·사진 뽑기 → 훅 → 본문 → 캡션 → 생성까지 한 번에 돈다(백엔드 `_do_link`).
+  link: "링크에서 글·사진을 뽑아 캐러셀까지 만드는 중… 2~3분",
 };
 
 /** 「다시 뽑기」로 날아가는 시간. 확인 창에서 사람에게 그대로 보여준다. */
@@ -204,6 +209,8 @@ export default function AxisStudio() {
   const [captionDraft, setCaptionDraft] = useState<string | null>(null);
   const [cta1Draft, setCta1Draft] = useState<StudioCta1 | null>(null);
   const [openStep, setOpenStep] = useState(1);
+  // 「링크로 만들기」 칸에 적은 주소. 누르면 새 회차를 열고 그 회차로 화면이 옮겨 간다.
+  const [linkUrl, setLinkUrl] = useState("");
   // 훅 후보 하나를 고쳐 쓰는 중이면 그 후보의 자리(묶음-번호)와 고친 줄들(2026-10-06 트립앤라이프 피드백 —
   // 「살짝만 바꾸면 좋겠는데 고르기만 할 수 있다」. 썸네일이 훅을 보고 그려지니 고른 뒤에 고치면 늦다).
   const [hookEdit, setHookEdit] = useState<{ key: string; lines: string[] } | null>(null);
@@ -256,6 +263,23 @@ export default function AxisStudio() {
     }, 4000);
     return () => { if (poll.current) clearInterval(poll.current); };
   }, [s?.id, s?.pending]);
+
+  /** 링크 한 건 → 캐러셀. **새 회차를 연다** — 지금 보던 회차(밤에 미리 만들어 둔 것)를
+   *  덮지 않으려는 것이다. 여는 순간 `chosen.link_url` 을 함께 넣어야 일꾼이 집어갈 때
+   *  주소가 들어 있다(연 뒤 PATCH 는 늦는다 — `studio_sessions.CreateBody` 주석). */
+  const makeFromLink = useCallback(async () => {
+    const url = linkUrl.trim();
+    if (!url) return;
+    setErr("");
+    try {
+      const opened = await api.studioCreate(AX.axis, "link", { link_url: url });
+      const u = new URL(window.location.href);
+      u.searchParams.set(SID_PARAM, opened.id);
+      window.history.replaceState(null, "", u.toString());
+      setLinkUrl("");
+      setS(opened);
+    } catch (e) { setErr(String((e as Error).message || e)); }
+  }, [linkUrl, AX.axis]);
 
   /** 단계로 이동 — 주소에 남겨 새로고침·링크 공유에도 그 자리로 온다. */
   const jump = useCallback((n: number) => {
@@ -586,6 +610,37 @@ export default function AxisStudio() {
             background: "var(--red-muted)", color: "var(--red)", border: "1px solid var(--red)",
             borderRadius: T.r.md, padding: T.s.sm, marginBottom: T.s.md, fontSize: 14,
           }}>{err || s.error}</div>
+        ) : null}
+
+        {/* ── 링크로 만들기 — 주소 하나로 1~5단계를 건너뛴다 (2026-10-15 트립앤라이프 지시) ── */}
+        {AX.link ? (
+          <div style={{
+            border: T.line, background: T.card, borderRadius: T.r.lg,
+            padding: T.s.md, marginBottom: T.s.lg,
+          }}>
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>링크로 만들기</div>
+            <p style={{ color: T.faint, fontSize: 13, margin: `0 0 ${T.s.sm}px` }}>
+              X · 인스타그램 · 커뮤니티(루리웹 · 디시) · 뉴스 기사 주소를 하나 넣으면 그 글과 사진을
+              그대로 가져와 훅 · 본문 · 캡션까지 한 번에 만듭니다. 고르는 자리는 건너뛰고 첫 안으로
+              만드니, 마음에 안 드는 단계는 아래에서 다시 뽑으면 됩니다.
+            </p>
+            <div style={{ display: "flex", gap: T.s.xs, flexWrap: "wrap" }}>
+              <input value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)}
+                     onKeyDown={(e) => { if (e.key === "Enter") makeFromLink(); }}
+                     placeholder="https://… 주소 붙여넣기" disabled={busy}
+                     style={{
+                       flex: "1 1 320px", font: "inherit", fontSize: 14, padding: "8px 12px",
+                       borderRadius: T.r.md, border: T.line, background: T.raise, color: T.text,
+                     }} />
+              <Btn kind="primary" disabled={busy || !linkUrl.trim()} onClick={makeFromLink}>
+                링크로 만들기
+              </Btn>
+            </div>
+            {/* 뉴스·일반 웹은 본문 칸을 모르고 긁어 메뉴 글자가 섞여 들어올 때가 있다(2026-10-15 확인). */}
+            <p style={{ color: T.faint, fontSize: 12, margin: `${T.s.xs}px 0 0` }}>
+              뉴스 · 일반 웹 주소는 본문에 메뉴 글자가 섞일 수 있습니다 — 본문 단계에서 한 번 보세요.
+            </p>
+          </div>
         ) : null}
 
         {/* ── 1 주제 ─────────────────────────────────────── */}

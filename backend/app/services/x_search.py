@@ -280,6 +280,10 @@ def _fx_status(post_id: str) -> dict[str, Any] | None:
 def _from_fx(item: dict[str, Any], tweet: dict[str, Any]) -> dict[str, Any]:
     media = (tweet.get("media") or {}).get("all") or []
     photos = [m for m in media if m.get("type") == "photo"]
+    # ⚠ 영상·GIF 는 여기서 손대지 않는다 — 표지는 `video_covers` 가 **영상 가운데 프레임**으로
+    #   따로 만든다(2026-10-16 트립앤라이프 「중간 프레임에서 좋은 걸 가져와」).
+    #   첫 화면을 사진인 척 섞으면 번진 장이 후보에 끼고 `photos` 수도 틀어진다 —
+    #   그 수가 본문 장수를 정한다(3-3단계 「사진 1장당 1장 추가」).
     author = tweet.get("author") or {}
     ts = tweet.get("created_timestamp")
     made = (datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
@@ -295,41 +299,29 @@ def _from_fx(item: dict[str, Any], tweet: dict[str, Any]) -> dict[str, Any]:
         "views": int(tweet.get("views") or item.get("views") or 0),
         "likes": int(tweet.get("likes") or item.get("likes") or 0),
         "replies": int(tweet.get("replies") or 0),
-        "_moving": sorted({str(m.get("type")) for m in media if m.get("type") != "photo"}),
     }
 
 
-async def verify(items: list[dict[str, Any]], drop_videos: bool = False) -> list[dict[str, Any]]:
+async def verify(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """후보마다 원문을 열어 **살아 있는지** 보고 사진 장수·좋아요를 실제 값으로 바꾼다.
 
     grok 이 붙여 온 수치는 틀릴 때가 있다(2026-09-16 「250엔」 사고). 원문에서 확인되는
     것은 원문 값으로 덮고, 못 연 게시물은 **버린다** — 지침서가 「못 열면 뺀다」고 했다.
 
-    `drop_videos` 면 **영상·GIF 가 붙은 글을 뺀다**(1단계 지침서 2026-09-21 — 「사진과
-    영상이 함께 붙은 글도 뺀다」). 영상이 붙었는지는 grok 말이 아니라 **원문의
-    mediaDetails** 로 본다 — 전에는 「영상만 있는 글」만 걸러 사진+영상 글이 후보에
-    올라왔다(5회차 6·7번).
+    ⚠ **영상·GIF 가 붙은 글도 버리지 않는다**(2026-10-16 트립앤라이프 「영상과 gif 까지
+    모두 풀자」). 종전에는 `drop_videos` 로 통째로 뺐는데, 그 탓에 레퍼런스(트립초초)가
+    영상에서 프레임을 떠 만든 소재가 우리 후보에는 아예 올라오지 않았다.
+    영상 글의 첫 화면은 `_from_fx` 가 `photo_urls` 에 담아 준다.
     """
     async def one(item: dict[str, Any]) -> dict[str, Any] | None:
         tweet = await asyncio.to_thread(_fx_status, item["post_id"])
         if tweet is not None:
-            got = _from_fx(item, tweet)
-            moving = got.pop("_moving")
-            if drop_videos and moving:
-                logger.info(f"[x] 영상이 붙어 뺍니다({', '.join(moving)}) — {item['url']}")
-                return None
-            return got
+            return _from_fx(item, tweet)
         data = await asyncio.to_thread(_syndication, item["post_id"])
         if not data or not data.get("text"):
             logger.info(f"[x] 원문을 못 열어 뺍니다 — {item['url']}")
             return None
         media = data.get("mediaDetails") or []
-        if drop_videos:
-            moving = [m for m in media if m.get("type") != "photo"]
-            if moving:
-                kinds = ", ".join(sorted({str(m.get("type")) for m in moving}))
-                logger.info(f"[x] 영상이 붙어 뺍니다({kinds}) — {item['url']}")
-                return None
         photos = [m for m in media if m.get("type") == "photo"]
         user = data.get("user") or {}
         return {
@@ -353,6 +345,9 @@ async def verify(items: list[dict[str, Any]], drop_videos: bool = False) -> list
 # 여기는 그 숫자만 둔다.
 _REPLY_ENOUGH = 3
 _RECENT_HOURS = 48
+# 「최근 14일」 묶음과 「명예의전당」(14일~6개월 전) 묶음을 가르는 선
+# — 2026-10-16 트립앤라이프 「시간이 지난 소재는 조회수 순으로 나열」.
+_HALL_HOURS = 14 * 24
 
 
 def sort_candidates(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -360,6 +355,7 @@ def sort_candidates(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
       1. **게시 48시간 이내** 글을 앞에
       2. 그다음은 **댓글 수가 많은 순서**
+      3. **14일보다 오래된 글(명예의전당)은 맨 뒤에 조회수 순**(2026-10-16 사람 지시)
 
     원클릭은 앞에 온 것부터 미리 만들어 두므로(`_do_prepare`), 이 순서가 곧 사람이 먼저
     보는 순서다.
@@ -385,9 +381,14 @@ def sort_candidates(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return (now - made).total_seconds() / 3600
 
     def key(item: dict[str, Any]) -> tuple[int, int]:
+        age = age_hours(item)
+        if age > _HALL_HOURS:
+            # 「명예의전당」 묶음 — 맨 뒤에 **조회수 순**으로 붙인다. 시의성이 없는 글이라
+            # 48시간·댓글 잣대가 뜻이 없다. 시각을 모르는 글도 여기로 떨어진다.
+            return (2, -int(item.get("views") or 0))
         return (
-            0 if age_hours(item) <= _RECENT_HOURS else 1,  # 48시간 이내가 먼저
-            -int(item.get("replies") or 0),               # 댓글 많은 순
+            0 if age <= _RECENT_HOURS else 1,  # 48시간 이내가 먼저
+            -int(item.get("replies") or 0),    # 댓글 많은 순
         )
 
     return sorted(items, key=key)
@@ -405,6 +406,10 @@ COVER_W, COVER_H = 1080, 1350
 
 
 def _fetch(url: str) -> bytes:
+    # 웹 검색 결과에는 **주소에 한글·일본어가 그대로 박힌 것**이 섞여 있다(2026-10-16 —
+    # 「…/일본-여행지-추천.jpg」가 ascii 인코딩 오류로 통째로 버려졌다). urllib 은 ascii 만
+    # 받으므로 퍼센트 인코딩해 넘긴다 — `%` 를 그대로 둬서 이미 인코딩된 주소는 건드리지 않는다.
+    url = urllib.parse.quote(url, safe="%/:=&?~#+!$,;'@()*[]")
     req = urllib.request.Request(url, headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126",
     })
@@ -460,6 +465,343 @@ async def cover_images(photo_urls: list[str]) -> list[bytes]:
 
     made = await asyncio.gather(*(one(u) for u in photo_urls))
     return [m for m in made if m]
+
+
+# ── 영상 글의 표지 — 가운데에서 **선명한 프레임**을 뜬다 ───────────────────
+#
+# 2026-10-16 트립앤라이프 「중간 프레임에서 좋은 걸 가져와」. 영상·GIF 글을 후보에 넣기로
+# 하면서(1단계 지침서 같은 날) 생긴 일이다 — 첫 화면(`thumbnail_url`)은 **움직임에 번져
+# 뭘 찍은 건지 안 보이는 장면일 때가 많다**(같은 날 온천 영상으로 확인). 레퍼런스(트립초초)도
+# 첫 화면이 아니라 영상 가운데 장면을 쓴다.
+#
+# mp4 주소는 FxTwitter 가 그대로 준다 — X 는 yt-dlp 가 필요 없다(유튜브 소재는 3-2단계대로
+# yt-dlp 를 쓴다. 거기는 mp4 주소가 공개되지 않는다).
+
+FFMPEG = shutil.which("ffmpeg")
+# 앞뒤는 버린다 — 시작은 움직임에 번지고, 끝은 암전·자막 화면이 잦다.
+FRAME_HEAD, FRAME_TAIL = 0.20, 0.85
+FRAME_SAMPLES = 8   # 가운데에서 이만큼 뜬 다음
+FRAME_PICKS = 3     # 선명한 순으로 이만큼만 남긴다
+
+
+def _sharpness(blob: bytes) -> float:
+    """프레임이 얼마나 또렷한지 — 라플라시안 분산.
+
+    번진 화면은 이웃 화소 차이가 작아 값이 낮다. 2026-10-16 온천 영상 8장 실측에서
+    번진 장면 42 · 또렷한 장면 114 로 두 배 넘게 갈렸다.
+    """
+    import numpy as np
+    from PIL import Image
+
+    g = np.asarray(Image.open(io.BytesIO(blob)).convert("L"), dtype=np.float32)
+    lap = g[:-2, 1:-1] + g[2:, 1:-1] + g[1:-1, :-2] + g[1:-1, 2:] - 4 * g[1:-1, 1:-1]
+    return float(lap.var())
+
+
+async def _best_frames(video_url: str, duration: float) -> list[bytes]:
+    """영상 가운데에서 여러 장을 떠 **선명한 순으로** 몇 장만 돌려준다."""
+    if not FFMPEG or duration <= 0:
+        return []
+    start = duration * FRAME_HEAD
+    span = max(duration * (FRAME_TAIL - FRAME_HEAD), 0.5)
+    with tempfile.TemporaryDirectory() as tmp:
+        proc = await asyncio.create_subprocess_exec(
+            FFMPEG, "-nostdin", "-loglevel", "error",
+            # ⚠ `-ss` 를 `-i` **앞에** 둬야 빨리 넘어간다. 뒤에 두면 처음부터 다 받는다.
+            "-ss", f"{start:.2f}", "-t", f"{span:.2f}", "-i", video_url,
+            "-vf", f"fps={FRAME_SAMPLES}/{span:.2f}", "-frames:v", str(FRAME_SAMPLES),
+            "-q:v", "2", "-y", str(Path(tmp) / "f_%02d.jpg"),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, err = await asyncio.wait_for(proc.communicate(), timeout=180)
+        except asyncio.TimeoutError:
+            proc.kill()
+            logger.warning(f"[x] 영상이 제한 시간 안에 안 열렸습니다 — {video_url[:90]}")
+            return []
+        shots = sorted(Path(tmp).glob("f_*.jpg"))
+        if not shots:
+            logger.warning("[x] 영상 프레임을 한 장도 못 떴습니다 — %s",
+                           (err or b"").decode("utf-8", "replace")[:200])
+            return []
+        scored = [(await asyncio.to_thread(_sharpness, b), b)
+                  for b in (p.read_bytes() for p in shots)]
+    # ⚠ **선명한 순으로 위에서 자르지 않는다.** 그러면 같은 장면의 이웃 프레임 셋이 뽑혀
+    #   후보 3장이 사실상 한 장이 된다(2026-10-16 치이카와 영상 — 셋 다 모래사장이었고
+    #   정작 인형은 한 장도 없었다). 영상을 **시간으로 3토막** 내고 토막마다 가장 선명한
+    #   한 장을 올린다 — 앞·중간·뒤가 한 장씩이라 주제가 담길 확률이 높아진다.
+    picks: list[bytes] = []
+    size = max(len(scored) // FRAME_PICKS, 1)
+    for n in range(FRAME_PICKS):
+        chunk = scored[n * size:(n + 1) * size] if n < FRAME_PICKS - 1 else scored[n * size:]
+        if chunk:
+            picks.append(max(chunk, key=lambda row: row[0])[1])
+    return picks
+
+
+# ── 뜬 프레임 중 **주제가 담긴 장면**을 고른다 (2026-10-16 트립앤라이프 지시) ──
+#
+# 선명도만 보면 「선명하지만 쓸 수 없는 표지」가 올라온다 — 치이카와 글(조회 360만)은
+# 붙은 영상이 2.4초 모래사장뿐이라 석 장이 다 모래였다. 봇은 그 장면에 **주제가 담겼는지**
+# 는 못 본다. 그래서 글 내용과 프레임을 함께 gemini vision 에 주고 고르게 한다.
+#
+# ⚠ **후보를 버리지는 않는다.** 맞는 장면을 앞으로 올릴 뿐이다 — 고르는 것은 사람이고
+#   (3-2단계 지침서), 한 장도 안 맞는다고 영상 글의 원본 장면을 통째로 빼면 그 글은
+#   다시 그림 생성으로 돌아간다. 하나도 안 맞으면 로그에 남긴다.
+# ⚠ **이 PC 에서는 gemini 쪽이 막혀 있다.** `GEMINI_API_KEY` 에 IP 제한이 걸려 있어 집 IP 로
+#   부르면 403 이다(2026-10-16 확인). 그런데 원클릭 스튜디오는 이 PC 의 :8000 에서 돈다 —
+#   그래서 gemini 가 막히면 **로그인된 codex 세션**(`-i` 로 그림을 받는다. 훅 창고가 표지
+#   글자를 읽을 때 쓰는 길과 같다)으로 같은 것을 묻는다. 서버에서는 gemini 가 열려 더 빠르다.
+# ⚠ 둘 다 실패하면 **선명도 순 그대로** 간다 — 이 단계는 더 나은 순서일 뿐 필수가 아니다.
+
+_FRAME_PICK_HEAD = """X(트위터) 글에 붙은 영상에서 뜬 장면들이다. 이 글의 **표지**로 쓸 수 있는지 본다.
+
+글 내용:
+"""
+_FRAME_PICK_TAIL = """
+
+FRAME 한 장씩 보고 답해라.
+- `what` — 그 장면에 **실제로 보이는 것**을 짧게 적는다. 짐작해서 보태지 마라.
+- `shows` — 글이 말하는 대상(사람·사물·캐릭터·음식·장소·사건)이 그 장면에 보이면 true.
+  배경·질감·바닥·벽·모래·하늘만 찍혔거나, 암전·전환·자막뿐이면 **false** 다. 선명한 것과는 상관없다.
+  표지로 내보냈을 때 글을 모르는 사람이 무엇을 찍은 건지 알 수 없다면 false 다.
+- 전부 false 여도 된다. 한 장은 true 여야 한다고 생각하지 마라.
+"""
+_FRAME_PICK_MODEL = "codex-luna"   # 훅 창고가 표지 글자를 읽을 때와 같은 길
+_FRAME_PICK_SCHEMA = {
+    "type": "object",
+    "properties": {"frames": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"i": {"type": "integer"}, "shows": {"type": "boolean"},
+                       "what": {"type": "string"}},
+        "required": ["i", "shows", "what"],
+        "additionalProperties": False,
+    }}},
+    "required": ["frames"],
+    "additionalProperties": False,
+}
+
+
+async def _ask_frames(paths: list[str], prompt: str) -> dict:
+    """프레임을 **눈으로 보고** 고르게 한다 — gemini vision 먼저, 막히면 codex 세션."""
+    from app.agents.llm_client import MODELS, _call_codex_cli, gemini_vision
+
+    try:
+        raw = await gemini_vision(paths, prompt, max_tokens=800,
+                                  image_labels=[f"FRAME {i}" for i in range(len(paths))])
+        if isinstance(raw, dict) and raw.get("frames"):
+            return raw
+        logger.warning("[x] gemini 답이 모양에 안 맞습니다 — codex 로 다시 묻습니다")
+    except Exception as e:
+        logger.info(f"[x] gemini vision 이 막혀 codex 로 묻습니다 — {str(e)[:120]}")
+    # codex 는 `-i` 로 준 순서대로 그림을 본다 — 번호를 프롬프트에 못박아 둔다.
+    out = await _call_codex_cli(prompt + "\n\n붙인 그림은 FRAME 0 번부터 차례대로다.",
+                                model=MODELS[_FRAME_PICK_MODEL]["cli_model"],
+                                json_schema=_FRAME_PICK_SCHEMA, images=paths, timeout=180)
+    return json.loads(out)
+
+
+async def _judge(frames: list[bytes], text: str) -> list[int]:
+    """장면들을 **눈으로 보고** 글의 주제가 보이는 장 번호만 돌려준다(보이는 순서 그대로).
+
+    못 물어봤거나 한 장도 안 맞으면 빈 목록이다 — 부르는 쪽이 「그대로 둘지 / 버릴지」를 정한다.
+    """
+    if not frames or not (text or "").strip():
+        return []
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for i, blob in enumerate(frames):
+                shot = Path(tmp) / f"f{i}.png"
+                shot.write_bytes(blob)
+                paths.append(str(shot))
+            raw = await _ask_frames(paths, _FRAME_PICK_HEAD + text.strip()[:600] + _FRAME_PICK_TAIL)
+    except Exception as e:
+        logger.warning(f"[x] 장면을 눈으로 못 봤습니다 — {e}")
+        return []
+
+    # ⚠ **고르게 하지 않고 한 장씩 판정하게 한다.** 「맞는 것 번호를 줘」로 물으면 모델이
+    #   하나도 안 맞아도 빈손으로 오기를 꺼려 전부 집어 온다(2026-10-16 온천 영상 —
+    #   「온천이 안 보인다」고 적어 놓고 셋 다 골랐다). true/false 는 그렇게 흔들리지 않는다.
+    picks: list[int] = []
+    for row in ((raw or {}).get("frames") or []):
+        if not isinstance(row, dict):
+            continue
+        n = row.get("i")
+        if not (isinstance(n, int) and not isinstance(n, bool) and 0 <= n < len(frames)):
+            continue
+        if n in picks:
+            continue
+        if row.get("shows") is True:
+            picks.append(n)
+        logger.info(f"[x]  {n}번 — {'주제 보임' if row.get('shows') else '주제 없음'} · "
+                    f"{str(row.get('what') or '').strip()[:60]}")
+    return picks
+
+
+async def video_covers(post_id: str) -> tuple[list[bytes], bool]:
+    """영상·GIF 가 붙은 글의 표지 후보 — 가운데에서 뜬 프레임을 4:5 로 돌려준다.
+
+    돌려주는 것은 **(프레임들, 그 중 주제가 담긴 장이 있었는지)** 다. 두 번째 값이 거짓이면
+    그 영상에는 글의 주제가 안 찍혔다는 뜻이라, 부르는 쪽이 웹 검색(`web_covers`)으로 넘어간다.
+
+    사진이 없는 영상 글도 이걸로 원본 장면을 쓴다. 프레임을 못 뜨면 **첫 화면으로 물러선다**
+    — 번져 있어도 생성 그림보다는 그 글의 장면이다.
+    """
+    tweet = await asyncio.to_thread(_fx_status, post_id)
+    clips = [m for m in ((tweet or {}).get("media") or {}).get("all") or []
+             if m.get("type") in ("video", "gif")]
+    if not clips:
+        return [], False
+
+    made: list[bytes] = []
+    for clip in clips:
+        url = str(clip.get("url") or "")
+        frames = await _best_frames(url, float(clip.get("duration") or 0)) if url else []
+        if not frames:
+            thumb = str(clip.get("thumbnail_url") or "")
+            logger.info(f"[x] 프레임을 못 떠 첫 화면으로 갑니다 — {clip.get('type')} {post_id}")
+            made.extend(await cover_images([thumb]) if thumb else [])
+            continue
+        for blob in frames:
+            try:
+                made.append(await asyncio.to_thread(_crop_cover, blob))
+            except Exception as e:
+                logger.warning(f"[x] 프레임을 4:5 로 못 잘랐습니다 — {e}")
+    # 선명한 것 말고 **주제가 담긴 것**이 앞에 오게 다시 세운다(위 `_judge`).
+    # ⚠ **프레임은 버리지 않는다.** 석 장이 전부라 버리면 그 글이 표지를 잃는다 — 순서만 바꾸고,
+    #   한 장도 안 맞았다는 사실(`fits`)을 함께 올려 보낸다.
+    picks = await _judge(made, str((tweet or {}).get("text") or ""))
+    if picks:
+        logger.info(f"[x] 주제에 맞는 프레임 {picks} 를 앞으로 올립니다")
+        made = [made[n] for n in picks] + [b for i, b in enumerate(made) if i not in picks]
+    else:
+        logger.warning("[x] 주제가 담긴 프레임이 없습니다 — 선명도 순 그대로 둡니다")
+    # 영상이 여럿이어도 표지 후보가 한없이 늘지는 않게 한다 — 사람이 고를 수 있는 양만.
+    return made[:FRAME_PICKS * 2], bool(picks)
+
+
+# ── 영상에 주제가 안 찍혔을 때 — **웹에서 찾아 온다** (2026-10-16 트립앤라이프 지시) ──
+#
+# 「웬만하면 네가 이미지를 찾고 정 안 될 때만 내가 찾는다」. 프레임 석 장이 다 주제를 못 담으면
+# (치이카와 글 — 붙은 영상이 2.4초 모래사장뿐이었다) 그 글은 표지가 빈다. 그때 **주제로 웹
+# 이미지를 찾아** 후보에 올린다. 여기서도 고르는 것은 눈이다 — 받아 온 장을 `_judge` 로 보고
+# **주제가 보이는 것만** 남긴다(웹은 넉넉히 받으니 안 맞는 장은 버린다).
+#
+# ⚠ **구글이 아니다.** 구글은 검색 키가 없고 긁으면 막힌다. `image_search` 의 v2 묶음
+#   (**bing → 네이버 → 위키미디어**)이 같은 웹 이미지를 긁어 온다 — 결과가 구글과 똑같지는 않다.
+# ⚠ 저작권은 보지 않는다(2026-10-16 사람 지시 「저작권은 생각 안 해도 돼」).
+# ⚠ 한 장도 못 건지면 **사람이 직접 넣는다**(같은 날 지시). 그래서 여기서 실패해도 예외를
+#   올리지 않고 빈 목록을 준다 — 생성 그림 후보는 그대로 따로 만들어진다.
+
+WEB_TRIES = 6      # 검색에서 받아 볼 장수. 눈으로 보는 값이라 많이 받을수록 느리다.
+WEB_KEEP = 3       # 후보로 올릴 장수 — 프레임과 같은 수
+NAMU_TRIES = 2     # 나무위키에 따로 떼어 주는 자리. 눈으로 보는 값이라 많이 받을수록 느리다.
+
+# ⚠ **주제 문장을 그대로 검색창에 넣지 않는다.** 2026-10-16 실측 — 「300엔짜리 편의점
+#   도시락이 초라해졌다」로 물으니 bing 이 블로그 썸네일 1장만 줬고 그마저 주제와 무관했다
+#   (「일본 편의점 신상 디저트 화제」는 도쿄타워·성 사진 3장 → 눈 판정에서 0장 통과).
+#   검색 엔진은 긴 말을 흘려 「일본 여행」 류 일반 사진으로 돌려준다. 그래서 **낱말 두세 개로
+#   줄인 검색어**를 만들어 쓰고, 일본 소재는 **일본어 검색어도 함께** 쓴다 — 원래 사진이
+#   올라와 있는 쪽은 일본 웹이다.
+_WORDS_SCHEMA = {
+    "type": "object",
+    "properties": {"queries": {"type": "array", "items": {"type": "string"}}},
+    "required": ["queries"],
+    "additionalProperties": False,
+}
+
+
+async def _search_words(topic: str) -> list[str]:
+    """주제 한 줄을 **이미지 검색용 낱말 묶음 두 개**(한국어·일본어)로 줄인다.
+
+    못 물어봤으면 빈 목록이다 — 부르는 쪽이 주제 문장 그대로 검색한다.
+    """
+    from app.agents.llm_client import llm_json
+
+    prompt = "\n".join([
+        "아래 주제의 **사진을 찾기 위한 이미지 검색어**를 2개 만들어라.",
+        f"주제: {topic.strip()[:200]}",
+        "",
+        "- 1번은 한국어, 2번은 일본어로 쓴다(일본 소재의 원본 사진은 일본 웹에 있다).",
+        "- 문장이 아니라 **낱말 2~4개**다. 조사·서술어·「화제」·「충격」 같은 말은 뺀다.",
+        "  예) 「300엔짜리 편의점 도시락이 초라해졌다」 → 「편의점 도시락」 · 「コンビニ弁当」",
+        "- 사진으로 찍힐 **대상(물건·장소·음식)**만 남긴다. 감정·평가는 사진에 안 찍힌다.",
+        "",
+        '{"queries": ["한국어 검색어", "일본어 검색어"]} 만 돌려준다.',
+    ])
+    try:
+        data = await llm_json(model="codex-sol", messages=[{"role": "user", "content": prompt}],
+                              json_schema=_WORDS_SCHEMA, max_tokens=300)
+    except Exception as e:
+        logger.warning(f"[x] 검색어를 못 줄였습니다 — {topic} ({e})")
+        return []
+    out = [str(q).strip() for q in ((data or {}).get("queries") or []) if str(q).strip()]
+    if out:
+        logger.info(f"[x] 웹 검색어 — {' · '.join(out)}")
+    return out[:2]
+
+
+async def _web_hits(query: str) -> list:
+    """v2 묶음(bing → 네이버 → 위키미디어)으로 한 번 찾는다. 빈손이면 **한 번만** 다시 묻는다.
+
+    bing 은 같은 말로 물어도 빈손일 때가 있다(2026-10-16 실측 — 「東京タワー」가 첫 번에 0건,
+    다시 묻자 3건).
+    """
+    from app.services.image_search import search_all
+
+    for _ in range(2):
+        try:
+            hits = await search_all(query, limit=WEB_TRIES, profile="v2")
+        except Exception as e:
+            logger.warning(f"[x] 웹 이미지 검색이 실패했습니다 — {query} ({e})")
+            return []
+        if hits:
+            return hits
+    return []
+
+
+async def web_covers(query: str, want: int = WEB_KEEP) -> list[bytes]:
+    """주제로 웹 이미지를 찾아 **주제가 보이는 것만** 4:5 로 잘라 돌려준다."""
+    if not (query or "").strip():
+        return []
+    # 검색어마다 **반씩 받는다.** 첫 검색어로 여섯 장을 채우면 일본어 검색어가 아예 안 돌아
+    # 간다 — 2026-10-16 실측에서 「일본 편의점 도시락」은 bing 이 일반 여행 사진만 줬고
+    # 「コンビニ 300円 弁当」은 돌지도 않았다. 눈 판정이 어느 쪽이든 맞는 것만 남긴다.
+    queries = await _search_words(query) or [query]
+    per = max(1, WEB_TRIES // len(queries))
+    hits: list = []
+    for q in queries:
+        hits += (await _web_hits(q))[:per]
+    # 나무위키는 **자리를 따로 떼어 둔다**(2026-10-16 트립앤라이프 「나무위키도 붙여줘」).
+    # v2 체인 꼬리에 달려 있지만 bing 이 여섯 자리를 다 채워 실제로는 돌지 않는다 —
+    # 캐릭터·IP·제품 소재에서는 문서 사진이 bing 의 굿즈 썸네일보다 주제를 담는다
+    # (치이카와 → 문서 이름 「먼작귀」의 단체 그림·치이카와샵 사진). 한국어 위키라 **한국어
+    # 검색어로만** 묻는다.
+    from app.services.image_search import PROVIDERS
+
+    hits += await PROVIDERS["namu"].safe_search(queries[0], NAMU_TRIES)
+    if not hits:
+        logger.warning(f"[x] 웹 검색에 걸린 사진이 없습니다 — {query}")
+        return []
+
+    blobs: list[bytes] = []
+    for hit in hits[:WEB_TRIES + NAMU_TRIES]:
+        url = str(getattr(hit, "source_url", "") or getattr(hit, "thumbnail_url", ""))
+        if not url:
+            continue
+        try:
+            raw = await asyncio.to_thread(_fetch, url)
+            blobs.append(await asyncio.to_thread(_crop_cover, raw))
+        except Exception as e:
+            logger.info(f"[x] 검색 사진을 못 받았습니다 — {url[:80]} ({e})")
+    if not blobs:
+        logger.warning(f"[x] 웹에서 받아온 사진이 없습니다 — {query}")
+        return []
+
+    picks = await _judge(blobs, query)
+    logger.info(f"[x] 웹에서 {len(blobs)}장을 받아 {len(picks)}장이 주제에 맞았습니다 — {query}")
+    return [blobs[n] for n in picks][:want]
 
 
 # ── 본문 칸에 넣을 X 화면 캡처 ─────────────────────────────────────────────

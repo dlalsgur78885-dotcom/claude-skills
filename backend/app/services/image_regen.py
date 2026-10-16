@@ -32,13 +32,18 @@ ASPECT_RATIO = "4:5"
 # (2026-10-15 사람 지시 — 「메인이 되는 영역은 위쪽에 넣어서 생성하도록」).
 # 2026-10-15 추가 지시 — 「음식이 더 잘 보이는 각도 · 그림자 자연스럽게 · 어색하게 잘리지 않고
 # 자연스럽게 이어지도록 · 주변에 있는 쓸데없는것까지 똑같이 생성할 필요 없음」.
+# 2026-10-16 사람 지시 — 「이미지에 글자가 하나도 없어서 어색해보여. 글자까지 생성해줘」.
+# `no text, no logos` 를 뺐다 — 그릇·젓가락집·노렌·메뉴판처럼 **현실에 글자가 있는 자리**는
+# 짧고 또렷하게 넣는다. 깨진 글자·가짜 문자·캐러셀 문구는 여전히 금지이고, 또렷하게 못 쓸
+# 자리는 초점을 흐려 둔다(무지로 비우지 않는다). 위 「clutter」 줄에서도 `menus, signage` 를
+# 뺐다 — 남겨 두면 새 규칙과 부딪힌다. 원본은 `일본맛집_3-2단계_썸네일이미지.md` 「글자」다.
 PROMPT = " ".join([
     "Use this photo only as a reference for the dish and the shop it came from.",
     "Take a NEW photo of that same dish at that same kind of shop — same food and same kind of",
     "serving ware, but freshly framed: do not copy the reference composition, and do not swap in a",
     "different dish.",
-    "Do not reproduce the clutter around the dish in the reference — other tables, bags, menus,",
-    "signage, extra side dishes and anything that is not part of the hero serving can simply be gone.",
+    "Do not reproduce the clutter around the dish in the reference — other tables, bags, flyers,",
+    "extra side dishes and anything that is not part of the hero serving can simply be gone.",
     "Make it look like the single best customer review photo taken on a phone at the table:",
     "shot from slightly above, about 60 degrees, so the food itself reads clearly — the inside of the",
     "bowl, the cut surfaces and the toppings are all visible at a glance,",
@@ -56,7 +61,12 @@ PROMPT = " ".join([
     "consistently with that one light — nothing floating without a shadow, no harsh double shadows,",
     "background only slightly blurred,",
     "clean table — no hands, no people, no crumpled napkins, no spilled crumbs, no empty plates, no clutter,",
-    "unedited phone-camera color, no text, no logos, no watermarks.",
+    "unedited phone-camera color, no watermarks,",
+    "lettering that really belongs in such a scene may stay — a short shop name on the bowl, plate,",
+    "chopstick sleeve or tray, a noren, sign or menu board behind the table — kept short, accurate and",
+    "legible; never render carousel copy, long sentences, broken glyphs, fake characters or distorted",
+    "numbers, and where accurate lettering is not possible let that surface fall out of focus in the",
+    "background instead of wiping it blank.",
 ])
 
 

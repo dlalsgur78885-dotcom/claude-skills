@@ -59,14 +59,24 @@ class BingImageProvider(ImageSearchProvider):
             },
             "follow_redirects": True,
         }
-        if proxy:
-            client_kwargs["proxy"] = proxy
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            r = await client.get(_URL, params=params)
-            r.raise_for_status()
+        async def fetch(use_proxy: bool) -> str:
+            kwargs = dict(client_kwargs)
+            if use_proxy and proxy:
+                kwargs["proxy"] = proxy
+            async with httpx.AsyncClient(**kwargs) as client:
+                r = await client.get(_URL, params=params)
+                r.raise_for_status()
+                return r.text
+
+        body = await fetch(bool(proxy))
+        # ⚠ 프록시로 가면 Bing 이 **빈 결과**를 주는 일이 있다(2026-10-16 이 PC 실측 —
+        #   프록시 0건 / 직접 35건). 프록시는 서버 IP 가 막힐 때 쓰는 것이라, 빈손이면
+        #   한 번 더 **직접** 물어본다. 직접도 막힌 곳(prod)에서는 그대로 빈손이다.
+        if proxy and not _M_RE.search(body):
+            body = await fetch(False)
 
         results: list[ImageResult] = []
-        for m_match in _M_RE.finditer(r.text):
+        for m_match in _M_RE.finditer(body):
             raw = m_match.group(1)
             try:
                 meta = json.loads(html.unescape(raw))

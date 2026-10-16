@@ -389,6 +389,12 @@ export async function renderLayoutToCanvas(
     const showPlaceholderChrome = !isShape || !hasFill;
     const userStroke = d.stroke && (d.stroke_width || 0) > 0;
     const resolvedFill = resolveDecorationFill(fabric, d.fill, w, h);
+    // 투명 도형(`fill: "transparent"`)은 그려지는 것이 없어 편집기에서 집을 수 없다 —
+    // 테두리도 없을 때만 점선 안내선을 긋는다. 플레이스홀더가 아니므로 라벨은 안 붙인다.
+    const transparentFill =
+      isShape && typeof d.fill === "string" &&
+      ["transparent", "none", "rgba(0,0,0,0)"].includes(d.fill.trim().toLowerCase());
+    const showGuideStroke = !userStroke && (showPlaceholderChrome || transparentFill);
 
     const rect = new fabric.Rect({
       left: dx * scale,
@@ -396,10 +402,10 @@ export async function renderLayoutToCanvas(
       width: w,
       height: h,
       fill: resolvedFill ?? (showPlaceholderChrome ? chromeFill : "transparent"),
-      stroke: userStroke ? d.stroke : showPlaceholderChrome ? chromeStroke : undefined,
-      strokeWidth: userStroke ? (d.stroke_width || 0) * scale : showPlaceholderChrome ? 1 : 0,
+      stroke: userStroke ? d.stroke : showGuideStroke ? chromeStroke : undefined,
+      strokeWidth: userStroke ? (d.stroke_width || 0) * scale : showGuideStroke ? 1 : 0,
       strokeUniform: userStroke ? true : undefined,
-      strokeDashArray: !userStroke && showPlaceholderChrome ? [4, 4] : undefined,
+      strokeDashArray: showGuideStroke ? [4, 4] : undefined,
       cornerColor: "#3CC8FF",
       cornerSize: 8,
       transparentCorners: false,

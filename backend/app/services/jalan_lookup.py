@@ -181,6 +181,33 @@ def parse_stars(html: str) -> int | None:
     return found.pop() if len(found) == 1 else None
 
 
+# 숙소 페이지 「アクセス」 칸의 첫 글 — 숙소가 직접 적는 교통 안내다(「地下鉄【東銀座駅】より徒歩1分/…」).
+# ⚠ 같은 칸 아래 이름표(`c-label` 「駅から徒歩5分以内」)는 쟈란의 **분류 이름표**라 역도 분도 틀린다 —
+#   읽지 않는다. 첫 `<div>` 글만 본다. 없으면 머리말의 `<p class="access">` 를 쓴다.
+_ACCESS_CELL_RE = re.compile(r"<th>\s*アクセス\s*</th>\s*<td>\s*<div>(.*?)</div>", re.S)
+_ACCESS_HEAD_RE = re.compile(r'<p class="access">(.*?)</p>', re.S)
+# 「【東銀座駅】より徒歩1分」·「難波駅直結」 — 역 이름 + 걸어서 몇 분(또는 직결).
+_WALK_RE = re.compile(r"([^\s/。、【「]{1,24}?駅)[】」』]?\s*(?:より|から)\s*(?:徒歩|歩いて)\s*約?\s*(\d+)\s*分")
+_DIRECT_RE = re.compile(r"([^\s/。、【「]{1,24}?駅)[】」』]?\s*(?:直結|直通)")
+ACCESS_CHARS = 160
+
+
+def parse_access(html: str) -> str:
+    """숙소 페이지 → 교통 안내 원문 한 줄(전각은 반각으로). 없으면 빈 문자열."""
+    m = _ACCESS_CELL_RE.search(html or "") or _ACCESS_HEAD_RE.search(html or "")
+    if not m:
+        return ""
+    return unicodedata.normalize("NFKC", _text(m.group(1)))[:ACCESS_CHARS]
+
+
+def walk_minutes(access: str) -> list[tuple[str, int | None]]:
+    """교통 안내 원문 → `[(역 이름, 도보 분)]`. 직결은 분이 None 이다. 원문에 적힌 것만 꺼낸다."""
+    t = unicodedata.normalize("NFKC", access or "")
+    out = [(m.group(1), int(m.group(2))) for m in _WALK_RE.finditer(t)]
+    out += [(m.group(1), None) for m in _DIRECT_RE.finditer(t)]
+    return out
+
+
 def _in_peak(d: date) -> bool:
     for (m1, d1), (m2, d2) in _PEAK:
         start = (m1, d1)
@@ -216,8 +243,32 @@ def krw_range(yen: int | None, rate: float | None = None) -> str:
     return f"{man}만원대" if man >= 1 else "1만원 미만"
 
 
+def card_facts(fact: dict[str, Any] | None) -> dict[str, str]:
+    """**낱장·훅을 짓는 프롬프트**에 싣는 값만 — 있는 값만 채우고 없는 칸은 빈 문자열이다.
+
+    `fact_line` 은 판정용이라 「쟈란 … 조회 중 가장 싼 1박」·「성급 확인 못 함」처럼 출처·조회 이야기가
+    붙는다. 그걸 글 짓는 프롬프트에 그대로 실었더니 모델이 **그 말을 낱장에 옮겨 적었다**(2026-10-16
+    d44f 회차 — 「성급·요금 미확인 호텔」·「쟈란 조회 최저가는 2인 1박 27만원대였어」). 그래서 여기는
+    출처·날짜·「못 함」 없이 값만 준다. 없는 값을 어떻게 다룰지는 부르는 쪽이 **지시문으로** 말한다.
+    """
+    f = fact or {}
+    yen = f.get("min_yen")
+    per = krw_range(yen // 2) if yen else ""
+    walk = " · ".join(f"{st} {'직결' if mins is None else f'도보 {mins}분'}"
+                      for st, mins in walk_minutes(str(f.get("access") or "")))
+    return {
+        "stars": f"{f['stars']}성급" if f.get("stars") else "",
+        "price": (f"2인 1실 {krw_range(yen)}" + (f"(1인 {per})" if per else "")) if yen else "",
+        "access": walk,
+    }
+
+
 def fact_line(fact: dict[str, Any] | None) -> str:
-    """프롬프트에 싣는 한 줄 — 성급 · 2인 최저가 범위 · 조회 날짜. 못 찾은 칸은 「확인 못 함」이다."""
+    """**판정용** 한 줄 — 성급 · 2인 최저가 범위 · 조회 날짜 · 교통. 못 찾은 칸은 「확인 못 함」이다.
+
+    ⚠ 주제 값 대조(`studio_steps._confirm_lodging`)에만 쓴다. 글 짓는 프롬프트(훅·본문)에는 싣지 않는다 —
+    모델이 「쟈란 조회」·「미확인」을 낱장에 옮긴다(2026-10-16 d44f 회차). 그쪽은 `card_facts` 다.
+    """
     if not fact:
         return "성급 확인 못 함 · 요금 확인 못 함(쟈란에서 이 숙소를 찾지 못했다)"
     stars = f"{fact['stars']}성급(쟈란 표기)" if fact.get("stars") else "성급 확인 못 함"
@@ -229,7 +280,11 @@ def fact_line(fact: dict[str, Any] | None) -> str:
                  + f" — 쟈란 {days} 숙박 조회 중 가장 싼 1박")
     else:
         price = f"요금 확인 못 함(쟈란 {days} 조회에 빈방·요금이 없었다)" if days else "요금 확인 못 함"
-    return f"{stars} · {price}"
+    access = str(fact.get("access") or "").strip()
+    walk = " · ".join(f"{st} {'직결' if mins is None else f'도보 {mins}분'}"
+                      for st, mins in walk_minutes(access))
+    route = (f"교통(쟈란 원문) 「{access}」" + (f" → {walk}" if walk else "")) if access else "교통 확인 못 함"
+    return f"{stars} · {price} · {route}"
 
 
 # ─── 네트워크 ───────────────────────────────────────────────────────────────
@@ -288,6 +343,9 @@ async def _lookup(client: httpx.AsyncClient, gate: asyncio.Semaphore,
         "min_yen": min(got) if got else None,
         "dates": [d.isoformat() for d in days],
         "stars": parse_stars(top),
+        # 역 거리·역 연결 — 주제 확인(`studio_steps._confirm_lodging`)이 이 원문으로 판정한다.
+        # 같은 페이지(성급을 읽는 그 페이지)에서 함께 읽는다 — 한 번 더 열지 않는다.
+        "access": parse_access(top),
     }
     logger.info(f"[jalan] {place.get('name')} → yad{yad} · 최저 {fact['min_yen']}엔 · 성급 {fact['stars']}")
     return fact

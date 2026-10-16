@@ -222,6 +222,16 @@ function SliderRow({
  * "팔레트 안에서 연속 변화" 요구를 만족 못 한다. 이 컴포넌트는 swatch만 노출
  * 하고 클릭 시 같은 패널 안에 picker를 띄워, 드래그 중에도 onChange가 연속
  * 발화하고 외부 클릭으로만 닫힌다. */
+/** 칠하지 않는 값 — fabric 이 그대로 알아듣는 `transparent` 로 저장한다.
+ *  빈 문자열은 못 쓴다: 서버 렌더러가 브랜드 색이나 흰색으로 되메운다
+ *  (`carousel_renderer.py` 의 `dec.get("fill") or brand... or "#FFFFFF"`). */
+const TRANSPARENT_FILL = "transparent";
+
+function isTransparentFill(v: string | undefined | null): boolean {
+  const s = (v || "").trim().toLowerCase();
+  return s === "transparent" || s === "none" || s === "rgba(0,0,0,0)";
+}
+
 function InlineColorPicker({
   value,
   onChange,
@@ -235,6 +245,10 @@ function InlineColorPicker({
   const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const swatchRef = useRef<HTMLDivElement | null>(null);
   const display = /^#[0-9a-fA-F]{6}$/.test(value || "") ? (value as string) : "#000000";
+  // 투명은 색이 아니라 "칠하지 않음"이다 — 색 대신 체크무늬를 보여준다.
+  const swatchBg = isTransparentFill(value)
+    ? "repeating-conic-gradient(var(--text-tertiary) 0% 25%, transparent 0% 50%) 50% / 10px 10px"
+    : display;
 
   function toggle() {
     if (!open && swatchRef.current) {
@@ -280,7 +294,7 @@ function InlineColorPicker({
         style={{
           width: size, height: size, borderRadius: 4,
           border: "1px solid var(--border)",
-          background: display,
+          background: swatchBg,
           cursor: "pointer",
           display: "inline-block",
         }}
@@ -308,16 +322,51 @@ function ColorRow({
   label,
   value,
   onChange,
+  allowTransparent = false,
 }: {
   label: string;
   value: string | undefined;
   onChange: (s: string) => void;
+  /** 「투명」 단추를 붙인다 — 칠하지 않는 도형을 만들 수 있게 (피드백 2026-10-16). */
+  allowTransparent?: boolean;
 }) {
+  const transparent = isTransparentFill(value);
+  // 투명으로 바꿀 때 그 전 색을 적어 두고, 되돌릴 때 그 색으로 돌아간다.
+  const [lastColor, setLastColor] = useState("#FFFFFF");
   return (
     <div>
       <label style={LABEL_STYLE}>{label}</label>
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <InlineColorPicker value={value} onChange={onChange} size={32} />
+        {allowTransparent && (
+          <button
+            type="button"
+            aria-pressed={transparent}
+            title={transparent ? "색으로 되돌리기" : "칠하지 않기(투명)"}
+            onClick={() => {
+              if (transparent) {
+                onChange(lastColor);
+                return;
+              }
+              if (/^#[0-9a-fA-F]{6}$/.test(value || "")) setLastColor(value as string);
+              onChange(TRANSPARENT_FILL);
+            }}
+            style={{
+              height: 28,
+              padding: "0 8px",
+              fontSize: 11,
+              whiteSpace: "nowrap",
+              background: transparent ? "var(--accent)" : "var(--bg-overlay)",
+              color: transparent ? "white" : "var(--text-tertiary)",
+              border: "1px solid",
+              borderColor: transparent ? "var(--accent)" : "var(--border)",
+              borderRadius: 5,
+              cursor: "pointer",
+            }}
+          >
+            투명
+          </button>
+        )}
         <input
           type="text"
           value={value || ""}
@@ -1524,9 +1573,11 @@ function SelectionEditor({
                 <option value="subheadline">subheadline · 소제목</option>
                 <option value="subheadline2">subheadline2 · 소제목 2</option>
                 <option value="subheadline3">subheadline3 · 소제목 3</option>
+                <option value="subheadline4">subheadline4 · 소제목 4</option>
                 <option value="body">body · 본문</option>
                 <option value="body2">body2 · 본문 2</option>
                 <option value="body3">body3 · 본문 3</option>
+                <option value="body4">body4 · 본문 4</option>
                 <option value="tag">tag · 태그</option>
                 <option value="footer">footer · 하단</option>
               </select>
@@ -1592,7 +1643,13 @@ function SelectionEditor({
             <WHGrid basePath={`${selected.path}.size`} vals={{ width: d?.size?.width, height: d?.size?.height }} onChange={onChange} lockPath={`${selected.path}.lock_aspect`} locked={!!d?.lock_aspect} />
             {/* 3. 색상 */}
             {!fillIsGradient && (
-              <ColorRow label="색상" value={solidFill || ""} onChange={(v) => onChange(`${selected.path}.fill`, v)} />
+              <ColorRow
+                label="색상"
+                value={solidFill || ""}
+                onChange={(v) => onChange(`${selected.path}.fill`, v)}
+                /* 도형은 투명(칠하지 않음)이 된다 — 테두리만 있는 알약·틀을 만들 때 쓴다. */
+                allowTransparent={d?.kind === "shape"}
+              />
             )}
             {/* 라운드 — shape rect·이미지 칸 모서리 둥글기 (피드백 14-8) */}
             {(d?.kind === "shape" || d?.kind === "image") && (

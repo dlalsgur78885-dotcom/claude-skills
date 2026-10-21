@@ -18,12 +18,19 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { chromium } = require('../frontend/node_modules/playwright');
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const url = process.argv[2];
 const findAt = process.argv.indexOf('--find');
 const needle = findAt > 0 ? (process.argv[findAt + 1] || '').trim() : '';
+const koAt = process.argv.indexOf('--ko');
+// `--ko <파일.json>` — 좋아요 많은 순으로 i 번째 댓글에 i 번째 한국어를 갈아 끼운다.
+// X 답글 카드(`x-reply-card.mjs`)와 같은 규칙이다. 수가 모자라면 그 카드는 원문 그대로.
+const KO = koAt > 0 ? JSON.parse(readFileSync(process.argv[koAt + 1], 'utf8')) : null;
+const widthAt = process.argv.indexOf('--width');
+// 기본 760. 여러 장을 1080 낱장에 쌓으면 글자가 작아져 좁게 찍는다(2026-10-21).
+const vw = widthAt > 0 ? Number(process.argv[widthAt + 1] || 760) : 760;
 const stackAt = process.argv.indexOf('--stack');
 const stack = stackAt > 0 ? Number(process.argv[stackAt + 1] || 3) : 0;
 const want = needle ? 1 : Number(process.argv[3] || 6);
@@ -49,7 +56,7 @@ try {
   const page = await browser.newPage({
     deviceScaleFactor: SCALE,
     // 카드가 가로로 길면 1080×1350 낱장에 넣을 때 글자가 작아진다. 좁게 연다.
-    viewport: { width: 760, height: 1600 },
+    viewport: { width: vw, height: 1600 },
     locale: 'ko-KR',
   });
   await page.goto(`${url}${url.includes('?') ? '&' : '?'}hl=ko&gl=KR`, {
@@ -79,7 +86,9 @@ try {
     for (const b of document.querySelectorAll('ytd-comment-thread-renderer tp-yt-paper-button#more')) b.click();
     // 답글 줄·버튼은 카드에 들어가면 안 된다.
     for (const el of document.querySelectorAll(
-      'ytd-comment-thread-renderer #replies, ytd-comment-thread-renderer ytd-button-renderer#reply-button-end',
+      'ytd-comment-thread-renderer #replies, ytd-comment-thread-renderer ytd-button-renderer#reply-button-end,'
+      // 편 뒤에 남는 「간략히」가 카드 안에 같이 찍힌다(2026-10-21).
+      + ' ytd-comment-thread-renderer tp-yt-paper-button#less',
     )) el.style.display = 'none';
   });
   await page.waitForTimeout(800);
@@ -111,17 +120,27 @@ try {
     const pic = el.querySelector('#author-thumbnail');
     if (pic) pic.style.filter = 'blur(6px)';
   });
+  // 글을 한국어로 갈아 끼운다 — 줄바꿈은 살리고 나머지 자식 노드는 지운다.
+  const swap = async (card, korean) => card.evaluate((el, ko) => {
+    const box = el.querySelector('#content-text');
+    if (!box || !ko) return false;
+    box.textContent = ko;
+    return true;
+  }, korean);
   const read = async (card) => ({
     text: (await card.locator('#content-text').first().innerText().catch(() => '')).trim(),
     likes: (await card.locator('#vote-count-middle').first().innerText().catch(() => '')).trim(),
   });
 
   if (!stack) {
+    let n = -1;
     for (const { i } of picks) {
+      n += 1;
       const card = thread.nth(i);
       await card.scrollIntoViewIfNeeded();
       await page.waitForTimeout(400);
       const { text, likes } = await read(card);
+      if (KO && KO[n]) await swap(card, KO[n]);
       await blur(card);
       const out = path.join(OUT_DIR, `ytc-${Date.now()}-${i + 1}.png`);
       await card.screenshot({ path: out });
@@ -131,11 +150,14 @@ try {
     // 묶어 찍기 — 고른 댓글만 남기고 나머지는 숨긴 뒤 **댓글 목록을 통째로** 찍는다.
     // 잘라 붙이지 않는다. 유튜브가 그린 화면 그대로여야 캡처로 보인다.
     const rows = [];
+    let n = -1;
     for (const { i } of picks) {
+      n += 1;
       const card = thread.nth(i);
       await card.scrollIntoViewIfNeeded();
       await page.waitForTimeout(300);
       rows.push({ i, ...(await read(card)) });
+      if (KO && KO[n]) await swap(card, KO[n]);
       await blur(card);
     }
     for (let g = 0; g < rows.length; g += stack) {

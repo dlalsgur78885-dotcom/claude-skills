@@ -40,6 +40,14 @@ async def _hydrate_source_url(carousel: GeneratedCarousel, db: AsyncSession) -> 
             select(CollectedPost.post_url).where(CollectedPost.id == carousel.source_post_id)
         )
         source_url = post.scalar_one_or_none()
+    if not source_url:
+        # 원클릭 스튜디오로 만든 캐러셀에는 CollectedPost 행이 없다 — X 게시물처럼
+        # 밖에서 가져온 원본 주소는 canvas_data["source_url"] 에 들어 있다
+        # (backend/app/services/studio_steps.py build).
+        canvas_data = carousel.canvas_data or {}
+        stored = canvas_data.get("source_url") if isinstance(canvas_data, dict) else None
+        if isinstance(stored, str) and stored.strip():
+            source_url = stored.strip()
     base = CarouselResponse.model_validate(carousel)
     base.source_post_url = source_url
     return base
@@ -192,6 +200,21 @@ def _guard_canvas_data(new_cd: dict, old_cd: dict | None) -> dict:
     return guarded
 
 
+def _keep_source_url(new_cd: dict, old_cd: dict | None) -> dict:
+    """자동저장이 ``canvas_data["source_url"]`` 을 지우지 않게 한다.
+
+    편집기는 canvas_data 를 **자기가 아는 키만** 담아 통째로 다시 쓴다. 원본 주소는 그
+    목록에 없어서 첫 자동저장(마운트 1초 뒤)에 사라지고, 툴바의 「원본 링크 보기」도
+    함께 없어진다. 들어온 값에 없으면 저장된 값을 남긴다.
+    """
+    if not isinstance(new_cd, dict) or not isinstance(old_cd, dict):
+        return new_cd
+    stored = old_cd.get("source_url")
+    if new_cd.get("source_url") or not isinstance(stored, str) or not stored.strip():
+        return new_cd
+    return {**new_cd, "source_url": stored}
+
+
 @router.patch("/{carousel_id}", response_model=CarouselResponse)
 async def update_carousel(
     carousel_id: int,
@@ -212,6 +235,7 @@ async def update_carousel(
     for field, value in data.model_dump(exclude_unset=True).items():
         if field == "canvas_data" and value is not None:
             value = _guard_canvas_data(value, carousel.canvas_data)
+            value = _keep_source_url(value, carousel.canvas_data)
         setattr(carousel, field, value)
 
     await db.commit()

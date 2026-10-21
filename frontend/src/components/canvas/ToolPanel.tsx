@@ -31,8 +31,8 @@ interface ToolPanelProps {
   onSaveCaption?: (caption: string, hashtags: string[]) => Promise<void> | void;
   // Instagram URL of the benchmark post this carousel was generated from.
   // When present, the toolbar surfaces a "원본 링크 보기" button right below
-  // the caption button so users can pop the source open in a new tab without
-  // backtracking through the works list.
+  // the CTA button (moved there 2026-10-20 on the owner's request) so users can
+  // pop the source open in a new tab without backtracking through the works list.
   sourcePostUrl?: string;
   // CTA image — registered once on the backend, then dropped onto a fresh
   // last slide. This panel owns registration/persistence; the canvas owns the
@@ -453,64 +453,6 @@ export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOver
             </svg>
             <span style={{ flex: 1 }}>캡션 보기</span>
           </button>
-          {sourcePostUrl && (
-            <a
-              href={sourcePostUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="이 캐러셀의 원본 인스타그램 게시물 열기 (새 탭)"
-              style={{
-                ...btnStyle,
-                marginTop: 6,
-                fontSize: 12,
-                textDecoration: "none",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "var(--bg-overlay)";
-                e.currentTarget.style.borderColor = "var(--border-strong)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "transparent";
-                e.currentTarget.style.borderColor = "var(--border)";
-              }}
-            >
-              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
-              </svg>
-              <span style={{ flex: 1 }}>원본 링크 보기</span>
-            </a>
-          )}
-        </div>
-      )}
-      {!captionText && !tagList.length && !onSaveCaption && sourcePostUrl && (
-        // Even without a caption section, still show the original-link button
-        // — the user feedback was scoped to the editor toolbar, not "only when
-        // caption is present". Render a slim standalone block.
-        <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
-          <a
-            href={sourcePostUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="이 캐러셀의 원본 인스타그램 게시물 열기 (새 탭)"
-            style={{
-              ...btnStyle,
-              fontSize: 12,
-              textDecoration: "none",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "var(--bg-overlay)";
-              e.currentTarget.style.borderColor = "var(--border-strong)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "transparent";
-              e.currentTarget.style.borderColor = "var(--border)";
-            }}
-          >
-            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
-            </svg>
-            <span style={{ flex: 1 }}>원본 링크 보기</span>
-          </a>
         </div>
       )}
 
@@ -540,6 +482,37 @@ export function ToolPanel({ onAddText, onAddRect, onAddCircle, onAddGradientOver
           </button>
         </div>
       )}
+
+      {/* 원본 링크 — 사람 지시(2026-10-20)로 CTA 버튼 **아래**에 둔다.
+          캐러셀에 연결된 원본 게시물이 있을 때만 보인다(source_post_url). */}
+      {sourcePostUrl && (
+        <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+          <p style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8, paddingLeft: 2 }}>
+            원본
+          </p>
+          <a
+            href={sourcePostUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="이 캐러셀의 원본 게시물 열기 (새 탭)"
+            style={{ ...btnStyle, fontSize: 12, textDecoration: "none" }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--bg-overlay)";
+              e.currentTarget.style.borderColor = "var(--border-strong)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.borderColor = "var(--border)";
+            }}
+          >
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+            </svg>
+            <span style={{ flex: 1 }}>원본 링크 보기</span>
+          </a>
+        </div>
+      )}
+
 
       {onAddCta && ctaOpen && (
         <div

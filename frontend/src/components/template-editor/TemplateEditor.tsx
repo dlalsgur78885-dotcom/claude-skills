@@ -318,10 +318,17 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
         if (!obj) return;
         const t = String(obj.type || "").toLowerCase();
         if (t === "activeselection") {
+          // 묶음을 끈 것인지 크기를 바꾼 것인지 구분한다 — 크기를 바꿨을 때만
+          // 폭·높이를 함께 기록한다(글상자 높이는 글 내용에 따라 자동이라
+          // 단순 이동에서까지 덮어쓰면 엉뚱한 값이 박힌다).
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const ev = e as any;
+          const action = String(ev?.action || ev?.transform?.action || "");
+          const resized = /^(scale|resiz)/.test(action);
           // Multi-object move: an ActiveSelection has no spec path, so the
           // single-object path below would drop it. Discard → absolute coords,
-          // write every member back to the spec, then re-group. (Position only;
-          // multi-resize isn't persisted — same as before this change.)
+          // write every member back to the spec, then re-group. 크기를 바꾼
+          // 조작이면 폭·높이까지 함께 기록한다.
           //
           // Deferred: object:modified fires INSIDE fabric's mouse-up pipeline,
           // and discarding/replacing the active selection there desyncs the
@@ -332,7 +339,7 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
             if (!members.length) return;
             aligningRef.current = true;
             canvas.discardActiveObject();
-            bakeMoves(members);
+            bakeMoves(members, resized);
             reselectObjects(members).then(() => {
               aligningRef.current = false;
               refreshSelBox(false);
@@ -684,9 +691,12 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
   }
 
   /** Write each object's new (absolute) position back into the spec in ONE
-   *  commit. Position-only — align/distribute never resize. Caller must have
-   *  discarded the active selection first so left/top are absolute. */
-  function bakeMoves(objs: any[]) {
+   *  commit. 기본은 위치만 — align/distribute 는 크기를 건드리지 않는다.
+   *  `withSize` 는 여러 개를 묶어 크기를 바꿨을 때만 켠다. 그 전엔 묶음 크기
+   *  조절이 저장되지 않아 다시 그릴 때 원래 크기로 돌아갔다(2026-10-21).
+   *  Caller must have discarded the active selection first so left/top are
+   *  absolute. */
+  function bakeMoves(objs: any[], withSize = false) {
     const sc = scaleRef.current;
     const prev = templateRef.current;
     let next: TemplateData = prev;
@@ -695,12 +705,32 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
       if (!meta?.path) continue;
       const x = Math.round((o.left || 0) / sc);
       const y = Math.round((o.top || 0) / sc);
+      const w = Math.round((o.width || 0) * (o.scaleX || 1) / sc);
+      const h = Math.round((o.height || 0) * (o.scaleY || 1) / sc);
+      // 늘인 배율을 폭·높이에 녹여 다음 조작이 scaleX=1 에서 시작하게 한다
+      // (한 개짜리 applyMovementToTemplate 과 같은 처리). 이미지의 width 는
+      // 원본 비트맵 픽셀 수라 건드리지 않는다.
+      if (withSize && o.type !== "image" && (o.scaleX !== 1 || o.scaleY !== 1)) {
+        o.set({
+          width: (o.width || 0) * (o.scaleX || 1),
+          height: (o.height || 0) * (o.scaleY || 1),
+          scaleX: 1,
+          scaleY: 1,
+        });
+        o.setCoords();
+      }
       if (meta.kind === "text_slot" || meta.kind === "decoration") {
         next = setByPath(next, `${meta.path}.position.x`, x) as TemplateData;
         next = setByPath(next, `${meta.path}.position.y`, y) as TemplateData;
+        if (withSize && w > 0) next = setByPath(next, `${meta.path}.size.width`, w) as TemplateData;
+        if (withSize && h > 0) next = setByPath(next, `${meta.path}.size.height`, h) as TemplateData;
       } else {
         next = setByPath(next, `${meta.path}.x`, x) as TemplateData;
         next = setByPath(next, `${meta.path}.y`, y) as TemplateData;
+        if (withSize && meta.kind === "grid_image") {
+          if (w > 0) next = setByPath(next, `${meta.path}.width`, w) as TemplateData;
+          if (h > 0) next = setByPath(next, `${meta.path}.height`, h) as TemplateData;
+        }
       }
     }
     templateRef.current = next;
@@ -812,34 +842,48 @@ export function TemplateEditor({ templateId, template: initial, onSave, onClose 
   // template", regardless of the editor's zoom-to-fit scale. shift+arrow
   // bumps it to 10px in the caller.
   function nudgeSelected(dx: number, dy: number) {
-    if (!selectedMeta || !fabricRef.current) return;
-    const active = fabricRef.current.getActiveObject();
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const active = canvas.getActiveObject();
     if (!active) return;
+    // 여러 개를 골라 놓고 방향키를 누르면 화면에선 전부 따라 움직이는데,
+    // 예전엔 첫 번째 것만 좌표를 기록해 나머지는 다음 그리기에서 제자리로
+    // 되돌아갔다 — 고른 것 전부를 한 번의 commit 으로 옮긴다.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const objs: any[] = ((canvas.getActiveObjects?.() || []) as any[]).filter((o) => o?.data?.path);
+    if (!objs.length) return;
+    const sc = scaleRef.current;
     const prev = templateRef.current;
-    const node = getByPath(prev, selectedMeta.path) as Record<string, unknown> | undefined;
-    if (!node) return;
 
     // Move the fabric object in place so the canvas updates instantly without
-    // a teardown/rebuild — same idea as drag.
-    active.left = (active.left || 0) + dx * scale;
-    active.top = (active.top || 0) + dy * scale;
+    // a teardown/rebuild — same idea as drag. (ActiveSelection 이면 묶음째 움직인다.)
+    active.left = (active.left || 0) + dx * sc;
+    active.top = (active.top || 0) + dy * sc;
     active.setCoords();
-    fabricRef.current.requestRenderAll();
+    canvas.requestRenderAll();
 
     let next: TemplateData = prev;
-    if (selectedMeta.kind === "text_slot" || selectedMeta.kind === "decoration") {
-      const pos = (node as { position?: { x?: number; y?: number } }).position || {};
-      next = setByPath(prev, `${selectedMeta.path}.position.x`, (pos.x || 0) + dx) as TemplateData;
-      next = setByPath(next, `${selectedMeta.path}.position.y`, (pos.y || 0) + dy) as TemplateData;
-    } else if (selectedMeta.kind === "grid_origin" || selectedMeta.kind === "grid_image") {
-      const n = node as { x?: number; y?: number };
-      next = setByPath(prev, `${selectedMeta.path}.x`, (n.x || 0) + dx) as TemplateData;
-      next = setByPath(next, `${selectedMeta.path}.y`, (n.y || 0) + dy) as TemplateData;
-    } else {
-      return;
+    for (const o of objs) {
+      const meta: FabricMeta = o.data;
+      const node = getByPath(next, meta.path) as Record<string, unknown> | undefined;
+      if (!node) continue;
+      if (meta.kind === "text_slot" || meta.kind === "decoration") {
+        const pos = (node as { position?: { x?: number; y?: number } }).position || {};
+        next = setByPath(next, `${meta.path}.position.x`, (pos.x || 0) + dx) as TemplateData;
+        next = setByPath(next, `${meta.path}.position.y`, (pos.y || 0) + dy) as TemplateData;
+      } else if (meta.kind === "grid_origin" || meta.kind === "grid_image") {
+        const n = node as { x?: number; y?: number };
+        next = setByPath(next, `${meta.path}.x`, (n.x || 0) + dx) as TemplateData;
+        next = setByPath(next, `${meta.path}.y`, (n.y || 0) + dy) as TemplateData;
+      }
     }
+    if (next === prev) return;
+    // 연달아 누를 때 다음 누름이 아직 반영 안 된 state 를 읽고 앞의 이동을
+    // 덮어쓰지 않도록 ref 를 즉시 갱신한다 (patchTemplate 과 같은 이유).
+    templateRef.current = next;
     skipRenderRef.current = true;
     commit(next, JSON.stringify(prev));
+    refreshSelBox(false);
   }
 
   function addTextSlot() {

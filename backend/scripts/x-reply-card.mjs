@@ -10,7 +10,8 @@
 //   5. 쓴 사람 한 줄만 블러 (프로필 사진·이름·인증 배지·아이디·팔로우하기)
 //
 // 쓰는 법 (stdin 으로 JSON · 표준출력으로 PNG 경로 한 줄):
-//   echo '{"id":"123","korean":"...","views":8201,"replies":1,"reposts":1,"likes":20,"out":"C:/tmp/a.png"}' \
+//   echo '{"id":"123","korean":"...","views":8201,"replies":1,"reposts":1,"likes":20,"out":"C:/tmp/a.png"}' //     | node backend/scripts/x-reply-card.mjs
+//   `"compact":true` 를 주면 **게시 시각·조회수 줄에서 끊는다**(수치 줄·버튼 줄 없음).
 //     | node backend/scripts/x-reply-card.mjs
 //
 // playwright 는 이 레포에 없다 — 봇 폴더에 깔린 것을 쓴다. 그 경로는 `PW_ENTRY` 로 받는다
@@ -77,7 +78,8 @@ try {
       time.closest('span')?.parentElement?.appendChild(s);
     }
     // 4. 수치 줄 — 답글 · 재게시 · 마음에 들어요
-    if (timeRow) {
+    //    `compact` 면 붙이지 않는다 — 시각 줄에서 자르기 때문이다(아래 6).
+    if (timeRow && !job.compact) {
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;gap:18px;padding:12px 0 2px;'
         + 'font:400 15px/20px system-ui,-apple-system,"Segoe UI",sans-serif;color:#536471;';
@@ -92,9 +94,14 @@ try {
     while (head && !(head.innerText || '').includes('@')) head = head.parentElement;
     if (head) head.style.filter = 'blur(5px)';
 
+    // 6. `compact` — 좋아요·답글 버튼 줄까지 넣으면 면적이 너무 넓다(2026-10-21 트립앤라이프).
+    //    게시 시각·조회수 줄에서 끊는다. 여러 장을 쌓아 한 판으로 만들 때 쓴다.
+    const cut = job.compact && timeRow ? timeRow.getBoundingClientRect().bottom + 14 : null;
+
     return {
       outer: outer.getBoundingClientRect().toJSON(),
       parentBottom: parent ? parent.getBoundingClientRect().bottom : null,
+      cut,
       blurred: !!head,
     };
   }, job);
@@ -103,9 +110,10 @@ try {
   const o = geo.outer;
   // 원글 카드가 끝나는 자리부터 찍는다 — 없으면 카드 처음부터.
   const top = geo.parentBottom ?? o.top;
+  const bottom = geo.cut ?? o.bottom;
   await page.screenshot({
     path: job.out,
-    clip: { x: o.x, y: top, width: o.width, height: o.bottom - top },
+    clip: { x: o.x, y: top, width: o.width, height: bottom - top },
   });
   if (!geo.blurred) process.stderr.write('⚠ 쓴 사람 줄을 찾지 못해 블러를 못 넣었습니다.\n');
   process.stdout.write(job.out + '\n');

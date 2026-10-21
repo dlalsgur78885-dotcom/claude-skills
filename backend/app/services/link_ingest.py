@@ -50,6 +50,9 @@ SOURCE_WEB = "web"
 WEB_MAX_PHOTOS = 10
 # 본문 글은 훅·요약 재료다. 페이지 전체를 실으면 codex 토큰만 먹는다.
 WEB_MAX_TEXT = 2000
+# 페이지에서 모아 둘 트윗 id 상한. 캡처는 두 장까지 쓰지만(`studio_worker`) 앞쪽 글이
+# 캡처에 안 맞을 때(삭제·영상) 다음 것으로 넘어갈 여유를 둔다.
+WEB_MAX_X_IDS = 10
 # 사진 한 장 상한. 이보다 큰 것은 본문 사진이 아니라 내려받기 파일일 가능성이 크다.
 MAX_PHOTO_BYTES = 20 * 1024 * 1024
 
@@ -263,7 +266,19 @@ async def _from_web(url: str) -> dict[str, Any]:
         "views": 0,
         "likes": 0,
         "replies": 0,
+        # 토게터처럼 **트윗을 모아 놓은 페이지**는 그 글들의 id 를 함께 들고 나간다.
+        # 글만 있는 장을 캡처로 채울 때 쓴다(`studio_worker._attach_captures`).
+        "x_ids": _x_ids(article or html),
     }
+
+
+def _x_ids(html: str) -> list[str]:
+    """페이지에 붙어 있는 **트윗 id** — 나온 순서대로, 중복은 뺀다.
+
+    토게터는 화제 하나가 트윗 수십 개로 되어 있다. 글만 있는 장은 우리가 타이핑하지 않고
+    그 트윗 임베드를 그대로 찍어 쓰므로(`_유형공통.md` 「낱장 조합」), 여기서 id 만 모아 둔다.
+    """
+    return list(dict.fromkeys(_X_STATUS_RE.findall(html)))[:WEB_MAX_X_IDS]
 
 
 def _decode(r: httpx.Response) -> str:

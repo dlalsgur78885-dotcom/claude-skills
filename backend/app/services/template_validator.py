@@ -47,11 +47,17 @@ def _clamp(v: int | float, lo: int | float, hi: int | float) -> int:
     return int(max(lo, min(hi, v)))
 
 
-def validate_and_fix_template(template: dict[str, Any], *, deoverlap: bool = True) -> dict[str, Any]:
+def validate_and_fix_template(
+    template: dict[str, Any], *, deoverlap: bool = True, clamp: bool = True,
+) -> dict[str, Any]:
     """Apply all structural corrections to a Gemini-generated template dict.
 
     Order matters: canvas first (everything else clamps to canvas), then per-layout
     fixes. Returns the same dict for fluent use.
+
+    `clamp=False` 는 사람이 편집기에서 저장할 때 쓴다. 캔버스 밖으로 걸쳐 둔 사진·도형을
+    잘라내거나 음수 좌표를 0 으로 되돌리지 않는다 — 그 보정이 「끌어다 놨는데 자꾸
+    어긋난다」의 원인이었다(2026-10-21). 생성 단계에선 켜 둔 채로 쓴다.
     """
     canvas = template.get("canvas") or {}
     W = int(canvas.get("width") or 1080)
@@ -65,8 +71,8 @@ def validate_and_fix_template(template: dict[str, Any], *, deoverlap: bool = Tru
         _normalize_background_type(layout, layout_name)
         _dedupe_decorations(layout, layout_name)
         _dedupe_text_slots(layout, layout_name)
-        _fix_decorations(layout, W, H, layout_name)
-        _fix_text_slots(layout, W, H, layout_name, deoverlap=deoverlap)
+        _fix_decorations(layout, W, H, layout_name, clamp=clamp)
+        _fix_text_slots(layout, W, H, layout_name, deoverlap=deoverlap, clamp=clamp)
         _fix_grid(layout, W, H, layout_name)
 
     return template
@@ -147,15 +153,21 @@ def _dedupe_text_slots(layout: dict, layout_name: str) -> None:
     layout["text_slots"] = out
 
 
-def _fix_decorations(layout: dict, W: int, H: int, layout_name: str) -> None:
+def _fix_decorations(layout: dict, W: int, H: int, layout_name: str, *, clamp: bool = True) -> None:
     for d in layout.get("decorations") or []:
         _normalize_anchor(d)
         pos = d.get("position") or {}
         size = d.get("size") or {}
-        x = _clamp(pos.get("x", 0) or 0, 0, W)
-        y = _clamp(pos.get("y", 0) or 0, 0, H)
-        w = _clamp(size.get("width", 0) or 0, 0, W - x)
-        h = _clamp(size.get("height", 0) or 0, 0, H - y)
+        if clamp:
+            x = _clamp(pos.get("x", 0) or 0, 0, W)
+            y = _clamp(pos.get("y", 0) or 0, 0, H)
+            w = _clamp(size.get("width", 0) or 0, 0, W - x)
+            h = _clamp(size.get("height", 0) or 0, 0, H - y)
+        else:
+            x = int(pos.get("x", 0) or 0)
+            y = int(pos.get("y", 0) or 0)
+            w = int(size.get("width", 0) or 0)
+            h = int(size.get("height", 0) or 0)
         d["position"] = {**pos, "x": x, "y": y}
         d["size"] = {**size, "width": w, "height": h}
 
@@ -191,7 +203,9 @@ def _normalize_anchor(item: dict) -> None:
     pos["anchor"] = "top-left"
 
 
-def _fix_text_slots(layout: dict, W: int, H: int, layout_name: str, *, deoverlap: bool = True) -> None:
+def _fix_text_slots(
+    layout: dict, W: int, H: int, layout_name: str, *, deoverlap: bool = True, clamp: bool = True,
+) -> None:
     """Clamp text slot positions to canvas. Then de-overlap stacked slots
     (skipped for hand edits — a person may overlap slots on purpose)."""
     slots = layout.get("text_slots") or []
@@ -200,10 +214,16 @@ def _fix_text_slots(layout: dict, W: int, H: int, layout_name: str, *, deoverlap
         _normalize_anchor(s)
         pos = s.get("position") or {}
         size = s.get("size") or {}
-        x = _clamp(pos.get("x", 0) or 0, 0, W - 1)
-        y = _clamp(pos.get("y", 0) or 0, 0, H - 1)
-        w = _clamp(size.get("width", 100) or 100, 50, W - x)
-        h = _clamp(size.get("height", 60) or 60, 20, max(20, H - y))
+        if clamp:
+            x = _clamp(pos.get("x", 0) or 0, 0, W - 1)
+            y = _clamp(pos.get("y", 0) or 0, 0, H - 1)
+            w = _clamp(size.get("width", 100) or 100, 50, W - x)
+            h = _clamp(size.get("height", 60) or 60, 20, max(20, H - y))
+        else:
+            x = int(pos.get("x", 0) or 0)
+            y = int(pos.get("y", 0) or 0)
+            w = int(size.get("width", 100) or 100)
+            h = int(size.get("height", 60) or 60)
         s["position"] = {**pos, "x": x, "y": y}
         s["size"] = {**size, "width": w, "height": h}
         cleaned.append(s)

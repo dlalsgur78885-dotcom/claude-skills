@@ -921,6 +921,8 @@ export type StudioSession = {
  *  장소·지도·수량이 같은 버튼을 가리킨다. 다른 축에는 없다. */
 export type StudioTopic = {
   topic: string; why?: string;
+  /** 봇이 고른 추천(X인용 1단계 「추천 3건을 맨 앞에 올린다」). 목록 맨 앞에 와 있고 ⭐ 로 보인다. */
+  recommend?: boolean;
   /** X인용 — 원문에서 확인한 값. 고를 때 반응 크기를 보고 판단한다. */
   url?: string; account?: string; views?: number; likes?: number; replies?: number; photos?: number;
   guide_id?: string; button?: string; region?: string; n?: number; guide_name?: string;

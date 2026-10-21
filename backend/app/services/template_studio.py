@@ -1006,7 +1006,9 @@ async def update_template(
         }
         # 겹침 밀어내기는 끈다 — 사람이 일부러 겹쳐 둔 칸(88 TAG·HEADLINE 한 줄)을
         # 저장할 때마다 아래로 밀어 「위치가 안 바뀐다」가 됐다(2026-09-18).
-        fixed = validate_and_fix_template(merged, deoverlap=False)
+        # 자르기(clamp)도 끈다 — 꽉 찬 사진을 1px 옮기면 폭이 깎이고, 캔버스 밖으로
+        # 걸쳐 둔 것은 0 으로 되돌아왔다(2026-10-21 「끌면 어긋난다」).
+        fixed = validate_and_fix_template(merged, deoverlap=False, clamp=False)
         row.layouts = fixed["layouts"]
         if canvas is None:
             row.canvas = fixed["canvas"]

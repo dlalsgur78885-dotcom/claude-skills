@@ -1574,10 +1574,14 @@ function SelectionEditor({
                 <option value="subheadline2">subheadline2 · 소제목 2</option>
                 <option value="subheadline3">subheadline3 · 소제목 3</option>
                 <option value="subheadline4">subheadline4 · 소제목 4</option>
+                <option value="subheadline5">subheadline5 · 소제목 5</option>
+                <option value="subheadline6">subheadline6 · 소제목 6</option>
                 <option value="body">body · 본문</option>
                 <option value="body2">body2 · 본문 2</option>
                 <option value="body3">body3 · 본문 3</option>
                 <option value="body4">body4 · 본문 4</option>
+                <option value="body5">body5 · 본문 5</option>
+                <option value="body6">body6 · 본문 6</option>
                 <option value="tag">tag · 태그</option>
                 <option value="footer">footer · 하단</option>
               </select>

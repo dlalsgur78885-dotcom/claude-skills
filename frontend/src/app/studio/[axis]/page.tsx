@@ -75,6 +75,10 @@ const AXES: Record<string, {
   // link — 「링크로 만들기」 칸을 붙인다(2026-10-15 트립앤라이프 지시). X·인스타·커뮤니티·뉴스
   // 주소 한 줄로 훅·본문·캡션·생성까지 일꾼이 한 번에 한다(백엔드 `studio_worker._do_link`).
   "x-quote": { axis: "X인용", title: "X인용", scenery: true, link: true },
+  // 유형 축 — 축을 유형마다 뜨지 않고 **유형을 고르는 축 하나**로 간다(2026-10-21 트립앤라이프).
+  // 백엔드는 `유형:<유형이름>` 한 값으로 지침서·낱장 조합을 갈아 끼운다(`studio_steps._TYPES`).
+  // 유형이 늘면 여기도 한 줄씩 늘어난다 — 그 외에는 고칠 것이 없어야 한다.
+  "community": { axis: "유형:커뮤니티화제", title: "커뮤니티 화제", scenery: true, link: true },
 };
 
 /** 화면에 보이는 단계. 진행 띠와 주소(#step-n)가 이 순서를 쓴다.
@@ -679,7 +683,14 @@ export default function AxisStudio() {
           {topicList.map((t) => (
             <div key={t.topic} style={{ display: "flex", gap: T.s.xs, alignItems: "flex-start", padding: "10px 0", borderTop: T.line }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 500 }}>{t.topic}</div>
+                {/* 추천 = 봇이 지침서 잣대로 고른 3건. 50개를 하나하나 열어 보지 않게 맨 앞에 와 있다. */}
+                <div style={{ fontWeight: 500 }}>
+                  {t.recommend ? (
+                    <span style={{ color: T.accent, border: T.line, borderRadius: T.r.sm,
+                                   padding: "1px 6px", fontSize: 13, marginRight: 6 }}>⭐ 추천</span>
+                  ) : null}
+                  {t.topic}
+                </div>
                 {t.why ? <div style={{ color: T.faint, fontSize: 14 }}>{t.why}</div> : null}
                 {/* X인용 — 반응 크기를 보고 고른다. 숫자는 원문에서 확인한 값이다. */}
                 {t.url ? (

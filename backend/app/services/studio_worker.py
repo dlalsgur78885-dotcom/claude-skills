@@ -99,6 +99,16 @@ async def _do_hooks(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
 # ⚠ 왜 코드가 붙이나 — 「프롬프트마다 결을 함께 실어라」고 시켰는데 모델이 계속 흘렸다.
 #   2026-09-07 실측: 인물 다섯 장이 전부 장면 묘사만 있고 결이 한 줄도 안 실려, 사람이
 #   「인물 사진이 또 산으로 갔다」고 했다. 시켜서 될 일이 아니라 붙여야 할 일이다.
+# 2026-10-16 사람 지시 — 「이미지에 글자가 하나도 없어서 어색해보여. 글자까지 생성해줘」.
+#   음식(`"food"`)·fal 재생성(`image_regen.PROMPT`)에만 들어가 있던 글자 규칙을 **인물·풍경 결에도**
+#   넣었다. 풍경에는 「정확히 못 쓰겠으면 깔끔하게 비워라」가 남아 새 규칙과 부딪혔다.
+#   원본은 방 지침서 `솔희_캐러셀기획.md` 「글자」다 — 한쪽을 고치면 같이 고친다.
+# 2026-10-20 사람 지시 — 「풍경 사진도 실제 여행객이 찍은 듯한 이미지로 하고, 사진 색감은 전체적으로
+#   아이폰으로 찍은 느낌으로」. ① 풍경 결에 「그 자리에 서서 폰으로 찍은 눈높이 한 장」을 넣었다
+#   (여행코스 축에 2026-10-19 에 들어간 것을 모든 축으로 넓힌 것이다). ② 아이폰 색은 인물·풍경·음식·
+#   호텔 네 결에 이미 들어 있어 그대로다 — 새로 결을 만들 때도 빼지 않는다.
+#   원본은 방 지침서 `솔희_캐러셀기획.md` 「이미지 품질」·「풍경 이미지」다 — 한쪽을 고치면 같이 고친다.
+
 STYLE = {
     "person": (
         "Shoot it like an emotive Instagram travel-influencer snapshot. The person looks like a real, "
@@ -111,15 +121,25 @@ STYLE = {
         "iPhone, with unedited phone-camera color (the iPhone photo look, no filter or color "
         "grading), and a refined travel-photo mood. Keep anyone other than the people described "
         "in the scene out of the frame as much as possible; if someone else must appear, show "
-        "only a small, out-of-focus part of them with no visible face."
+        "only a small, out-of-focus part of them with no visible face. "
+        "Lettering that really belongs in the scene stays — a short shop name, a noren, a sign, a "
+        "price tag, a product label or a station board — rendered short, accurate and clearly "
+        "legible. Never render carousel copy, long sentences, broken glyphs, fake characters, "
+        "random letters or distorted numbers; where accurate lettering is not possible, let that "
+        "surface fall out of focus in the background instead of wiping it blank."
     ),
     "scenery": (
-        "Shoot it like a beautiful, emotive Instagram travel photo taken on location: natural "
+        "Make it look like a single photo a real traveler took on a phone while standing right "
+        "there: shot from eye level, never a promotional aerial or drone shot and never a "
+        "magazine spread. Beyond that, shoot it like a beautiful, emotive Instagram travel photo "
+        "taken on location: natural "
         "light, a composition with depth, unedited phone-camera color (the iPhone photo look, "
-        "no filter or color grading). If any "
-        "text appears, render every character accurately and clearly — never include broken "
-        "glyphs, fake characters, random letters, or distorted numbers and symbols. If accurate "
-        "text is not possible, leave the space clean instead of generating unnecessary lettering."
+        "no filter or color grading). "
+        "Lettering that really belongs in the scene stays — a short shop name, a noren, a sign, a "
+        "price tag, a product label or a station board — rendered short, accurate and clearly "
+        "legible. Never render carousel copy, long sentences, broken glyphs, fake characters, "
+        "random letters or distorted numbers; where accurate lettering is not possible, let that "
+        "surface fall out of focus in the background instead of wiping it blank."
     ),
     # 일본맛집 표지 후보(2026-09-09). 사람이 안 나오는 대신 음식이 주인공이라
     # 인물 결을 그대로 쓰면 「예쁜 사람 없는 여행 사진」이 된다.
@@ -135,6 +155,11 @@ STYLE = {
     # 말고 누구나 먹어보고 싶은 디저트로」. ① 2026-10-12 개정(그릇이 화면을 꽉 채우고
     # 가장자리가 잘려 나간다)을 여기도 반영했다 — 전엔 「짧은 변의 3분의 2 · 둘레를 비워」가
     # 남아 새 규칙과 어긋났다. ② 디저트 문단을 넣었다(흔한 것 금지 · 층·단면·흘러내림).
+    # 2026-10-21 사람 지시 — 「표지 이미지는 잘린 단면이 칼같이 인위적이다」(캐러셀 905).
+    # 「속이 보이게 가른 단면」만 시키니 모델이 **전시용 칼단면**(좌우 대칭·닦아낸 면)을 그렸다.
+    # 단면을 **막 먹기 시작한 자국**으로 바꿨다 — 한 조각 들려 나가고, 비스듬히 부서지고, 소스가 번진다.
+    # 부딪히던 두 줄(「먹다 만 접시 금지」·「손대지 않은 접시」)도 같이 풀었다. 다 먹어 치운 접시는 여전히 금지다.
+    # 원본은 `일본맛집_3-2단계_썸네일이미지.md` 「먹음직스러워야 한다」다 — 한쪽을 고치면 같이 고친다.
     "food": (
         "Make it look like a real customer review photo, not a styled advertisement or magazine "
         "food shot: taken on a phone by a diner sitting at the table, the kind of photo people "
@@ -143,7 +168,7 @@ STYLE = {
         "macro. Keep the restaurant's real table setting in the frame: its own table, tray or "
         "wooden counter. No studio props — no white backdrop, marble or linen. Keep the table "
         "clean and uncluttered — the food is the only subject: no crumpled tissues, napkins or "
-        "used wet towels, no crumbs, spilled sauce or stains on the table, no half-eaten dishes, "
+        "used wet towels, no crumbs, spilled sauce or stains on the table, no plate eaten down to scraps, "
         "empty plates or leftover glasses, no clutter such as condiment bottles, toothpick "
         "holders, menus or flyers, and no hands. At most one or two simple items that belong "
         "there, such as chopsticks or a water glass. "
@@ -158,7 +183,12 @@ STYLE = {
         "soft egg yolk about to break, condensation on the glass for cold dishes — but only what "
         "that dish really produces: no blown-in smoke, brushed-on oil or fake droplets. Show "
         "what is inside: bowls heaped so the toppings spill toward the rim, meat sliced to show "
-        "the pink inside, bread or dessert cut so the layers show. If the dish is a dessert or a "
+        "the pink inside, bread or dessert cut so the layers show. Where the dish is cut open it must "
+        "read as a diner who has just started eating, never a display cut made for the camera: one "
+        "piece already lifted out or a bite taken from it, the cut running at a slight angle with "
+        "its edge crumbling, filling spilling or sagging and sauce smeared along it. Never a "
+        "knife-straight, mirror-symmetrical cross-section, never halves laid out at matching angles "
+        "with matching gaps, never a cut surface wiped clean. If the dish is a dessert or a "
         "cafe menu, make it one worth travelling for, never the kind found in any ordinary cafe: "
         "the visible layers of a tall parfait glass, a souffle, pudding or fondant cut so the "
         "inside flows out, a tart or fruit sando piled high with fruit, a torched brulee top, "
@@ -168,14 +198,21 @@ STYLE = {
         "soft serve, a few macarons or coffee with a cookie. For desserts the just-made signs "
         "are melting, dripping, gloss, condensation on the glass and freshly dusted powder "
         "rather than steam or char. The portion stays real, the "
-        "dish is untouched, and nothing is rearranged or garnished for the photo. The "
+        "dish has at most one serving gone, and nothing is rearranged or garnished for the photo. The "
         "restaurant's own lighting (ceiling lights, warm bulbs or window light) falling across "
         "the food from the side or slightly behind, so the sheen catches and the dish has depth "
         "— no flat, pale, direct-flash light; unedited "
         "phone-camera color (the iPhone photo look, no filter or color grading), and only a "
         "slightly soft background — no heavy portrait-mode blur. Ingredient colors stay fresh "
         "and true: no congealed fat, grey meat, dried-out rice or washed-out vegetables. No "
-        "people in the frame, and never a hand lifting noodles or holding chopsticks. "
+        "people in the frame — not even small, cropped or blurred in the background — and never a hand "
+        "lifting noodles or holding chopsticks. The serving was set down by hand moments ago, not "
+        "measured out: pieces and side plates sit at slightly different angles with uneven gaps, two "
+        "of them nearly touching, the row never parallel to the edge of the plate or board, each "
+        "piece a little different in size with its topping draping unevenly to one side. Keeping it "
+        "irregular is never a licence to make a mess — the table stays freshly wiped with no stray "
+        "grains, crumbs, smears or water marks — nor to deform the food: every piece stays clean, "
+        "recognisable and appetising. "
         "Lettering that really belongs in such a scene may stay — a short shop name on the bowl, "
         "plate, chopstick sleeve or tray, a noren, sign or menu board behind the table — rendered "
         "short, accurate and clearly legible. Never render carousel copy, long sentences, broken "
@@ -263,11 +300,12 @@ AXIS_STYLE = {
             "everyday Japanese details that fit the scene, such as {motifs}. Natural traces of "
             "people are welcome when they fit the scene — a small passerby in the distance, a "
             "figure seen from behind, a shadow falling on the ground — but no main character, no "
-            "face in focus, never crowded. No poster title, credits or logos: the photo only. If "
-            "any text appears in the scene, render every character accurately and clearly — never "
-            "include broken glyphs, fake characters, random letters, or distorted numbers and "
-            "symbols. If accurate text is not possible, leave the space clean instead of "
-            "generating unnecessary lettering."
+            "face in focus, never crowded. No poster title, credits or logos: the photo only. "
+            "Lettering that really belongs in the scene stays — a short shop name, a noren, a sign, a "
+            "price tag, a product label or a station board — rendered short, accurate and clearly "
+            "legible. Never render carousel copy, long sentences, broken glyphs, fake characters, "
+            "random letters or distorted numbers; where accurate lettering is not possible, let that "
+            "surface fall out of focus in the background instead of wiping it blank."
         ),
     },
 }
@@ -642,6 +680,8 @@ def person_looks(seed: str, axis: str = "") -> list[str]:
 # 3b2ba86e26ccceee 4·5번), 팀이 좋다고 한 장들(9/22 홋케·베이커리)은 사실 누끼에 실패해
 # **한 상 차림**으로 나온 것이었다. 2026-10-06 비교에서도 사람이 꽉 찬 상차림 쪽을 골랐다.
 # ⚠ 다시 「오려 붙인 스티커」로 돌리지 마라 — 두 번 확인된 취향이다.
+# 2026-10-21 — 여기도 「김·윤기」가 무조건이었다(`image_regen.PROMPT` 와 같은 구멍). 찬 디저트 상차림에
+# 김이 올라가므로 **그 음식이 실제로 내는 신호만**으로 바꿨다.
 FOOD_REVIEW_SHOTS = 3
 FOOD_COLLAGE = (
     "Make it a full-table spread cover for an Instagram restaurant roundup: ONE single real "
@@ -657,8 +697,15 @@ FOOD_COLLAGE = (
     "through, no gap left for a title. Keep the restaurant's real setting: its own table, tray or "
     "wooden counter, its own ceiling lights or warm bulbs, unedited phone-camera color (the "
     "iPhone photo look, no filter or color grading), and only a slightly soft background. The "
-    "food must look freshly served and delicious — steam, the glossy sheen of sauce and juices, "
-    "a crisp grilled crust, cut surfaces showing what is inside. The table itself stays clean: "
+    "food must look freshly served and delicious, but only with the signs each dish really "
+    "produces — steam, a glossy sheen of sauce and juices and a crisp grilled crust belong to "
+    "hot dishes; anything served cold or frozen shows its chill instead: condensation on the "
+    "glass, frost on shaved ice, a softly melting edge, cream or syrup running down. Never add "
+    "steam, heat haze or a brushed-on sheen to something served cold. Cut surfaces show what is "
+    "inside the way a diner who has just started eating would leave them — a piece lifted out, the "
+    "edge crumbling — never a knife-straight, symmetrical display cut. The dishes were carried "
+    "out and set down one by one, so they sit at uneven angles and distances, overlapping by "
+    "different amounts, never aligned in a tidy grid or ring. The table itself stays clean: "
     "no crumpled tissues or napkins, no crumbs or spilled sauce, no half-eaten dishes, empty "
     "plates or leftover glasses, no condiment bottles, menus or flyers. No people and no hands "
     "in the frame. Do not render any text, signage or logos — leave the space clean instead of "
@@ -1440,6 +1487,8 @@ async def _do_link(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     # 사진이 글보다 많으면 남은 사진만으로 장을 더 붙인다 — 원문 사진을 버리지 않는다.
     for extra in body_photos[len(items):]:
         items.append({"text": "", "photo": extra})
+    # 사진이 없어 글만 남은 장은 **원글 캡처**로 채운다(2026-10-21 대표 지시).
+    items = await _attach_captures(items, rec, axis)
 
     # 4) 캡션
     caption = await studio.make_caption(studio.CaptionBody(
@@ -1456,6 +1505,90 @@ async def _do_link(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
            if rec.get(k) not in (None, "", [])},
     }
     return {"__chosen__": picked, **await _do_build({**chosen, **picked}, axis)}
+
+
+# 글만 있는 장에 끼울 캡처는 **두 장까지**다 — 캡처카드만으로 채우지 않는다
+# (`_유형공통.md` 「낱장 조합」 2026-10-21 대표 지시).
+LINK_CAPTURE_MAX = 2
+
+
+async def _rank_by_likes(ids: list[str]) -> list[str]:
+    """트윗 id 를 **좋아요 순**으로 줄 세운다. 바닥을 못 넘는 것은 뺀다.
+
+    바닥값은 답글 고를 때 쓰던 것을 그대로 쓴다(`x_search._REPLY_LIKE_FLOOR`) — 같은
+    「남의 글을 캡처로 쓴다」는 자리라 기준이 다를 이유가 없다. 수치를 못 받은 글은 뺀다.
+    """
+    from app.services import x_search
+
+    rows = await asyncio.gather(*(asyncio.to_thread(x_search._fx_status, t) for t in ids))
+    scored = [(int((r or {}).get("likes") or 0), t) for t, r in zip(ids, rows)
+              if (r or {}).get("text")]
+    kept = [t for likes, t in sorted(scored, reverse=True)
+            if likes >= x_search._REPLY_LIKE_FLOOR]
+    return kept
+
+
+async def _attach_captures(items: list[dict[str, Any]], rec: dict[str, Any],
+                           axis: str) -> list[dict[str, Any]]:
+    """사진이 없는 본문 장을 **원글 캡처**로 채운다 (2026-10-21 트립앤라이프 「자동으로 붙게 하자」).
+
+    글만 있는 장은 우리가 타이핑하지 않는다 — X 임베드를 그대로 찍어 `캡처카드` 의 739×825
+    칸에 넣는다(`_유형공통.md` 「낱장 조합」 · 준혁_캐러셀기획 「글만 있는 장」). 토게터처럼
+    트윗을 모아 놓은 페이지는 그 페이지에 붙은 트윗 id 를(`link_ingest._x_ids`) 앞에서부터
+    쓰고, X 링크면 그 글 자신을 찍는다.
+
+    ⚠ 캡처 글자는 **한국어로 갈아 끼운다** — 안 하면 일본어 그대로 찍힌다(2026-09-18 사고).
+      원문은 FxTwitter 로 그 id 를 다시 읽어 받는다(토큰 0).
+    ⚠ `layout` 을 **같이 적는다.** 사진이 생기는 순간 `no_photo_layout` 갈림이 꺼져
+      `사진+자막`(배경)으로 떨어지고, 그러면 캡처가 4:5 에 꽉 차 잘린다.
+
+    캡처는 **있으면 좋은 것**이다 — 못 찍으면 그 장을 그대로 두고 넘어간다(칸이 빈 채로
+    나오고 사람이 편집기에서 끼운다). 캐러셀 전체를 여기서 죽이지 않는다.
+    """
+    from app.services import link_ingest, studio_remote, x_search
+    from app.services import studio_steps as studio
+
+    conf = studio.axis_conf(axis)
+    layout = str(conf.get("no_photo_layout") or "")
+    if not layout or not x_search.capture_available():
+        return items
+    blanks = [i for i, it in enumerate(items) if not (it or {}).get("photo")]
+    ids = ([str(rec.get("post_id") or "")] if rec.get("source") == link_ingest.SOURCE_X
+           else [str(t) for t in (rec.get("x_ids") or [])])
+    ids = [t for t in ids if t]
+    if not blanks or not ids:
+        return items
+    # 모아 놓은 페이지의 트윗은 **순서가 곧 값어치가 아니다** — 맨 앞이 좋아요 4짜리
+    # 한 줄인 경우가 있다(2026-10-21 토게터 2756963 실측). 좋아요로 골라 쓴다.
+    # X 링크 한 건은 사람이 고른 글이므로 거르지 않는다.
+    if rec.get("source") != link_ingest.SOURCE_X and len(ids) > 1:
+        ids = await _rank_by_likes(ids)
+        if not ids:
+            logger.info("[studio-worker] 캡처에 쓸 만한 원글이 없습니다 — 칸을 비워 둡니다")
+            return items
+
+    out = list(items)
+    done = 0
+    for index, post_id in zip(blanks, ids):
+        if done >= LINK_CAPTURE_MAX:
+            break
+        try:
+            tweet = await asyncio.to_thread(x_search._fx_status, post_id)
+            korean = await studio.translate_post(str((tweet or {}).get("text") or ""), axis)
+            # 원문을 못 읽었으면 **찍지 않는다** — 그대로 찍으면 일본어 캡처가 나간다.
+            if not korean:
+                logger.warning(f"[studio-worker] 원글 {post_id} 을 못 읽어 캡처를 건너뜁니다")
+                continue
+            shot = await x_search.capture_card(post_id, korean)
+            url = await studio_remote.upload_image(shot, f"{secrets.token_hex(8)}.png")
+        except Exception as e:
+            logger.warning(f"[studio-worker] 본문 {index}번 캡처를 못 찍었습니다 — "
+                           f"칸을 비워 둡니다: {str(e)[:200]}")
+            continue
+        out[index] = {**out[index], "layout": layout, "photo": url}
+        done += 1
+    logger.info(f"[studio-worker] 글만 있는 장 {len(blanks)}개 중 {done}장을 원글 캡처로 채웠습니다")
+    return out
 
 
 async def _do_keep(chosen: dict[str, Any], axis: str) -> dict[str, Any]:

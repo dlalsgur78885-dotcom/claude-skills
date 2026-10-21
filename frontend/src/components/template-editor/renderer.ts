@@ -13,6 +13,12 @@ import { angleToCoords } from "@/components/GradientBarEditor";
 // Direction enum → CSS angle for legacy templates without `angle`.
 const DIR_TO_ANGLE: Record<string, number> = { vertical: 180, horizontal: 90, diagonal: 135 };
 
+// 사진이 깔릴 낱장(image_keyword/image_path)의 편집기 배경. 예전엔 브랜드 배경색을
+// 썼는데, 흰색 브랜드에서는 흰 글씨·흰 로고·흰 도형이 통째로 안 보였다(2026-10-21).
+// 실제로는 사진이 들어갈 자리이므로 중간 회색으로 두어 밝은 요소도 어두운 요소도
+// 보이게 한다. 편집기 미리보기에만 쓰고 최종 출력에는 영향이 없다.
+const PHOTO_BG = "#6E6E6E";
+
 const PLACEHOLDER_TITLE = "Title";
 const PLACEHOLDER_SUB = "subtitle";
 const PLACEHOLDER_DESC = "Description text goes here over two lines.";
@@ -223,8 +229,9 @@ export async function renderLayoutToCanvas(
       originX: "left", originY: "top",
     }));
   } else {
-    // image_keyword / image_path: show brand background + small keyword label
-    canvas.backgroundColor = brand.background_color || "#222222";
+    // image_keyword / image_path: 사진 자리는 회색, 그 밖은 브랜드 배경색
+    const isPhotoBg = bg?.type === "image_keyword" || bg?.type === "image_path";
+    canvas.backgroundColor = isPhotoBg ? PHOTO_BG : (brand.background_color || "#222222");
     if (bg?.value) {
       const label = new fabric.Textbox(`bg: ${bg.value}`, {
         left: 8,
@@ -290,7 +297,9 @@ export async function renderLayoutToCanvas(
     ? (bg.value || brand.background_color)
     : bg?.type === "gradient"
       ? bg.color_a
-      : brand.background_color;
+      : bg?.type === "image_keyword" || bg?.type === "image_path"
+        ? PHOTO_BG
+        : brand.background_color;
   const hh = String(bgHexForChrome || "").replace("#", "");
   const lightBg = hh.length === 6 &&
     0.299 * parseInt(hh.slice(0, 2), 16) + 0.587 * parseInt(hh.slice(2, 4), 16) + 0.114 * parseInt(hh.slice(4, 6), 16) > 160;

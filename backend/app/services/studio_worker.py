@@ -1426,6 +1426,21 @@ async def _do_build(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
 LINK_PHOTO_LIMIT = 4
 
 
+def _first_option(item: dict[str, Any]) -> dict[str, Any]:
+    """A·B·C 세 안으로 온 본문 장을 **A 안**으로 눌러 둔다.
+
+    글 한 줄짜리 축(X인용·유형)의 본문은 장마다 세 안으로 온다. 화면은 사람이 고른 안을
+    `text` 로 눌러 보내는데(`frontend/.../studio/[axis]/page.tsx` — options → text), 링크
+    한 건 길에는 사람이 고를 자리가 없다. 안 누르면 `text` 칸이 비어 **본문 글이 통째로
+    사라진다**(2026-10-21 캐러셀 915 에서 본문 3장이 글 없이 나왔다).
+    """
+    ops = [o for o in (item.get("options") or []) if isinstance(o, dict)]
+    if not ops or item.get("text"):
+        return item
+    return {**{k: v for k, v in item.items() if k != "options"},
+            "text": str(ops[0].get("text") or "")}
+
+
 async def _do_link(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     """**링크 하나로 캐러셀까지** 만든다 (2026-10-13 트립앤라이프 지시).
 
@@ -1483,6 +1498,7 @@ async def _do_link(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
         axis=axis, topic=topic, hook=" ".join(hook_lines)))
     items: list[dict[str, Any]] = []
     for i, item in enumerate(list(got.get("items") or [])):
+        item = _first_option(item)
         items.append({**item, "photo": body_photos[i]} if i < len(body_photos) else dict(item))
     # 사진이 글보다 많으면 남은 사진만으로 장을 더 붙인다 — 원문 사진을 버리지 않는다.
     for extra in body_photos[len(items):]:

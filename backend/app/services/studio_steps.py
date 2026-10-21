@@ -3340,9 +3340,13 @@ async def make_body(body: BodyBody) -> dict[str, Any]:
     # 실제 장소를 다루는 축은 확인을 거쳐야 한다.
     if int(conf.get("places") or 0) > 0:
         return await make_place_body(body)
-    # 본문 칸이 하나뿐인 축(X인용)은 **글 한 줄**만 받는다. 칸이 넷인 축과 같은 스키마로
+    # 본문 칸이 하나뿐인 축(X인용·유형)은 **글 한 줄**만 받는다. 칸이 넷인 축과 같은 스키마로
     # 물으면 모델이 그 틀에 맞춰 답하고, 화면은 이름이 안 맞아 빈칸으로 남는다.
-    if conf.get("body_fields") == ["", "", "text", ""]:
+    # ⚠ **칸 자리가 아니라 칸 수로 가른다** — X인용은 `body`, 유형 축은 `headline` 에 그
+    #   한 줄이 들어간다. 전에는 X인용 모양(`["", "", "text", ""]`)만 보고 갈라서, 유형 축이
+    #   상황별일본어 스키마(jp·reading·meaning·situation)로 답을 받아 **자막이 통째로
+    #   비었다**(2026-10-21 캐러셀 915 — 본문 3장이 글 없이 나왔다).
+    if [f for f in (conf.get("body_fields") or []) if f] == ["text"]:
         data = await _ask(
             "body",
             f"주제 「{body.topic}」 · 확정 훅 「{body.hook}」 의 본문 문구를 "

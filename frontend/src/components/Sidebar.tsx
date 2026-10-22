@@ -103,6 +103,12 @@ const navSections: NavSection[] = [
         icon: icon("M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"),
       },
       {
+        // 유형 축 — 소재를 모으면 1단계가 후보마다 유형을 붙인다(2026-10-22).
+        href: "/studio/type",
+        label: "유형 자동 분류 원클릭",
+        icon: icon("M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"),
+      },
+      {
         href: "/templates",
         label: "템플릿 스튜디오",
         // RectangleStack — stacked layouts read as "templates", not "menu".

@@ -35,6 +35,9 @@ POLL_SECONDS = 5
 # 화면은 고른 주제의 **제목 한 줄만** 넘기므로 일꾼이 후보를 되짚어 채운다.
 X_CARRY = ("post_id", "url", "photos", "photo_urls", "text",
            "views", "likes", "replies", "author",
+           # 유형 축이 1단계에서 붙인 유형. 이게 안 따라오면 2단계부터 **유형 지침서 없이**
+           # 공통 규칙만으로 글이 나간다(2026-10-22 · `studio_steps._classify_types`).
+           "type",
            # 「일본 반응」 장 재료(2026-09-21). 이게 안 따라오면 그 장이 조용히 사라진다.
            "reply_quotes")
 
@@ -1661,6 +1664,8 @@ async def _prepare_one(t: dict[str, Any], axis: str, need_places: int,
     from app.services import studio_steps as studio
 
     name = str(t.get("topic") or "").strip()
+    # 유형 축은 **후보마다 유형이 다르다** — 그 주제에 붙은 유형으로 좁혀서 만든다(2026-10-22).
+    axis = studio.axis_with_type(axis, t.get("type"))
     try:
         # 지도 축은 주제가 곧 「어느 가이드의 어느 버튼」이다. 그 둘을 아래 단계로
         # 넘겨야 장소·지도·수량이 같은 버튼을 가리킨다.
@@ -1946,6 +1951,7 @@ async def _fill_x_source(session_id: str, axis: str, chosen: dict[str, Any]) -> 
 
 async def _handle(job: dict[str, Any]) -> None:
     from app.services import studio_remote
+    from app.services import studio_steps as studio
 
     session_id = job["id"]
     step = job["step"]
@@ -1960,6 +1966,15 @@ async def _handle(job: dict[str, Any]) -> None:
 
     logger.info(f"[studio-worker] {session_id} · {step} 시작")
     chosen = await _fill_x_source(session_id, job.get("axis") or "", job.get("chosen") or {})
+    # 유형 축 — 1단계가 후보에 붙여 둔 유형으로 축을 좁힌다(`유형` → `유형:치이카와`).
+    # 회차에 적힌 축은 「유형」 그대로 둔다(화면·이력이 한 축으로 보게).
+    axis = studio.axis_with_type(job.get("axis") or "", chosen.get("type"))
+    if studio.is_type_axis(axis) and step != "topics":
+        # 유형 없이 2단계를 돌면 공통 규칙만으로 글이 나간다 — 조용히 가느니 멈춘다.
+        msg = "유형이 안 붙은 후보입니다 — 1단계를 다시 돌려 유형이 붙은 후보를 고르세요."
+        logger.warning(f"[studio-worker] {session_id} · {step} — {msg}")
+        await studio_remote.call(f"/studio-sessions/{session_id}", {"error": msg}, method="PATCH")
+        return
     try:
         if step == "images":
             # 이 회차가 이미 쓴 무대를 피해서 그린다(밤에 만들 때는 `_do_prepare` 가 넘긴다).
@@ -1971,9 +1986,9 @@ async def _handle(job: dict[str, Any]) -> None:
             used += [str(i.get("prompt") or "") for i in keep]
             # [다시 뽑기] 때도 본문을 실어 준다 — 화면은 `chosen` 에 본문을 담지 않는다.
             out = await _do_images({**chosen, "items": chosen.get("items") or items},
-                                   job.get("axis") or "", used, keep)
+                                   axis, used, keep)
         else:
-            out = await handler(chosen, job.get("axis") or "")
+            out = await handler(chosen, axis)
     except Exception as e:
         logger.exception(f"[studio-worker] {session_id} · {step} 실패")
         await studio_remote.call(f"/studio-sessions/{session_id}", {"error": str(e)}, method="PATCH")

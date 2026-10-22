@@ -18,6 +18,9 @@ interface SlideNavigatorProps {
   onReorder?: (from: number, dropBefore: number) => void;
 }
 
+// 썸네일 자체에는 삭제 버튼을 두지 않는다 — 우측 상단에 opacity:0 짜리 X 버튼이
+// 떠 있어서, 썸네일 모서리를 누르면 낱장이 조용히 지워졌다(2026-10-22 대표 지시).
+// 삭제는 오른쪽 아래의 '삭제' 버튼과 Delete 키로만 한다.
 export function SlideNavigator({
   slides,
   currentIndex,
@@ -155,7 +158,6 @@ export function SlideNavigator({
                 });
               }
             }}
-            className="group"
             style={{
               position: "relative",
               flexShrink: 0,
@@ -192,34 +194,6 @@ export function SlideNavigator({
               {index + 1}
             </span>
 
-            {slides.length > 1 && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRemove(index);
-                }}
-                className="group-hover:opacity-100"
-                style={{
-                  position: "absolute",
-                  top: -6,
-                  right: -6,
-                  width: 18,
-                  height: 18,
-                  background: "var(--red)",
-                  color: "white",
-                  borderRadius: "50%",
-                  fontSize: 9,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  opacity: 0,
-                }}
-              >
-                <svg width="9" height="9" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                </svg>
-              </button>
-            )}
           </div>
           {showRightIndicator && (
             <div

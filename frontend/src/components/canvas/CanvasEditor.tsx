@@ -700,7 +700,7 @@ export function CanvasEditor({
   // can auto-navigate back to that page when it isn't the one on screen.
   type UndoEntry =
     | { kind: "canvas"; slideIndex: number; data: string }
-    | { kind: "bulk"; slides: SlideData[] };
+    | { kind: "bulk"; slides: SlideData[]; slideIndex?: number };
   const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
   const [redoStack, setRedoStack] = useState<UndoEntry[]>([]);
   // Snapshot of the LAST committed canvas state — used to push to undo before each modification.
@@ -2285,7 +2285,13 @@ export function CanvasEditor({
   }
 
   function removeSlide(index: number) {
-    // Removing a slide shifts every later index — drop the tagged history.
+    // 마지막 한 장은 지우지 않는다 — 아래 updater 와 같은 판정. 여기서 먼저
+    // 걸러 삭제가 일어나지 않는 경우에 undo 엔트리만 쌓이는 것을 막는다.
+    if (slidesRef.current.length <= 1) return;
+    // 지우기 전 전체 스냅샷을 쌓는다 — 이게 Ctrl+Z 로 낱장을 되살리는 길이다.
+    pushBulkUndo();
+    // Removing a slide shifts every later index — drop the tagged history
+    // (bulk entries survive the filter, so the snapshot above stays).
     clearCanvasHistory();
     setSlides((prev) => {
       if (prev.length <= 1) return prev;
@@ -3393,6 +3399,21 @@ export function CanvasEditor({
     return JSON.parse(JSON.stringify(merged)) as SlideData[];
   }
 
+  /** Push a whole-carousel snapshot onto the undo stack, tagged with the page
+   *  currently on screen. Structural edits (슬라이드 삭제) change the slide
+   *  ARRAY, which a per-slide canvas entry cannot represent — and they call
+   *  clearCanvasHistory(), which drops those entries anyway. Without this a
+   *  slide deleted by mistake had no way back: Ctrl+Z / 뒤로가기 was dead. */
+  function pushBulkUndo() {
+    const beforeBulk = snapshotAllSlides();
+    const slideIndex = currentSlideIndexRef.current;
+    setUndoStack((u) => {
+      const trimmed = u.length >= 50 ? u.slice(-49) : u;
+      return [...trimmed, { kind: "bulk", slides: beforeBulk, slideIndex }];
+    });
+    setRedoStack([]);
+  }
+
   function applyBgToCurrent(color: string) {
     const canvas = fabricRef.current;
     if (!canvas) return;
@@ -3519,14 +3540,30 @@ export function CanvasEditor({
     );
   }
 
-  // Restore a whole-carousel snapshot (a "전체 수정" bulk-edit undo entry).
-  // Captures the state it replaces FIRST — that becomes the opposite stack's
-  // entry — then swaps in `slides` and reloads the visible slide.
-  function restoreBulk(slides: SlideData[]): UndoEntry {
-    const inverse: UndoEntry = { kind: "bulk", slides: snapshotAllSlides() };
-    setSlides(slides);
-    slidesRef.current = slides;
-    loadSlide(currentSlideIndexRef.current);
+  // Restore a whole-carousel snapshot (a "전체 수정" bulk-edit or 슬라이드 삭제
+  // undo entry). Captures the state it replaces FIRST — that becomes the
+  // opposite stack's entry — then swaps in the slides and reloads the visible
+  // one. `slideIndex` (when the entry carries it) is the page that was on
+  // screen when the snapshot was taken, so undoing a delete lands the user
+  // back on the restored slide instead of wherever the delete left them.
+  function restoreBulk(entry: { slides: SlideData[]; slideIndex?: number }): UndoEntry {
+    const inverse: UndoEntry = {
+      kind: "bulk",
+      slides: snapshotAllSlides(),
+      slideIndex: currentSlideIndexRef.current,
+    };
+    setSlides(entry.slides);
+    slidesRef.current = entry.slides;
+    const idx = Math.min(
+      entry.slideIndex ?? currentSlideIndexRef.current,
+      entry.slides.length - 1
+    );
+    if (idx !== currentSlideIndexRef.current) {
+      setCurrentSlideIndex(idx);
+      currentSlideIndexRef.current = idx;
+      setSelectedObject(null);
+    }
+    loadSlide(idx);
     return inverse;
   }
 
@@ -3566,7 +3603,7 @@ export function CanvasEditor({
       if (u.length === 0) return u;
       const entry = u[u.length - 1];
       if (entry.kind === "bulk") {
-        const inverse = restoreBulk(entry.slides);
+        const inverse = restoreBulk(entry);
         setRedoStack((r) => [...r, inverse]);
         return u.slice(0, -1);
       }
@@ -3582,7 +3619,7 @@ export function CanvasEditor({
       if (r.length === 0) return r;
       const entry = r[r.length - 1];
       if (entry.kind === "bulk") {
-        const inverse = restoreBulk(entry.slides);
+        const inverse = restoreBulk(entry);
         setUndoStack((u) => [...u, inverse]);
         return r.slice(0, -1);
       }

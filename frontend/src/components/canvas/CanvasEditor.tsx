@@ -128,6 +128,19 @@ function applyDisplayCss(
  *  objects, including ours, so we have to put it back. The rect is kept
  *  inside the canvas at object-space (0,0,w,h); the viewportTransform handles
  *  shifting it inside the padded pixel buffer. */
+/** Keep the page-boundary rect at the very back.
+ *
+ *  `sendObjectToBack(photo)` (full-bleed user photos in the reconstruction
+ *  path) drops the photo to index 0 — under the boundary rect, whose fill is
+ *  the slide background. Call this right after any such move.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function keepPageBoundaryAtBack(canvas: any) {
+  const pb = canvas?.__pageBoundary;
+  if (pb && canvas.getObjects().includes(pb)) canvas.sendObjectToBack(pb);
+}
+
+
 function ensurePageBoundary(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   canvas: any,
@@ -1823,6 +1836,14 @@ export function CanvasEditor({
               // them and the user's cell pick disappears off-screen visually.
               canvas.sendObjectToBack(img);
             }
+            // The photo just went to index 0 — i.e. BELOW the page-boundary
+            // rect, which is painted with the slide background (often black).
+            // Put the boundary back at the very bottom or the photo stays
+            // hidden behind it. (2026-10-23 — this is why a freshly created
+            // carousel opened black on every slide and only showed its photos
+            // after switching slides and back: the second visit loads the
+            // saved fabric JSON, which never calls sendObjectToBack.)
+            keepPageBoundaryAtBack(canvas);
             canvas.requestRenderAll();
 
           } catch (err) {

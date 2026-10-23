@@ -863,6 +863,63 @@ def _hook_scene_block(hook: str, cands: list[str]) -> str:
     return block
 
 
+async def _cover_from_photos(items: list[dict[str, Any]], axis: str, want: int
+                             ) -> list[dict[str, Any]]:
+    """표지 음식 후보를 **본문 가게의 구글 실사를 레퍼런스로** 다시 그린다 (2026-10-23 솔희 지시).
+
+    사람 말 그대로 — 「표지 이미지가 여전히 부자연스러워. 이미지 자체도 인위적이고,
+    뒤에 나오는 식당 음식과도 달라서 이상해」. 원인은 **표지만 딴 길**이었다 — 본문 8장은
+    실사를 레퍼런스로 다시 그리는데(`studio_steps._regen_backgrounds`) 표지는 글만 보고
+    새로 그려(`codex_image.generate_images`) 실물 근거가 없었다. 프롬프트로 「인위적」을
+    깎는 것은 10/21 에 이미 해 보고 한계가 났다(`image_regen.PROMPT` 주석).
+
+    그래서 표지도 본문과 **같은 길**로 보낸다 — 가게마다 한 장씩, 서로 다른 가게의 실사를
+    레퍼런스로 `want` 장을 그려 사람이 그중 1장을 고른다. 모둠 상차림(`FOOD_COLLAGE`)은
+    이 길에 없다 — 실사 한 장에서 여러 가게의 상을 지어낼 수 없다.
+
+    **한 장도 못 그리면 빈 목록을 돌려준다** — 부르는 쪽이 옛 길(글→그림)로 내려간다.
+    표지 없이 회차를 버리는 것보다 낫다.
+    """
+    from app.services import image_regen, studio_remote
+    from app.services import studio_steps as studio
+
+    prompt = image_regen.prompt_for(str(studio.axis_conf(axis).get("regen_prompt") or ""))
+    # ⚠ 같은 사진이 `=s1024` · `=s2048` 처럼 크기만 달라 두 번 오는 일이 많다(본문도 같은
+    #   덫을 피한다 — `studio_steps.build`). 글자로만 비교하면 같은 그림을 두 번 그린다.
+    picks: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for item in items:
+        url = str((item or {}).get("photo") or "")
+        key = url.split("=")[0]
+        if not url or key in seen:
+            continue
+        seen.add(key)
+        picks.append((str((item or {}).get("name") or "").strip(), url))
+        if len(picks) >= want:
+            break
+    if not picks:
+        logger.warning("[studio-worker] 표지 레퍼런스로 쓸 실사가 없습니다 — 글로 그립니다.")
+        return []
+
+    async def one(name: str, url: str) -> dict[str, Any] | None:
+        try:
+            blob = await image_regen.from_reference(url, prompt=prompt)
+            return {
+                "kind": "food",
+                # 갤러리 설명이자 [다시 뽑기] 때 피할 무대다 — 어느 가게 것인지 남긴다.
+                "prompt": f"{name} 실사 레퍼런스".strip(),
+                "url": await studio_remote.upload_image(blob, f"{secrets.token_hex(8)}.png"),
+            }
+        except Exception as e:
+            logger.warning("[studio-worker] 표지 레퍼런스 재생성 실패(%s): %s", name, str(e)[:160])
+            return None
+
+    done = await asyncio.gather(*(one(n, u) for n, u in picks))
+    out = [x for x in done if x]
+    logger.info("[studio-worker] 표지 음식 %d/%d장을 실사 레퍼런스로 그렸습니다", len(out), len(picks))
+    return out
+
+
 async def _do_images(chosen: dict[str, Any], axis: str,
                      used: list[str] | None = None,
                      keep: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -942,15 +999,28 @@ async def _do_images(chosen: dict[str, Any], axis: str,
         shots = {k: (0 if k in on_demand else v) for k, v in shots.items()}
     # 그릴 종류만 남긴다 — 축마다 다르다(상황별일본어 인물·풍경 / 일본맛집 인물·음식).
     kinds = [k for k, v in shots.items() if v]
+    # 표지 음식 컷은 **본문 가게의 구글 실사를 레퍼런스로** 다시 그린다
+    # (`AXES[축].cover_photo_regen` — 2026-10-23 솔희 지시). 글만 보고 새로 그리던 길에서
+    # 옮겨 온 것이다 — 아래 `_cover_from_photos` 주석에 이유가 있다.
+    food_regen: list[dict[str, Any]] = []
+    if "food" in kinds and studio.axis_conf(axis).get("cover_photo_regen"):
+        food_regen = await _cover_from_photos(list(chosen.get("items") or []), axis,
+                                              shots.get("food", 0))
+        if food_regen:
+            shots = {**shots, "food": 0}
+            kinds = [k for k in kinds if k != "food"]
     # 그릴 것이 하나도 없으면 **원글 사진만 돌려주고 끝낸다** (2026-10-22 점검).
     # 치이카와처럼 생성컷을 안 쓰는 유형(`cover_on_demand`)이 아래로 내려가면
     # 「그릴 장면을 한 줄도 받지 못했습니다」로 죽는다 — 사진은 멀쩡히 있는데도.
     if not kinds:
-        got = [*post_images, *(keep or [])]
+        got = [*post_images, *(keep or []), *food_regen]
         if not got:
             raise RuntimeError("쓸 사진이 없습니다 — 원글에 사진이 없고 그릴 묶음도 없습니다. "
                                "[인물 다시]·[풍경 다시] 로 그려 주세요.")
-        logger.info(f"[studio-worker] 생성컷 없이 원글 사진 {len(got)}장으로 끝냅니다")
+        # 일본맛집은 **여기로 끝난다** — 음식 5장이 위에서 실사 레퍼런스로 다 그려져
+        # (`food_regen`) 글로 그릴 묶음이 남지 않는다. 인물은 버튼을 눌렀을 때만이다.
+        logger.info(f"[studio-worker] 글로 그릴 것 없이 사진 {len(got)}장으로 끝냅니다 "
+                    f"(실사 레퍼런스 {len(food_regen)}장)")
         return {"images": got}
     want = " · ".join(f"{KIND_KO.get(k, k)}({k}) {shots[k]}장" for k in kinds)
     # 생김새·각도·시선 자리를 돌리는 씨앗. 셀카 축은 **누를 때마다 새로** 만든다
@@ -1250,7 +1320,7 @@ async def _do_images(chosen: dict[str, Any], axis: str,
                        upload_failed, len(images))
     # 한쪽만 다시 그렸으면 다른 쪽을 앞에 붙여 되돌려준다 — 안 붙이면 화면에서 사라진다.
     # 원문 사진은 **맨 앞**에 둔다. 고를 때 먼저 보이는 편이 낫다(피드백 1번).
-    return {"images": post_images + (keep or []) + images}
+    return {"images": post_images + (keep or []) + food_regen + images}
 
 
 async def _do_body_x(chosen: dict[str, Any], axis: str) -> dict[str, Any]:

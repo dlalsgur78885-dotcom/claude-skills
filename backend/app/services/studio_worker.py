@@ -1337,6 +1337,16 @@ async def _do_body_x(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     post_id = str(chosen.get("post_id") or "")
     if not post_id:
         raise RuntimeError("게시물 id 가 없습니다 — 1단계 후보를 다시 고르세요.")
+    # X 밖 후보(일본 매체·커뮤니티·유튜브 — `other_sources`, id 가 `src_…`)는 **찍을 X
+    # 카드가 없다.** 1단계는 2026-10-23 부터 그 후보도 올리는데(X 50건 + X 밖 20건) 본문
+    # 이미지는 아직 X 캡처 하나뿐이다. 그냥 내려가면 codex 로 본문을 짓고 번역까지 한 뒤
+    # 캡처에서 「X 캡처에 실패했습니다」로 죽는다 — 돈·시간을 쓰기 전에 여기서 말한다.
+    # (본문을 어떻게 만들지는 **사람이 정할 것**이라 여기서 지어내지 않는다.)
+    if not post_id.isdigit():
+        raise RuntimeError(
+            f"X 밖 후보라 본문을 만들 수 없습니다({chosen.get('url') or post_id}). "
+            "본문 이미지가 X 화면 캡처뿐이라 X 게시물 후보로 골라 주세요 — "
+            "이 소재를 쓰려면 본문을 어떻게 만들지 먼저 정해야 합니다.")
 
     # 1) 문구 — 지침서를 실어 codex 에게 맡긴다(형식만 여기서 정한다).
     r = await studio.make_body(studio.BodyBody(

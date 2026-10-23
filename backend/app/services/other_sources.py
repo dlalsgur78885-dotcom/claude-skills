@@ -79,6 +79,9 @@ async def collect(limit: int = 20, *, deep: bool = True) -> list[dict[str, Any]]
         )
         out, err = await asyncio.wait_for(proc.communicate(), timeout=TIMEOUT_SEC)
     except asyncio.TimeoutError:
+        # ⚠ `wait_for` 는 기다리기만 그만둔다 — **자식은 계속 돈다.** 안 죽이면
+        #   유튜브·스레드를 긁는 파이썬이 회차마다 하나씩 남는다.
+        proc.kill()
         logger.warning("[소재] 수집이 %d초를 넘겨 건너뜁니다", TIMEOUT_SEC)
         return []
     except Exception as e:

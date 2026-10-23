@@ -942,6 +942,16 @@ async def _do_images(chosen: dict[str, Any], axis: str,
         shots = {k: (0 if k in on_demand else v) for k, v in shots.items()}
     # 그릴 종류만 남긴다 — 축마다 다르다(상황별일본어 인물·풍경 / 일본맛집 인물·음식).
     kinds = [k for k, v in shots.items() if v]
+    # 그릴 것이 하나도 없으면 **원글 사진만 돌려주고 끝낸다** (2026-10-22 점검).
+    # 치이카와처럼 생성컷을 안 쓰는 유형(`cover_on_demand`)이 아래로 내려가면
+    # 「그릴 장면을 한 줄도 받지 못했습니다」로 죽는다 — 사진은 멀쩡히 있는데도.
+    if not kinds:
+        got = [*post_images, *(keep or [])]
+        if not got:
+            raise RuntimeError("쓸 사진이 없습니다 — 원글에 사진이 없고 그릴 묶음도 없습니다. "
+                               "[인물 다시]·[풍경 다시] 로 그려 주세요.")
+        logger.info(f"[studio-worker] 생성컷 없이 원글 사진 {len(got)}장으로 끝냅니다")
+        return {"images": got}
     want = " · ".join(f"{KIND_KO.get(k, k)}({k}) {shots[k]}장" for k in kinds)
     # 생김새·각도·시선 자리를 돌리는 씨앗. 셀카 축은 **누를 때마다 새로** 만든다
     # (2026-10-02 사람 지시 — 「뽑을 때마다 사람, 각도 바뀌도록」. 주제로만 돌리면 같은
@@ -1305,7 +1315,14 @@ async def _do_body_x(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
             keep = max(1, x_search.BODY_SLIDES_MAX - len(slides))
             if len(items) > keep:
                 logger.info(f"[studio-worker] 반응 {len(slides)}장 — 글·사진 장을 {len(items)}→{keep}장으로 줄입니다")
-            items = items[:keep] + slides
+            head = items[:keep]
+            # **마지막 장(CTA 바로 앞)은 감정·행동을 건드리는 한 줄**이다(2026-10-22 대표 지시).
+            # 반응 장을 그냥 뒤에 붙이면 그 자리가 밀리므로 **감탄 장 앞**에 끼운다.
+            if studio.axis_conf(axis).get("closing_item") and len(head) > 1:
+                items = [*head[:-1], *slides, head[-1]]
+                logger.info("[studio-worker] 마지막 장을 감탄 문구 장으로 두고 반응 장을 그 앞에 넣었습니다")
+            else:
+                items = head + slides
     else:
         logger.info(f"[studio-worker] 찍을 수 있는 답글이 {len(quotes)}개 — 일본 반응 장은 건너뜁니다")
     return {"body": items}
@@ -1334,7 +1351,7 @@ async def _reply_slides(quotes: list[dict[str, Any]], chosen: dict[str, Any],
         logger.info("[studio-worker] 쓸 만한 답글이 없어 일본 반응 장은 건너뜁니다")
         return []
 
-    out: list[dict[str, Any]] = []
+    shots: list[tuple[bytes, str]] = []
     for q in picked:
         korean = str((q or {}).get("korean") or "").strip()
         if not korean:
@@ -1342,16 +1359,36 @@ async def _reply_slides(quotes: list[dict[str, Any]], chosen: dict[str, Any],
         if not korean:
             continue
         try:
-            shot = await x_search.capture_reply({**q, "korean": korean})
+            shots.append((await x_search.capture_reply({**q, "korean": korean}), korean))
         except Exception as e:
             logger.warning(f"[studio-worker] 답글 캡처 실패({(q or {}).get('id')}): {str(e)[:200]}")
             continue
+    if not shots:
+        raise RuntimeError("답글 캡처를 한 장도 만들지 못했습니다.")
+
+    # 반응 캡처는 **칸**에 들어가야 한다. 낱장을 안 달면 배경(`사진+자막`)으로 떨어져
+    # 4:5 에 맞춰 **좌우가 잘린다**(2026-10-22 대표 제보 — 글자가 양옆으로 잘렸다).
+    cells = studio.axis_conf(axis).get("cell_layouts") or []
+    card = str(studio.axis_conf(axis).get("no_photo_layout") or "")
+    lay = {"layout": card} if card in cells else {}
+
+    # **셋 이상이면 한 판에 쌓는다** (2026-10-22 대표 지시 — 「한 장 안에 캡쳐 카드가
+    # 3-4개씩 배치되어 있는 것도 필요함」). 같은 모양의 카드 장이 연달아 나오는 것보다
+    # 한 판에 모아 보는 쪽이 읽힌다. 둘 이하면 지금처럼 한 장에 한 개다.
+    if len(shots) >= 3:
+        sheet = await asyncio.to_thread(x_search.stack_cards, [s for s, _ in shots[:4]])
+        url = await studio_remote.upload_image(sheet, f"{secrets.token_hex(8)}.png")
+        text = await studio.make_reply_line(
+            chosen.get("topic", ""), [{"korean": k} for _, k in shots[:4]], axis)
+        logger.info(f"[studio-worker] 반응 캡처 {len(shots[:4])}개를 한 판에 쌓았습니다")
+        return [{"text": text, "photo": url, **lay}]
+
+    out: list[dict[str, Any]] = []
+    for shot, korean in shots:
         url = await studio_remote.upload_image(shot, f"{secrets.token_hex(8)}.png")
         # 문구는 **그 답글 한 개**를 여는 한 줄이다 — 장마다 따로 짓는다.
         text = await studio.make_reply_line(chosen.get("topic", ""), [{"korean": korean}], axis)
-        out.append({"text": text, "photo": url})
-    if not out:
-        raise RuntimeError("답글 캡처를 한 장도 만들지 못했습니다.")
+        out.append({"text": text, "photo": url, **lay})
     return out
 
 
@@ -1607,6 +1644,15 @@ async def _attach_captures(items: list[dict[str, Any]], rec: dict[str, Any],
         out[index] = {**out[index], "layout": layout, "photo": url}
         done += 1
     logger.info(f"[studio-worker] 글만 있는 장 {len(blanks)}개 중 {done}장을 원글 캡처로 채웠습니다")
+    # **마지막 장(CTA 바로 앞)은 감정·행동을 건드리는 한 줄**이어야 한다
+    # (2026-10-22 트립앤라이프 — 「진짜 사고 싶다.. · 진짜 귀엽다 · 너무 신기하다」).
+    # 캡처 장이 뒤에 붙으면 그 자리가 밀리므로 캡처를 앞으로 당긴다.
+    if done and conf.get("closing_item") and len(out) > 1:
+        caps = [it for it in out if str((it or {}).get("layout") or "") == layout]
+        rest = [it for it in out if str((it or {}).get("layout") or "") != layout]
+        if caps and rest:
+            out = [*rest[:-1], *caps, rest[-1]]
+            logger.info("[studio-worker] 마지막 장을 감탄 문구 장으로 두고 캡처를 그 앞에 넣었습니다")
     return out
 
 
@@ -1933,8 +1979,15 @@ async def _fill_x_source(session_id: str, axis: str, chosen: dict[str, Any]) -> 
     old = str(chosen.get("post_id") or "")
     new = str(add.get("post_id") or "")
     if old and new and old == new:
-        return chosen
-    if old and new:
+        # 같은 글이다 — 덮을 것은 없지만 **화면이 안 보낸 칸은 채운다.**
+        # 2026-10-22 유형 축이 여기서 막혔다: 화면은 `post_id` 는 보내고 `type` 은
+        # 안 보내는데, 같은 글이라고 그냥 돌아서면 유형이 영영 안 붙어 2단계가
+        # 「유형이 안 붙은 후보입니다」로 멈춘다(`_handle`).
+        add = {k: v for k, v in add.items() if chosen.get(k) in (None, "", [])}
+        if not add:
+            return chosen
+        logger.info(f"[studio-worker] 화면이 빠뜨린 칸을 후보에서 채웁니다 — {', '.join(add)}")
+    elif old and new:
         logger.warning("[studio-worker] 고른 주제와 게시물이 어긋나 바로잡습니다 — "
                        f"「{topic[:26]}」 {old} → {new}")
         # 앞 주제에서 남은 것까지 지운다. 새 주제에 없는 칸(사진·답글)이 남으면
@@ -2109,10 +2162,16 @@ async def _maybe_start_nightly(done: set[str]) -> None:
             logger.info(f"[studio-worker] {at} — 「{axis}」 아직 안 쓴 회차가 있어 건너뜁니다")
             continue
 
-        logger.info(f"[studio-worker] {at} — 「{axis}」 미리 만들기 시작 (주제 {settings.STUDIO_PREPARE_COUNT}개)")
+        # 유형 축은 **1단계(수집·자동 분류)만** 미리 돌린다 — 유형이 붙기 전이라 2단계부터는
+        # 못 간다(`_handle` 이 막는다). 아침에 사람이 후보를 고르면 거기서 이어진다
+        # (2026-10-22 트립앤라이프 「1단계 미리 해서 평일 오전 9시에 바로 착착」).
+        from app.services import studio_steps as _studio
+        step = "topics" if _studio.is_type_axis(axis) else "prepare"
+        what = "1단계 수집" if step == "topics" else f"미리 만들기 (주제 {settings.STUDIO_PREPARE_COUNT}개)"
+        logger.info(f"[studio-worker] {at} — 「{axis}」 {what} 시작")
         try:
-            # 여는 순간 prepare 로 연다. 만든 뒤 바꾸면 그 사이에 다른 단계가 끼어든다.
-            await studio_remote.call("/studio-sessions/", {"axis": axis, "pending": "prepare"},
+            # 여는 순간 그 단계로 연다. 만든 뒤 바꾸면 그 사이에 다른 단계가 끼어든다.
+            await studio_remote.call("/studio-sessions/", {"axis": axis, "pending": step},
                                      account=account)
         except Exception as e:
             logger.warning(f"[studio-worker] 「{axis}」 미리 만들기를 열지 못했습니다: {e}")

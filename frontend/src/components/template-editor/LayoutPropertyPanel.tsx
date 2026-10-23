@@ -1583,6 +1583,11 @@ function SelectionEditor({
                 <option value="body5">body5 · 본문 5</option>
                 <option value="body6">body6 · 본문 6</option>
                 <option value="tag">tag · 태그</option>
+                <option value="tag2">tag2 · 태그 2</option>
+                <option value="tag3">tag3 · 태그 3</option>
+                <option value="tag4">tag4 · 태그 4</option>
+                <option value="tag5">tag5 · 태그 5</option>
+                <option value="tag6">tag6 · 태그 6</option>
                 <option value="footer">footer · 하단</option>
               </select>
             </label>

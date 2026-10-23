@@ -69,9 +69,10 @@ _STANDARD_ROLES = {
 # Per-cell roles used by freeform (non-grid) layouts. Pattern:
 # cell_{title|subtitle|description}_r{row}c{col} where row/col are digits.
 _CELL_ROLE_RE = re.compile(r"^cell_(title|subtitle|description)_r(\d+)c(\d+)$")
-# Numbered slide-level roles (headline2, subheadline3, body2) — several same-role
-# slots on one layout, each reading its own slide field. Mirrors carousel_renderer.
-_NUMBERED_ROLE_RE = re.compile(r"^(headline|subheadline|body)[2-9]$")
+# Numbered slide-level roles (headline2, subheadline3, body2, tag2) — several
+# same-role slots on one layout, each reading its own slide field. Mirrors
+# carousel_renderer.
+_NUMBERED_ROLE_RE = re.compile(r"^(headline|subheadline|body|tag)[2-9]$")
 
 
 class TextSlot(BaseModel):
@@ -100,7 +101,7 @@ class TextSlot(BaseModel):
             return v
         raise ValueError(
             f"role must be one of {sorted(_STANDARD_ROLES)}, headline<2-9>, "
-            f"subheadline<2-9>, body<2-9>, or match "
+            f"subheadline<2-9>, body<2-9>, tag<2-9>, or match "
             f"cell_(title|subtitle|description)_r<row>c<col>; got {v!r}"
         )
     style: TextStyle

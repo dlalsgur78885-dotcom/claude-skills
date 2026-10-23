@@ -78,7 +78,9 @@ const AXES: Record<string, {
   // 유형 축 — 축을 유형마다 뜨지 않고 **유형을 고르는 축 하나**로 간다(2026-10-21 트립앤라이프).
   // 백엔드는 `유형:<유형이름>` 한 값으로 지침서·낱장 조합을 갈아 끼운다(`studio_steps._TYPES`).
   // 유형이 늘면 여기도 한 줄씩 늘어난다 — 그 외에는 고칠 것이 없어야 한다.
-  "community": { axis: "유형:커뮤니티화제", title: "커뮤니티 화제", scenery: true, link: true },
+  // 2026-10-23 — 유형 이름을 「커뮤화제」로 줄였다(사람 지시). 옛 주소로 들어와도 백엔드가
+  // 옛 이름을 받아 준다(`studio_steps._TYPE_RENAMES`).
+  "community": { axis: "유형:커뮤화제", title: "커뮤화제", scenery: true, link: true },
   // 유형을 **고르지 않고** 여는 길(2026-10-22 트립앤라이프 「자동 분류 넣어」) — 1단계가
   // 소재를 모아 후보마다 유형을 붙여 준다. 고르는 순간 일꾼이 그 유형으로 좁혀 2단계를 간다.
   "type": { axis: "유형", title: "유형 자동 분류", scenery: true, link: true },
@@ -428,8 +430,11 @@ export default function AxisStudio() {
     // 제대로 보내는 것이 맞다.
     const src = meta as Record<string, unknown>;
     const source: Record<string, unknown> = {};
+    // `type`·`gate` 는 유형 축이 1단계에서 붙인 것이다 — 이게 안 따라가면 2단계부터
+    // 유형 지침서 없이 돌아 일꾼이 막는다(2026-10-22 점검에서 실제로 막혔다).
     for (const k of ["post_id", "url", "photos", "photo_urls", "text",
-                     "views", "likes", "replies", "author", "reply_quotes"]) {
+                     "views", "likes", "replies", "author", "reply_quotes",
+                     "type", "gate"]) {
       if (src[k] !== undefined) source[k] = src[k];
     }
     send({ chosen: { topic, ...where, ...source }, reset_from: 2,

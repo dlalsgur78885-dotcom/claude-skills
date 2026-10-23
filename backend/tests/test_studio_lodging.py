@@ -396,6 +396,9 @@ def _body_with(monkeypatch, topic, n_places, answers):
     async def fake_shots(place, cap):
         return ["s1", "s2", "s3", "s4", "s5", "s6", "s7"]
 
+    async def fake_cat_shots(place, cap):
+        return {}           # 사진첩이 안 열린 셈 — 옛 길(한 묶음)로 돈다
+
     async def fake_ask(step, task, shape, extra="", schema=None, axis=None, **kw):
         calls.append(extra)
         return answers[len(calls) - 1]
@@ -403,6 +406,7 @@ def _body_with(monkeypatch, topic, n_places, answers):
     monkeypatch.setattr(studio, "_lodging_places", fake_places)
     monkeypatch.setattr(jalan, "facts_many", fake_facts)
     monkeypatch.setattr(studio, "_lodging_shots", fake_shots)
+    monkeypatch.setattr(studio, "_lodging_cat_shots", fake_cat_shots)
     monkeypatch.setattr(studio, "_ask", fake_ask)
     return calls, lambda: asyncio.run(studio.make_lodging_body(studio.BodyBody(axis=AXIS, topic=topic)))
 
@@ -482,3 +486,50 @@ def test_japanese_page_retried_then_fixed(monkeypatch):
     assert len(calls) == 2 and "東銀座駅" in calls[1]
     assert out["items"][0]["desc"].startswith("히가시긴자역")
     assert "히가시긴자역" in calls[0]                            # 처음부터 한국어 표기로 쓰라고 알렸다
+
+
+# ─── 호텔 하나 — 장마다 다른 사진 (2026-10-23 솔희 「본문 이미지 후보가 전부 동일해」) ───
+
+@pytest.mark.parametrize("point,cat", [
+    ({"sub": "조식 뷔페가 두 군데", "desc": "초밥을 눈앞에서 쥐어 줍니다"}, "식사"),
+    ({"sub": "혼자 묵을 방을 골랐어요", "desc": "객실은 21㎡입니다"}, "객실"),
+    ({"sub": "당구 치러 올라간 라운지", "desc": "최상층 라운지는 24시간입니다"}, "시설"),
+    ({"sub": "역에서 걸어보니", "desc": "신남구에서 도보 7분입니다"}, "외부"),
+    ({"sub": "그냥 좋았어요", "desc": "묵기 편했습니다"}, "외부"),          # 못 가리면 외관·주변
+    ({"sub": "넓은 방", "desc": "좋습니다", "cat": "객실"}, "객실"),         # 모델이 준 갈래가 먼저다
+])
+def test_lodging_cat_matches_page_text(point, cat):
+    assert studio._lodging_cat(point) == cat
+
+
+def test_point_shots_differ_per_page():
+    """장마다 **다른 후보 묶음**을 받는다 — 같은 갈래 장끼리도 겹치지 않는다."""
+    points = [{"sub": "조식", "desc": "뷔페"}, {"sub": "객실", "desc": "넓은 방"},
+              {"sub": "대욕장", "desc": "사우나"}, {"sub": "라운지", "desc": "피트니스"}]
+    pools = {"식사": ["f1", "f2"], "객실": ["r1", "r2"], "시설": ["a1", "a2", "a3", "a4"]}
+    out = studio._lodging_point_shots(points, pools, ["x1", "x2"], want=2)
+    assert [s[0] for s in out] == ["f1", "r1", "a1", "a2"]          # 갈래에 맞는 사진이 기본값
+    assert len({u for s in out for u in s}) == sum(len(s) for s in out)   # 장끼리 안 겹친다
+    assert all(len(s) == 2 for s in out)                           # 모자란 장은 공용에서 채운다
+
+
+def test_point_shots_rotate_when_pool_is_thin():
+    """갈래 묶음이 장수보다 적으면 순서만 돌려 준다 — 기본값은 그래도 다르다."""
+    points = [{"sub": "객실", "desc": "방"}, {"sub": "침대", "desc": "방"}]
+    out = studio._lodging_point_shots(points, {"객실": ["r1", "r2"]}, [], want=2)
+    assert [s[0] for s in out] == ["r1", "r2"]
+
+
+def test_body_single_hotel_uses_cat_pools(monkeypatch):
+    """사진첩이 열리면 `_1` 은 외관, `_2` 는 갈래별 사진을 받는다."""
+    async def pools(place, cap):
+        return {"외부": ["o1", "o2"], "객실": ["r1", "r2"], "식사": ["f1", "f2"], "": ["x1"]}
+
+    calls, run = _body_with(monkeypatch, "콘래드 오사카", 1,
+                            [_one("40층 로비 호텔\n야경이 보입니다.", ["조식\n뷔페가 좋습니다.",
+                                                                "객실\n넓습니다.", "역\n도보 3분입니다."])])
+    monkeypatch.setattr(studio, "_lodging_cat_shots", pools)
+    items = run()["items"]
+    assert items[0]["photos"] == ["o1", "o2"]                      # 1번은 외관 몫
+    assert [it["photo"] for it in items[1:]] == ["f1", "r1", "x1"]  # 식사·객실·(외부는 1번이 다 썼다)
+    assert all(it["photos"] for it in items)

@@ -31,8 +31,10 @@ import re
 import secrets
 from collections import Counter
 from datetime import date, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -328,7 +330,9 @@ AXES: dict[str, dict[str, Any]] = {
             "hooks":   ["X인용_3-1단계_훅문구.md"],
             "images":  ["X인용_3-2단계_썸네일이미지.md"],
             "body":    ["X인용_3-3단계_본문.md"],
-            "caption": ["X인용_5단계_캡션.md", "솔희_캡션공통.md"],
+            # 준혁_캡션공통 이 먼저다 — 틀(후킹 첫 줄·💬 CTA·분량)과 「해시태그·사진 출처 금지」가
+            # 거기 있고, 축 문서의 옛 해시태그 개수 규칙을 덮는다(2026-10-22 대표 지시).
+            "caption": ["준혁_캡션공통.md", "X인용_5단계_캡션.md", "솔희_캡션공통.md"],
         },
         "history": "X인용_이력.md",
         "keeps": "X인용_보관함.md",
@@ -401,7 +405,8 @@ AXES: dict[str, dict[str, Any]] = {
             "hooks":   ["_유형공통.md"],
             "images":  ["_유형공통.md"],
             "body":    ["_유형공통.md"],
-            "caption": ["_유형공통.md", "솔희_캡션공통.md"],
+            # 준혁_캡션공통 이 캡션 틀의 정본이다(2026-10-22 대표 지시).
+            "caption": ["준혁_캡션공통.md", "_유형공통.md", "솔희_캡션공통.md"],
         },
         # 이력·보관함·제외는 아직 공용이다(`_유형공통.md` 규칙 7). 유형마다 나누게 되면
         # 그때 유형 줄에 `history` 를 적으면 된다 — 줄이 뼈대를 덮는다.
@@ -439,6 +444,9 @@ AXES: dict[str, dict[str, Any]] = {
         # `studio_worker._attach_captures` 가 원글 트윗을 좋아요 순으로 골라 임베드를 찍고
         # 한국어로 갈아 끼워 칸에 넣는다. 못 찍으면 예전처럼 빈 칸으로 나온다.
         "no_photo_layout": "캡처카드",
+        # 마지막 장(CTA 바로 앞)은 감정·행동을 건드리는 한 줄로 닫는다(2026-10-22 대표 지시).
+        # 캡처 장이 뒤에 붙지 않게 일꾼이 순서를 잡는다(`_attach_captures`).
+        "closing_item": True,
         "places": 0,                 # 실제 장소를 다루지 않는다
         "cover_shots": {"person": 5, "scenery": 5},
         "item_image_no_frame": True,
@@ -446,29 +454,56 @@ AXES: dict[str, dict[str, Any]] = {
         # 1단계 소재 — 우선 X인용 축이 쓰는 grok X 검색을 그대로 쓴다(2026-10-21).
         # Togetter(`scripts/collect_sources.py`)로 갈아 끼우는 것은 한 줄이 검증된 뒤다.
         "x_source": True,
-        # ⚠ **미리 만들기를 돌리지 않는다.** 키를 비워 두면 일꾼이 기본 시각(23:00·06:00)에
-        #   이 축을 집어 간다 — 유형을 안 고른 「유형」 그대로는 돌 수 없고, grok 을 40분
-        #   헛돌린다(2026-10-21 축을 붙이자마자 로그에 그렇게 찍혔다).
-        #   예약은 유형 줄이 검증된 뒤에 그 줄에 적는다.
-        "prepare_at": [],
+        # **1단계만 미리 돌린다** (2026-10-22 트립앤라이프 「1단계 미리 해서 평일 오전 9시에
+        # 바로 착착 진행할 수 있게」). 일꾼이 유형 축에서는 `prepare` 대신 `topics` 로 연다 —
+        # 유형이 붙기 전이라 2단계부터는 못 가기 때문이다(`studio_worker._handle`).
+        # 23:00 은 **다음 날이 평일일 때**(일~목), 06:00 은 평일 아침 백업이다. 1단계가
+        # 40분이라 둘 다 9시 전에 끝난다. 앞 회차를 안 썼으면 06:00 은 알아서 건너뛴다.
+        # 두 시각이 **서로 다른 유형 묶음**을 돈다(날짜가 다르다). 앞 회차를 안 썼다고
+        # 06:00 을 건너뛰면 아침에 유형 3개치뿐이라, 이 축만 매번 돌게 둔다.
+        "prepare_always": True,
+        "prepare_at": ["23:00", "06:00"],
+        "prepare_days": {"23:00": [6, 0, 1, 2, 3], "06:00": [0, 1, 2, 3, 4]},
     },
 }
 
 # 유형 한 줄 = **그 유형의 지침서**(+ 필요하면 뼈대를 덮을 값). 7개를 더 붙일 자리다.
 # 낱장 조합·소재원·문턱 수치는 코드가 아니라 그 지침서와 `_유형공통.md` 가 정한다.
 _TYPES: dict[str, dict[str, Any]] = {
-    "커뮤니티화제": {"guide": "일본커뮤니티화제_유형지침.md"},
+    # `no` = **고정 번호**다(2026-10-23 트립앤라이프 「한번 정해서 앞으로 쭉 고정」).
+    # 회차마다 다시 매기지 않는다 — 번호를 보고 유형을 떠올리게 하려는 것이라, 이번 회차에
+    # 한 건도 안 걷힌 유형의 번호도 비워 둔다. **번호는 바꾸지 않는다**(새 유형은 9번부터).
+    "커뮤화제": {"no": 1, "guide": "일본커뮤니티화제_유형지침.md"},
     # 2026-10-21 — 커뮤니티 화제가 캐러셀 917 로 끝까지 돌아, 나머지를 같은 모양으로 붙였다.
     # 덮을 값이 없다 — 템플릿·낱장·단계는 위 뼈대와 같고 다른 것은 지침서뿐이다.
-    "치이카와": {"guide": "치이카와_유형지침.md"},
-    "여행준비뉴스": {"guide": "여행준비뉴스_유형지침.md"},
-    "한국인만읽는일본어": {"guide": "한국인만읽는일본어_유형지침.md"},
-    "일본미녀": {"guide": "일본미녀_유형지침.md"},
-    "일본충격뉴스": {"guide": "일본충격뉴스_유형지침.md"},
-    "몰랐던일본": {"guide": "몰랐던일본_유형지침.md"},
-    # ⛔ 「일본인 관점의 한국」은 **지침서가 아직 없다**(`_유형공통.md` 조합 표에는 있다).
-    #    문서가 생기면 여기에 한 줄 더한다.
+    # 2026-10-22 — 치이카와는 **원글의 현물 사진**만 쓴다(저작권·지침서 「사진은 어디서」).
+    # 인물·풍경 생성컷 10장을 매번 그리느라 사진 단계가 9분 걸렸다 — 버튼으로 부를 때만 그린다.
+    "치이카와": {"no": 2, "guide": "치이카와_유형지침.md",
+                 "cover_on_demand": ["person", "scenery"]},
+    "여행준비뉴스": {"no": 3, "guide": "여행준비뉴스_유형지침.md"},
+    "한국인만읽는일본어": {"no": 4, "guide": "한국인만읽는일본어_유형지침.md"},
+    "일본미녀": {"no": 5, "guide": "일본미녀_유형지침.md"},
+    "일본충격뉴스": {"no": 6, "guide": "일본충격뉴스_유형지침.md"},
+    "몰랐던일본": {"no": 7, "guide": "몰랐던일본_유형지침.md"},
+    # 2026-10-22 트립앤라이프 「일본인 관점의 한국은 지침서 왜 없지, 만들어」 — 지침서를 쓰고 등록했다.
+    # 방향(2026-10-22 대표 확정 — 호의·훈훈과 부정·논란을 둘 다 쓴다)은 코드가 아니라 그 지침서가 정한다.
+    "일본인관점의한국": {"no": 8, "guide": "일본인관점의한국_유형지침.md"},
 }
+
+# 옛 이름 → 지금 이름. 2026-10-23 「커뮤니티화제」를 **「커뮤화제」**로 줄였다(사람 지시 —
+# 「이름이 기니까」). 전에 만든 회차·편집 링크에 옛 이름이 박혀 있어, 들어올 때 바꿔 준다.
+_TYPE_RENAMES: dict[str, str] = {"커뮤니티화제": "커뮤화제"}
+
+
+def canon_type(name: str | None) -> str:
+    """유형 이름을 지금 쓰는 이름으로 맞춘다. 모르는 이름은 그대로 돌려준다(부르는 쪽이 판정)."""
+    key = str(name or "").strip()
+    return _TYPE_RENAMES.get(key, key)
+
+
+def type_no(name: str | None) -> int:
+    """그 유형의 **고정 번호**. 모르는 유형은 0 이다."""
+    return int((_TYPES.get(canon_type(name)) or {}).get("no") or 0)
 
 DEFAULT_AXIS = "상황별일본어"
 
@@ -486,7 +521,7 @@ def is_type_axis(axis: str | None) -> bool:
 def axis_with_type(axis: str | None, name: str | None) -> str:
     """「유형」 축 + 후보에 붙은 유형 → 「유형:<이름>」. 다른 축이거나 유형이 없으면 그대로 둔다."""
     key = (axis or "").strip()
-    name = str(name or "").strip()
+    name = canon_type(name)
     if key != TYPE_AXIS or not name:
         return key
     if name not in _TYPES:
@@ -501,10 +536,10 @@ def axis_conf(axis: str | None) -> dict[str, Any]:
     # 줄이 뼈대를 덮고, `guide` 만 단계별 지침서 목록 **뒤에** 붙는다(공통이 먼저다).
     if key.startswith("유형:"):
         base = AXES["유형"]
-        row = _TYPES.get(key.split(":", 1)[1].strip())
+        row = _TYPES.get(canon_type(key.split(":", 1)[1]))
         if not row:
             raise HTTPException(status_code=400, detail=f"모르는 유형: {axis}")
-        merged = {**base, **{k: v for k, v in row.items() if k != "guide"}}
+        merged = {**base, **{k: v for k, v in row.items() if k not in ("guide", "no")}}
         if row.get("guide"):
             merged["guides"] = {k: [*v, row["guide"]] for k, v in base["guides"].items()}
         return merged
@@ -1295,9 +1330,12 @@ S_LODGING_SET = _obj({"items": _arr(_obj({
 # 호텔 하나 — `_1` 한 장(intro) + 장점·특징 `_2` 여러 장(points). `_2` 에는 HEADLINE 이 없다.
 # ⚠ 장수(minItems·maxItems)를 스키마에 넣지 않는다 — codex 구조화 출력이 받는지 확인한 적이 없다.
 #   대신 받은 뒤 `LODGING_POINTS` 범위로 거른다(`_lodging_points`).
+# `cat` 은 글 칸이 아니다 — 그 장에 **어느 갈래 사진**을 붙일지다(`_lodging_cat` · 3-3 「사진으로
+# 보이는 것은 그 장 사진과 맞춘다」). 낱장에는 나가지 않는다.
 S_LODGING_ONE = _obj({
     "intro": _obj({"name": {"type": "string"}, "sub": {"type": "string"}, "desc": {"type": "string"}}),
-    "points": _arr(_obj({"sub": {"type": "string"}, "desc": {"type": "string"}})),
+    "points": _arr(_obj({"sub": {"type": "string"}, "desc": {"type": "string"},
+                         "cat": {"type": "string"}})),
 })
 # 장점 장 수의 **그물**일 뿐이다 — 몇 장인지는 지침서가 정한다. 지금 지침서 둘이 다르게 적혀 있어
 # (2단계 「`_2` × 7」 · 3-3·4단계 「5장」) 둘 다 받게 넓게 둔다. 이 밖이면 모델이 형식을 놓친 것이다.
@@ -1392,6 +1430,53 @@ X_BATCHES = (
 )
 
 
+# 유형 축 1단계에서 **한 회차에 도는 유형 수.** 묶음은 유형 수 + 공통 2개다 —
+# 한 묶음에 최대 8분이라 5묶음(40분)을 넘기지 않는다.
+TYPES_PER_ROUND = 3
+
+# 오늘 이미 돈 묶음 — 같은 날 두 번째 회차가 같은 유형을 또 긁지 않게 한다.
+# 프로세스를 다시 띄우면 비워진다(그만큼만 기억하면 충분하다).
+_RAN_TRIOS: set[tuple[str, int]] = set()
+
+
+def _type_batches(today: datetime | None = None, shift: int = 0) -> tuple[tuple[str, int, str, str], ...]:
+    """유형 축 1단계 묶음 — **유형 3개를 돌아가며** 그 유형 지침서로 찾고, 공통 2묶음을 더한다.
+
+    2026-10-22 트립앤라이프 「1단계 수집 유형별로 나누기」. 유형마다 키워드·소재원이 다른데
+    (치이카와 `ちいかわ コラボ` · 커뮤니티 화제는 토게터) 공통 지침서 하나로만 찾다 보니
+    한 회차 43건이 치이카와 15 · 커뮤니티화제 1 · 한국인만읽는일본어 2 로 쏠렸다.
+
+    **어느 유형이 도는지는 날짜로 돌린다** — 기억해 둘 상태가 없고, 8유형이 사흘이면 한 바퀴다.
+    """
+    NL = chr(10)
+    names = list(_TYPES)
+    day = (today or datetime.now()).timetuple().tm_yday
+    # `shift` 는 **같은 날 두 번 돌 때** 다음 묶음으로 넘기는 자리다 — 새벽 회차가
+    #  전날 밤과 같은 유형을 또 긁지 않게 한다(2026-10-22).
+    start = ((day + shift) * TYPES_PER_ROUND) % len(names)
+    # **같은 날 이미 돈 묶음은 건너뛴다.** 하루에 두 번 이상 돌 때(밤 예약 + 사람이 연 회차)
+    # 같은 유형을 또 긁으면 나머지 유형은 영영 후보가 안 생긴다(2026-10-22).
+    stamp = f"{(today or datetime.now()):%Y-%m-%d}"
+    for _ in range(len(names)):
+        if (stamp, start) not in _RAN_TRIOS:
+            break
+        start = (start + TYPES_PER_ROUND) % len(names)
+    _RAN_TRIOS.add((stamp, start))
+    picked = [names[(start + i) % len(names)] for i in range(min(TYPES_PER_ROUND, len(names)))]
+    out: list[tuple[str, int, str, str]] = []
+    for name in picked:
+        guide = str((_TYPES[name] or {}).get("guide") or "")
+        head = (f"이번 묶음은 **「{name}」 유형**이다. 아래는 그 유형의 지침서 원문이다 — "
+                "**키워드·소재원·조회/댓글 문턱·되는 것/안 되는 것은 이쪽을 따른다**"
+                "(위 공통 지침서와 어긋나면 이쪽이 우선이다).")
+        note = head + NL + NL + _read_doc(guide) + NL
+        out.append((f"「{name}」 유형의", 10, "최근 14일", note))
+    # 어느 유형에도 안 걸리는 글도 쓸 만한 것이 있다 — 공통 묶음 둘을 남겨 둔다.
+    out.append(("텍스트", 10, "최근 14일", ""))
+    out.append(("사진·영상", 10, "최근 14일", ""))
+    return tuple(out)
+
+
 async def _x_topics(axis: str, history: list[str]) -> list[dict[str, Any]]:
     """X인용 축의 주제 후보 — **X 에서 찾아온다.** 지어내지 않는다.
 
@@ -1436,7 +1521,11 @@ async def _x_topics(axis: str, history: list[str]) -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
     fails: list[str] = []
     last_raw = ""
-    for kind, count, period, note in X_BATCHES:
+    # 유형 축은 **유형별 묶음**으로 찾는다(위 `_type_batches`). 다른 축은 예전 묶음 그대로다.
+    # 아침 회차(12시 이전)는 **다음 묶음**을 돈다 — 밤 회차와 겹치지 않게.
+    batches = (_type_batches(shift=1 if datetime.now().hour < 12 else 0)
+               if is_type_axis(axis) else X_BATCHES)
+    for kind, count, period, note in batches:
         ask = "\n\n".join([
             "아래 규칙대로 X(트위터)에서 게시물을 찾아 줘. 규칙은 우리 팀 지침서 원문이다.",
             rules,
@@ -1627,6 +1716,45 @@ async def _mark_sensitive(items: list[dict[str, Any]], axis: str) -> list[dict[s
 # 여기서는 **버리지 않고 뒤로 보낸다**(아래 `_classify_types` 주석).
 TYPE_GATE_MIN = 3
 
+# 후보 줄 맨 앞에 붙는 **어디서 긁어왔나** (2026-10-23 트립앤라이프 「수집처 표기」).
+# 주소의 호스트로 가른다 — 후보마다 출처 칸을 따로 들고 다니지 않아도 되고,
+# 창구가 늘어도(한국 커뮤니티·Togetter) 줄만 더하면 된다. 모르는 곳은 「웹」이다.
+_SOURCE_HOSTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("X",        ("x.com", "twitter.com", "t.co")),
+    ("스레드",    ("threads.com", "threads.net")),
+    ("유튜브",    ("youtube.com", "youtu.be")),
+    ("인스타",    ("instagram.com",)),
+    # 2026-10-23 트립앤라이프 「커뮤니티는 이름까지 적어라」 — 「일본커뮤」·「한국커뮤」로만
+    # 묶으면 어느 커뮤인지 사람이 다시 눌러 봐야 알았다. 줄마다 한 곳씩 적어 괄호로 이름을 붙인다.
+    ("일본커뮤(토게터)",   ("togetter.com",)),
+    ("일본커뮤(하테나)",   ("hatena.ne.jp", "hatenablog.com")),
+    ("일본커뮤(5ch)",      ("5ch.net", "open2ch.net")),
+    ("일본커뮤(걸스채널)", ("girlschannel.net",)),
+    ("일본커뮤(J타운)",    ("j-town.net",)),
+    ("일본커뮤(마치BBS)",  ("machi.to",)),
+    ("한국커뮤(디시)",     ("dcinside.com",)),
+    ("한국커뮤(루리웹)",   ("ruliweb.com",)),
+    ("한국커뮤(펨코)",     ("fmkorea.com",)),
+    ("한국커뮤(더쿠)",     ("theqoo.net",)),
+    ("한국커뮤(인스티즈)", ("instiz.net",)),
+    ("한국커뮤(클리앙)",   ("clien.net",)),
+    ("한국커뮤(웃대)",     ("humoruniv.com",)),
+    ("한국커뮤(오유)",     ("todayhumor.co.kr",)),
+    ("한국커뮤(네이트판)", ("pann.nate.com", "nate.com")),
+)
+
+
+def source_label(url: str | None) -> str:
+    """그 후보를 **어디서 건졌나** — 화면 줄 맨 앞에 붙는다."""
+    host = urlparse(str(url or "")).netloc.lower()
+    if not host:
+        return ""
+    host = host.removeprefix("www.")
+    for name, hosts in _SOURCE_HOSTS:
+        if any(host == h or host.endswith("." + h) for h in hosts):
+            return name
+    return "웹"
+
 
 async def _classify_types(items: list[dict[str, Any]], axis: str) -> list[dict[str, Any]]:
     """후보마다 **유형 하나와 게이트 점수**를 붙인다 (2026-10-22 트립앤라이프 「자동 분류 넣어」).
@@ -1677,7 +1805,7 @@ async def _classify_types(items: list[dict[str, Any]], axis: str) -> list[dict[s
         if not isinstance(r, dict):
             continue
         pid = str(r.get("id") or "").strip()
-        name = str(r.get("type") or "").strip()
+        name = canon_type(r.get("type"))
         if not pid or pid in got:
             continue
         if name and name not in _TYPES:
@@ -1689,18 +1817,31 @@ async def _classify_types(items: list[dict[str, Any]], axis: str) -> list[dict[s
             gate = 0
         got[pid] = {"type": name, "gate": gate, "why": str(r.get("why") or "").strip()}
 
+    # 유형 번호는 `_TYPES` 의 **고정 번호**를 그대로 쓴다(2026-10-23 트립앤라이프 「한번 정해서
+    # 앞으로 쭉 고정」). 회차마다 다시 매기던 것을 되돌렸다 — 번호가 회차마다 달라지면
+    # 사람이 번호로 유형을 떠올릴 수 없다. 이번 회차에 안 걷힌 유형의 번호는 그냥 비어 있다.
+
     out = []
     for it in items:
         r = got.get(str(it["post_id"]))
         if not r:
             out.append(it)
             continue
-        old = str(it.get("why") or "")
-        label = f"[{r['type'] or '유형없음'} · 게이트 {r['gate']}/5]"
+        # 한 회차가 두 번 분류될 때가 있다(23:00 회차를 06:00 이 이어 쓴다) — 앞서 붙은
+        # 꼬리표가 남아 두 번 찍히지 않게 지우고 다시 붙인다.
+        old = re.sub(r"\[[^\]]*게이트 \d/5\]", "", str(it.get("why") or "")).strip(" ·")
+        kind = f"{type_no(r['type'])}. {r['type']}" if r["type"] else "유형없음"
+        label = " · ".join(x for x in (source_label(it.get("url")), kind,
+                                       f"게이트 {r['gate']}/5") if x)
         out.append({**it, "type": r["type"], "gate": r["gate"],
-                    "why": " ".join(x for x in (label, r["why"], f"· {old}" if old else "") if x)})
+                    "type_no": type_no(r["type"]),
+                    "source_label": source_label(it.get("url")),
+                    "why": " ".join(x for x in (f"[{label}]", r["why"],
+                                                f"· {old}" if old else "") if x)})
+    # 같은 유형끼리 모아 둔다 — 번호가 보이게. 유형 없는 것과 게이트 미달은 뒤로.
     ranked = sorted(out, key=lambda it: (not it.get("type"),
-                                         int(it.get("gate") or 0) < TYPE_GATE_MIN))
+                                         int(it.get("gate") or 0) < TYPE_GATE_MIN,
+                                         int(it.get("type_no") or 99)))
     tally = Counter(str(it.get("type") or "유형없음") for it in ranked)
     logger.info("[유형] 자동 분류 — %s · 게이트 %d점 미만 %d건",
                 " · ".join(f"{k} {v}" for k, v in tally.most_common()) or "없음",
@@ -2013,6 +2154,59 @@ class TopicBody(BaseModel):
     source: str = ""
 
 
+# ─── 글자가 칸에 들어가나 (2026-10-22 트립앤라이프 「검증단계 거쳐야지」) ───────────
+# 템플릿 `트립앤라이프(종합)`(96) 실측 — 표지 92pt·950px · 본문 자막 72pt·960px.
+# 10/22 점검에서 만든 캐러셀 6건이 **전부** 칸을 넘겨 줄이 접혔다(표지 2줄이 3줄이 됐다).
+# 칸·글자 크기를 바꾸려면 템플릿을 고쳐야 하는데 그건 솔희-캐러셀2 방 소관이라(`_공통.md` §96)
+# 여기서는 **문구를 칸에 맞춘다** — 넘는 후보는 뒤로 보낸다(버리지는 않는다. 고르는 건 사람이다).
+TEXT_BOX = {"cover": (92, 950), "body": (72, 960)}
+_FIT_FONT = "C:/Windows/Fonts/malgunbd.ttf"
+
+
+@lru_cache(maxsize=8)
+def _fit_font(size: int):
+    from PIL import ImageFont
+    return ImageFont.truetype(_FIT_FONT, size)
+
+
+def line_fits(line: str, kind: str = "cover") -> bool:
+    """그 한 줄이 칸 안에 들어가나. 폰트를 못 읽으면 **막지 않는다**(어림짐작으로 거르지 않는다)."""
+    size, box = TEXT_BOX.get(kind) or TEXT_BOX["cover"]
+    text = str(line).strip()
+    if not text:
+        return True
+    try:
+        return _fit_font(size).getbbox(text)[2] <= box
+    except Exception as e:
+        logger.debug(f"[fit] 글자 폭을 재지 못했습니다 — 그냥 통과시킵니다: {str(e)[:120]}")
+        return True
+
+
+def fits_all(lines: list[str], kind: str = "cover") -> bool:
+    return all(line_fits(str(x), kind) for x in (lines or []))
+
+
+def overflow_report(canvas_slides: list[dict[str, Any]]) -> list[str]:
+    """만든 캐러셀에서 **칸을 넘는 줄**을 찾아 적는다. 만든 뒤 검증 자리에서 쓴다."""
+    out: list[str] = []
+    for i, slide in enumerate(canvas_slides or []):
+        for obj in slide.get("objects") or []:
+            if str(obj.get("type")).lower() not in ("textbox", "text", "itext"):
+                continue
+            size = float(obj.get("fontSize") or 0) * float(obj.get("scaleX") or 1)
+            box = float(obj.get("width") or 0) * float(obj.get("scaleX") or 1)
+            if not size or not box:
+                continue
+            try:
+                font = _fit_font(int(round(size)))
+            except Exception:
+                return out
+            for line in str(obj.get("text") or "").split(chr(10)):
+                if line.strip() and font.getbbox(line)[2] > box:
+                    out.append(f"{i}번 장 {int(size)}pt 「{line[:20]}」")
+    return out
+
+
 async def make_hooks(body: TopicBody) -> dict[str, Any]:
     from app.services import hook_bank
 
@@ -2080,6 +2274,14 @@ async def make_hooks(body: TopicBody) -> dict[str, Any]:
             n = len(h["lines"])
             h["lines"] = fixed[pos:pos + n]
             pos += n
+    # 칸을 넘는 훅은 **뒤로 보낸다**(2026-10-22). 접혀 나올 것을 추천 자리에 두지 않는다.
+    over = 0
+    for key in ("three", "two"):
+        rows = out.get(key) or []
+        out[key] = sorted(rows, key=lambda h: not fits_all(list(h.get("lines") or []), "cover"))
+        over += sum(1 for h in rows if not fits_all(list(h.get("lines") or []), "cover"))
+    if over:
+        logger.info(f"[fit] 표지 훅 후보 {over}개가 칸을 넘어 뒤로 보냈습니다(칸 {TEXT_BOX['cover'][1]}px)")
     return out
 
 
@@ -3165,8 +3367,10 @@ def _lodging_points(points: Any) -> list[dict[str, str]]:
     """호텔 하나의 장점 장들 — 빈 것을 빼고 `LODGING_POINTS` 범위를 넘으면 뒤를 자른다.
 
     모자라면 던진다(일시적 실패로 본다 — 모델이 형식을 놓친 것이라 다시 누르면 된다).
+    `cat`(사진 갈래)은 글이 아니지만 **함께 들고 간다** — 장마다 맞는 사진을 고르는 데 쓴다.
     """
-    rows = [{"sub": str(p.get("sub") or "").strip(), "desc": _lines_of(p.get("desc"))}
+    rows = [{"sub": str(p.get("sub") or "").strip(), "desc": _lines_of(p.get("desc")),
+             "cat": str(p.get("cat") or "").strip()}
             for p in (points or []) if isinstance(p, dict)]
     rows = [r for r in rows if r["sub"] or r["desc"]]
     low, high = LODGING_POINTS
@@ -3182,6 +3386,115 @@ async def _lodging_shots(place: dict[str, Any], cap: int) -> list[str]:
     rep = place.get("photo") or ""
     cands = _uniq_shots(([rep] if rep and rep not in alts else []) + alts)
     return await place_lookup.sort_by_orientation(cands, prefer="portrait")
+
+
+# ── 호텔 하나 — 장마다 **문구에 맞는** 사진 (2026-10-23 솔희 지시) ──────────────────
+#
+# 사람 신고 — 「호텔 1개일 경우 본문 이미지 후보가 전부 동일해. 문구에 맞춰서 각각 다른
+# 이미지를 가져와야 될 것 같아」. `_2` 장 전부에 같은 묶음(`rest`)을 넘기고 있었다.
+# 3-3 지침서는 이미 「객실·로비·전망처럼 **사진으로 보이는 것은 그 장 사진과 맞춘다**」인데,
+# 코드에는 그 짝짓기가 없었다.
+#
+# 구글 사진첩이 이미 카테고리로 묶어 둔 것을 쓴다(`place_lookup.photos_by_category` —
+# 숙소는 「전체·최신·객실·외부·편의시설·음식/음료·방문자 제공·소유자 제공」).
+# 갈래 이름은 3-3 지침서의 갈래(시설·가격·식사·객실·교통)와 같은 말이다 — 가격·교통은 사진에
+# 안 찍히므로 「외부」(외관·주변)로 떨어진다.
+_LODGING_CAT_LABELS = {
+    "객실": ("객실",),
+    "식사": ("음식", "음료", "메뉴"),
+    "시설": ("편의시설", "욕실", "수영장"),
+    "외부": ("외부", "전경", "주변"),
+}
+# 모델이 `cat` 을 안 주거나 모르는 말을 줄 때 — 장 문구에서 찾는 말. 먼저 걸린 갈래다.
+_LODGING_CAT_WORDS = {
+    "식사": ("조식", "아침 식사", "뷔페", "식당", "레스토랑", "라멘", "카페", "음료",
+             "커피", "야식", "메뉴", "저녁"),
+    "객실": ("객실", "방", "침대", "트윈", "더블", "스위트", "㎡", "베드", "이불"),
+    "시설": ("대욕장", "온천", "노천", "탕", "사우나", "수영장", "라운지", "피트니스",
+             "세탁", "어메니티", "로비", "욕실", "샤워"),
+    "외부": ("역", "도보", "셔틀", "공항", "주변", "외관", "전망", "야경", "뷰", "위치",
+             "가격", "요금", "엔"),
+}
+# 갈래를 못 가린 장이 가는 곳 — 외관·주변은 어느 문구에나 어울린다(3-3 「사진에 안 찍히는 장」).
+_LODGING_CAT_ELSE = "외부"
+# 카테고리마다 받아 오는 장수. 갈래가 넷이라 32장쯤 되고, 세로 순으로 세울 때 그만큼 재어 본다.
+LODGING_CAT_CAP = 8
+
+
+def _lodging_cat(point: dict[str, Any]) -> str:
+    """그 장이 어느 갈래인가 — 모델이 준 `cat` 을 먼저 보고, 없으면 문구에서 찾는다."""
+    said = str(point.get("cat") or "")
+    for cat in _LODGING_CAT_WORDS:
+        if cat in said:
+            return cat
+    text = str(point.get("sub") or "") + chr(10) + str(point.get("desc") or "")
+    for cat, words in _LODGING_CAT_WORDS.items():
+        if any(w in text for w in words):
+            return cat
+    return _LODGING_CAT_ELSE
+
+
+async def _lodging_cat_shots(place: dict[str, Any], cap: int) -> dict[str, list[str]]:
+    """갈래별 사진 후보 — `{"객실": […], "식사": […], "시설": […], "외부": […], "": [공용]}`.
+
+    「전체·최신·방문자 제공·소유자 제공」은 무엇이 찍혔는지 가려지지 않으므로 **공용 묶음(`""`)**
+    으로 둔다 — 갈래 묶음이 비거나 모자랄 때 채우는 데 쓴다. 갈래마다 세로(4:5 배경)부터 세운다.
+    사진첩이 안 열리면 빈 사전이다(부르는 쪽이 옛 길로 돌아간다).
+    """
+    from app.services import place_lookup
+
+    cats = await place_lookup.photos_by_category(place, cap=cap)
+    if not cats:
+        return {}
+    pools: dict[str, list[str]] = {}
+    for label, urls in cats:
+        cat = next((c for c, keys in _LODGING_CAT_LABELS.items() if any(k in label for k in keys)), "")
+        pools.setdefault(cat, [])
+        pools[cat] += [u for u in urls if u not in pools[cat]]
+    # 갈래 묶음에 이미 있는 사진은 공용에서 뺀다 — 맨 앞 「전체」가 거의 다 들고 있다.
+    taken = {u for c, urls in pools.items() if c for u in urls}
+    pools[""] = [u for u in pools.get("", []) if u not in taken]
+    out: dict[str, list[str]] = {}
+    for cat, urls in pools.items():
+        if urls:
+            out[cat] = await place_lookup.sort_by_orientation(urls, prefer="portrait")
+    return out
+
+
+def _spread_shots(pool: list[str], n: int) -> list[list[str]]:
+    """사진 묶음 하나를 장 n 개에 나눈다 — 넉넉하면 **겹치지 않게**, 모자라면 순서만 돌려 준다."""
+    if n <= 0:
+        return []
+    if not pool:
+        return [[] for _ in range(n)]
+    if len(pool) < 2 * n:
+        return [pool[i % len(pool):] + pool[:i % len(pool)] for i in range(n)]
+    return [pool[i::n] for i in range(n)]
+
+
+def _lodging_point_shots(points: list[dict[str, str]], pools: dict[str, list[str]],
+                         spare: list[str], want: int) -> list[list[str]]:
+    """`_2` 장마다 그 문구의 갈래에 맞는 사진 후보 — 같은 갈래 장끼리도 겹치지 않게 나눈다.
+
+    갈래 묶음이 모자란 장은 공용 묶음(`spare`)에서 앞에서부터 떼어 채운다. 한 장에 `want` 장까지다.
+    """
+    groups: dict[str, list[int]] = {}
+    for n, p in enumerate(points):
+        groups.setdefault(_lodging_cat(p), []).append(n)
+    out: list[list[str]] = [[] for _ in points]
+    for cat, slots in groups.items():
+        for slot, urls in zip(slots, _spread_shots(pools.get(cat) or [], len(slots))):
+            out[slot] = urls[:want]
+    # 모자란 장을 공용 묶음에서 채운다 — **적은 장부터 한 장씩** 돌린다. 앞 장이 다 가져가면
+    # 갈래 묶음이 빈 장(외부 사진을 `_1` 이 다 쓴 경우)이 후보 없이 남는다.
+    left = [u for u in spare if u not in {u for urls in out for u in urls}]
+    while left and any(len(urls) < want for urls in out):
+        for urls in sorted(out, key=len):
+            if not left:
+                break
+            if len(urls) < want:
+                urls.append(left.pop(0))
+    return out
 
 
 async def make_lodging_body(body: "BodyBody") -> dict[str, Any]:
@@ -3231,24 +3544,39 @@ async def make_lodging_body(body: "BodyBody") -> dict[str, Any]:
                 "body",
                 f"주제 「{body.topic}」 는 **호텔 하나** 주제다. 지침서 형식대로 `{layout_one}` 한 장(intro — "
                 f"이름·서브·설명)과 장점·특징 `{layout_point}` 장들(points — 요약 한 줄·보충 설명)을 지어라. "
-                f"`{layout_point}` 의 장수는 지침서가 정한다.",
+                f"`{layout_point}` 의 장수는 지침서가 정한다. 장마다 `cat` 에 **그 장에 붙일 사진 "
+                f"갈래**를 적어라 — 객실 안이면 `객실`, 조식·식당·카페면 `식사`, 대욕장·온천·라운지"
+                f"처럼 시설이면 `시설`, 가격·교통·외관·전망이면 `외부`. 넷 중 하나만 쓴다.",
                 '{"intro": {"name": "숙소 이름", "sub": "서브(SUBHEADLINE)", "desc": "설명(BODY)"}, '
-                '"points": [{"sub": "장점 요약 한 줄(SUBHEADLINE)", "desc": "보충 설명(BODY)"}]}',
+                '"points": [{"sub": "장점 요약 한 줄(SUBHEADLINE)", "desc": "보충 설명(BODY)", '
+                '"cat": "사진 갈래 — 객실·식사·시설·외부 중 하나"}]}',
                 extra=chr(10).join(filter(None, [extra, note])), schema=S_LODGING_ONE, axis=body.axis,
             )
             d = written if isinstance(written, dict) else {}
             intro = d.get("intro") if isinstance(d.get("intro"), dict) else {}
             return [{"name": str(intro.get("name") or ""), "sub": str(intro.get("sub") or ""),
                      "desc": intro.get("desc")},
-                    *({"name": "", "sub": p["sub"], "desc": p["desc"]} for p in _lodging_points(d.get("points")))]
+                    *({"name": "", "sub": p["sub"], "desc": p["desc"], "cat": p["cat"]}
+                      for p in _lodging_points(d.get("points")))]
 
         pages = await _write_lodging_pages(ask_one, [str(g.get("name") or "") for g in good])
         intro, points = pages[0], _lodging_points(pages[1:])
         g = good[0]
-        cands = await _lodging_shots(g, int(conf.get("photo_cap_single") or conf.get("photo_cap") or 6))
-        # `_1` 후보와 `_2` 후보는 **서로 다른 사진**이다(3-3 「호텔 하나」). 앞 몫이 `_1`, 나머지가 `_2` 들이다.
         head_n = int(conf.get("photo_cap") or 5)
-        head, rest = cands[:head_n], (cands[head_n:] or cands)
+        # 장마다 **그 문구의 갈래에 맞는** 사진을 따로 받는다(2026-10-23 솔희 지시 — 위
+        # `_lodging_cat_shots` 머리말). `_1` 은 외관 몫을 먼저 집고, `_2` 들은 갈래별로 나눠 받는다.
+        # `_1` 후보와 `_2` 후보는 **서로 다른 사진**이다(3-3 「호텔 하나」).
+        pools = await _lodging_cat_shots(g, LODGING_CAT_CAP)
+        if pools:
+            head = (pools.get("외부") or pools.get("") or [])[:head_n]
+            rest_pools = {c: [u for u in urls if u not in head] for c, urls in pools.items() if c}
+            spare = [u for u in pools.get("", []) if u not in head]
+            shots_at = _lodging_point_shots(points, rest_pools, spare, head_n)
+        else:
+            # 사진첩이 안 열렸다(카테고리 조회 실패) — 옛 길로 돈다. 한 묶음을 앞 몫·나머지로 가른다.
+            cands = await _lodging_shots(g, int(conf.get("photo_cap_single") or head_n))
+            head, rest = cands[:head_n], (cands[head_n:] or cands)
+            shots_at = _spread_shots(rest, len(points))
         items: list[dict[str, Any]] = [{
             "layout": layout_one,
             "name": str(intro.get("name") or g.get("name") or "").strip(),
@@ -3258,15 +3586,15 @@ async def make_lodging_body(body: "BodyBody") -> dict[str, Any]:
             "photos": head,
             "place_id": g.get("place_id") or "",
         }]
-        for n, p in enumerate(points):
+        for p, shots in zip(points, shots_at):
             items.append({
                 "layout": layout_point,
                 "name": "",
                 "where": p["sub"],
                 "desc": p["desc"],
-                # 장마다 **다른 사진**이 기본값이다. 후보가 모자라면 앞에서부터 다시 돈다.
-                "photo": rest[n % len(rest)] if rest else "",
-                "photos": rest,
+                # 장마다 **다른 사진**이 기본값이고, 후보 묶음도 장마다 다르다.
+                "photo": shots[0] if shots else "",
+                "photos": shots,
             })
         return {"items": items, "dropped": dropped}
 
@@ -3452,13 +3780,33 @@ async def make_reply_line(topic: str, replies: list[dict[str, Any]],
             "",
             "규칙:",
             "- **답글 내용을 다시 옮기지 마라.** 같은 화면에 그림으로 이미 있다.",
-            "- 한 줄, 25자 안쪽. 본문 다른 장들과 같은 말투다.",
+            "- **한 줄, 공백 포함 13자 안쪽.** 자막 칸이 960px·72pt 라 14자부터 줄이 접힌다"
+            " (2026-10-22 점검). 본문 다른 장들과 같은 말투다.",
             "- 설명문이 아니라 한국인이 보고 던지는 한 마디다 — 말끝 흐리기·감탄·웃음 다 된다(예: 「오사카 사람도 헷갈린다니ㅋㅋ」).",
             "- 「일본 반응」처럼 칸 이름을 그대로 쓰지 마라 — 그림 머리에 이미 적혀 있다.",
         ]),
         schema=S_ONE_LINE, axis=axis, model=LIGHT_MODEL, with_rules=False,
     )
-    return str((data or {}).get("text") or "").strip()
+    text = str((data or {}).get("text") or "").strip()
+    # 칸을 넘으면 **한 번 더 짧게 짓는다**(2026-10-22 검증 단계). 우리가 자르지 않는다 —
+    # 중간에서 자르면 말이 끊긴다. 두 번째도 넘으면 짧은 쪽을 쓰고 만든 뒤 검증이 집어 준다.
+    if text and not line_fits(text, "body"):
+        again = await _ask(
+            "body",
+            "아래 한 줄이 자막 칸을 넘는다. **같은 뜻으로 더 짧게** 다시 지어라.",
+            '{"text": "더 짧은 한 줄"}',
+            extra=chr(10).join([
+                f"지금 줄: {text}",
+                "- **공백 포함 13자 안쪽**으로 줄인다. 말투는 그대로다.",
+                "- 뜻을 바꾸지 마라. 답글 내용을 옮기지 마라.",
+            ]),
+            schema=S_ONE_LINE, axis=axis, model=LIGHT_MODEL, with_rules=False,
+        )
+        shorter = str((again or {}).get("text") or "").strip()
+        if shorter and len(shorter) < len(text):
+            logger.info(f"[fit] 반응 장 한 줄을 다시 지었습니다 — 「{text}」 → 「{shorter}」")
+            text = shorter
+    return text
 
 
 async def make_body(body: BodyBody) -> dict[str, Any]:
@@ -3504,6 +3852,18 @@ async def make_body(body: BodyBody) -> dict[str, Any]:
         fixed = await _koreanize(texts, body.axis)
         for op, t in zip(ops, fixed):
             op["text"] = t
+        # 칸을 넘는 안은 **뒤로 보낸다** — 세 안 중 하나는 대개 들어간다(2026-10-22).
+        spill = 0
+        for it in items:
+            if not isinstance(it, dict) or not isinstance(it.get("options"), list):
+                continue
+            rows = it["options"]
+            spill += sum(1 for op in rows
+                         if not fits_all(str((op or {}).get("text") or "").split(chr(10)), "body"))
+            it["options"] = sorted(
+                rows, key=lambda op: not fits_all(str((op or {}).get("text") or "").split(chr(10)), "body"))
+        if spill:
+            logger.info(f"[fit] 본문 자막 {spill}개가 칸을 넘어 뒤로 보냈습니다(칸 {TEXT_BOX['body'][1]}px)")
         return {"items": items}
 
     data = await _ask(
@@ -3934,8 +4294,12 @@ async def build(
                 "type": "content",
                 # 어느 칸이 어디로 가는지는 축마다·장마다 다르다(`body_fields` / `body_pages`).
                 # 빈 이름("")은 그 칸을 안 쓴다는 뜻이다.
+                # 칸 순서 — `fields` 는 이 순서대로 읽힌다. 뒤쪽을 안 쓰면 그냥 짧게 적는다
+                # (안 쓰는 중간 칸은 빈 이름 ""). `tag2`~`tag6` 은 템플릿 역할 `tag2`~`tag6`
+                # 으로 가는 자리다(2026-10-22 솔희 — 템플릿 스튜디오에 tag 를 6까지 늘렸다).
                 **{slot: _field_text(item, field)
-                   for slot, field in zip(("headline", "subtext", "body", "tag", "body2"),
+                   for slot, field in zip(("headline", "subtext", "body", "tag", "body2",
+                                           "tag2", "tag3", "tag4", "tag5", "tag6"),
                                           page["fields"])},
             }
             # X인용의 이미지 칸은 **배경이 아니다** — `본문(X인용)` 낱장이 가진 739×825 image
@@ -4098,9 +4462,18 @@ async def build(
     # 만든 주제는 보관함에서 뺀다 — 이제 이력이 막아 준다.
     _write_keeps([t for t in _keeps(body.axis) if t != body.topic.strip()], body.axis)
 
+    # 만든 뒤 **검증 한 번** (2026-10-22 트립앤라이프 「그거 다 검증단계 거쳐야지」).
+    # 글자가 칸을 넘으면 편집기에서 줄이 접혀 나온다 — 사람이 열기 전에 알려 준다.
+    spills = overflow_report(canvas_slides)
+    if spills:
+        logger.warning(f"[studio] 캐러셀 {carousel_id} — 칸을 넘는 줄 {len(spills)}개: "
+                       + " · ".join(spills[:4]))
+
     return {
         "id": carousel_id,
         "url": studio_remote.editor_url(carousel_id),
         "slides": len(canvas_slides),
         "history_recorded": recorded,
+        # 화면·일꾼이 그대로 사람에게 보여 준다. 빈 목록이면 검증 통과다.
+        "text_overflow": spills,
     }

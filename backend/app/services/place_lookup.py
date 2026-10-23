@@ -395,14 +395,13 @@ async def verify(name: str, country: str = "jp") -> dict[str, Any]:
     }
 
 
-def _photos_sync(place: dict[str, Any], cap: int) -> list[str]:
-    """한 가게의 사진을 여러 장 받는다.
-
-    `verify` 가 주는 대표 사진은 **한 장**뿐이다. 사람이 고를 수 있으려면 여러 장이 필요하다.
-    두 걸음이다:
+def _gallery_sync(place: dict[str, Any]) -> tuple[Any, str, list[tuple[str, str]]]:
+    """사진첩을 열 준비 — (세션, cid, [(카테고리 id, 카테고리 이름)]).
 
       ① place_id → cid. 검색이 이미 준 게 있으면 그걸 쓰고, 없으면 elfsight 로 바꾼다.
-      ② cid 로 구글 사진첩 API(카테고리 → 사진)를 **바로** 부른다.
+      ② cid 로 구글 사진첩 API(카테고리 목록)를 **바로** 부른다.
+
+    cid 를 못 찾으면 `(None, "", [])` 다 — 부르는 쪽이 빈 결과로 돌아간다.
 
     ⚠ 전에는 koalamap 벤더(`Elfsight().fetch`)를 거쳤다. 그 벤더는 cid 를 알아내려고 구글 지도
       **페이지**를 먼저 여는데, 이 PC 에서 그 페이지가 429(`/sorry`)로 막히면 cid 를 못 찾았다며
@@ -416,7 +415,7 @@ def _photos_sync(place: dict[str, Any], cap: int) -> list[str]:
             return place_id_to_cid(place.get("place_id") or "")
         cid = _with_path(VENDOR_ELFSIGHT, to_cid)
     if not cid:
-        return []
+        return None, "", []
 
     import json
     import re
@@ -431,36 +430,83 @@ def _photos_sync(place: dict[str, Any], cap: int) -> list[str]:
     r.raise_for_status()
     data = json.loads(r.text.replace(")]}'\n", "").strip())
     # 카테고리 뽑는 식과 사진 주소 고르는 식은 koalamap 벤더(`__attachments`)와 같다.
-    cats = re.findall(r"\['([\w/+]+=+)', \[.*?\], '([^']+)'\]", str(data))
+    return s, cid, re.findall(r"\['([\w/+]+=+)', \[.*?\], '([^']+)'\]", str(data))
 
+
+def _cat_photos_sync(s: Any, cid: str, cat_id: str) -> list[str]:
+    """카테고리 하나의 사진 주소들(원본 `=s2048`). 동영상 묶음은 건너뛴다."""
+    import json
+    import re
+
+    req = [[["wTe8We",
+             f'["{cid}",null,null,"{cat_id}",null,null,null,null,null,null,"LU_PHOTO_GALLERY",'
+             f'["use_experimental_ng3_is3_score"],["{cid}"],0]',
+             None, "generic"]]]
+    r = s.post("https://www.google.com/wizrpcui/_/WizRpcUi/data/batchexecute",
+               params={"rpcids": "wTe8We", "hl": "ko-KR"},
+               headers={"content-type": "application/x-www-form-urlencoded;charset=UTF-8"},
+               data=f"f.req={json.dumps(req)}")
+    r.raise_for_status()
+    found = re.findall(r'https://lh3\.googleusercontent\.com/[^"]+',
+                       r.text.replace("\\u003d", "=").replace("\\", ""))
+    groups: dict[str, list[tuple[str, str]]] = {}
+    for u in found:
+        if "=" in u:
+            base, params = u.split("=", 1)
+            key = base.split("/")[-1].split("-")[0] if "-" in base else base
+            groups.setdefault(key, []).append((base, params))
+    out: list[str] = []
+    for urls in groups.values():
+        if any(p.startswith("m") and p[1:].isdigit() for _, p in urls):
+            continue    # 동영상
+        u = re.sub(r"-w\d+-h\d+.*$", "", urls[0][0]) + "=s2048"
+        if u not in out:
+            out.append(u)
+    return out
+
+
+def _photos_sync(place: dict[str, Any], cap: int) -> list[str]:
+    """한 가게의 사진을 여러 장 받는다.
+
+    `verify` 가 주는 대표 사진은 **한 장**뿐이다. 사람이 고를 수 있으려면 여러 장이 필요하다.
+    카테고리 순서 그대로(「전체」부터) `cap` 장이 찰 때까지 담는다 — 어느 카테고리에서 왔는지는
+    가리지 않는다. 갈래별로 나눠 받으려면 `photos_by_category` 다.
+    """
+    s, cid, cats = _gallery_sync(place)
+    if not cid:
+        return []
     out: list[str] = []
     for cat_id, _ in cats:
         if len(out) >= cap:
             break
-        req = [[["wTe8We",
-                 f'["{cid}",null,null,"{cat_id}",null,null,null,null,null,null,"LU_PHOTO_GALLERY",'
-                 f'["use_experimental_ng3_is3_score"],["{cid}"],0]',
-                 None, "generic"]]]
-        r = s.post("https://www.google.com/wizrpcui/_/WizRpcUi/data/batchexecute",
-                   params={"rpcids": "wTe8We", "hl": "ko-KR"},
-                   headers={"content-type": "application/x-www-form-urlencoded;charset=UTF-8"},
-                   data=f"f.req={json.dumps(req)}")
-        r.raise_for_status()
-        found = re.findall(r'https://lh3\.googleusercontent\.com/[^"]+',
-                           r.text.replace("\\u003d", "=").replace("\\", ""))
-        groups: dict[str, list[tuple[str, str]]] = {}
-        for u in found:
-            if "=" in u:
-                base, params = u.split("=", 1)
-                key = base.split("/")[-1].split("-")[0] if "-" in base else base
-                groups.setdefault(key, []).append((base, params))
-        for urls in groups.values():
-            if any(p.startswith("m") and p[1:].isdigit() for _, p in urls):
-                continue    # 동영상
-            u = re.sub(r"-w\d+-h\d+.*$", "", urls[0][0]) + "=s2048"
+        for u in _cat_photos_sync(s, cid, cat_id):
             if u not in out:
                 out.append(u)
     return out[:cap]
+
+
+# 갈래별로 받을 때 건너뛰는 카테고리 — 사진이 아니거나(동영상) 숙소를 보여주지 않는 것.
+_SKIP_PHOTO_CATS = ("동영상", "스트리트 뷰", "360")
+
+
+def _photos_by_cat_sync(place: dict[str, Any], cap: int) -> list[tuple[str, list[str]]]:
+    """카테고리 **이름을 살려서** 받는다 — 숙소는 「전체·최신·객실·외부·편의시설·음식/음료」다.
+
+    ⚠ 카테고리끼리 겹치는 사진을 여기서 거르지 않는다. 맨 앞 「전체」가 거의 다 들고 있어
+      먼저 걸러 버리면 「객실」·「외부」가 통째로 빈다. 겹침은 묶는 쪽이 정한다
+      (`studio_steps._lodging_cat_shots`).
+    """
+    s, cid, cats = _gallery_sync(place)
+    if not cid:
+        return []
+    out: list[tuple[str, list[str]]] = []
+    for cat_id, label in cats:
+        if any(k in label for k in _SKIP_PHOTO_CATS):
+            continue
+        urls = _cat_photos_sync(s, cid, cat_id)[:cap]
+        if urls:
+            out.append((label, urls))
+    return out
 
 
 PHOTO_TRIES = 3
@@ -508,6 +554,22 @@ async def photos_many(places: list[dict[str, Any]], cap: int = 6, limit: int = 3
             return await photos(p, cap)
 
     return list(await asyncio.gather(*(one(p) for p in places)))
+
+
+async def photos_by_category(place: dict[str, Any], cap: int = 8) -> list[tuple[str, list[str]]]:
+    """한 곳의 사진을 **카테고리 이름과 함께** 준다. 실패하면 빈 목록이다.
+
+    낱장 문구에 맞는 사진을 붙이려면 「무엇이 찍혔는지」가 필요하다(일본숙소 호텔 하나 —
+    `studio_steps._lodging_cat_shots`). 구글 사진첩이 이미 묶어 둔 카테고리를 그대로 쓴다.
+    `photos` 와 달리 다시 시도하지 않는다 — 실패하면 부르는 쪽이 옛 길(한 묶음)로 돌아간다.
+    """
+    if not (place.get("place_id") or place.get("cid")):
+        return []
+    try:
+        return await asyncio.to_thread(_photos_by_cat_sync, place, cap)
+    except Exception as e:
+        logger.warning(f"[place] 카테고리별 사진 실패 — {place.get('name')}: {type(e).__name__} {e}")
+        return []
 
 
 # ── 사진 후보를 **낱장 모양에 맞는 비율** 순으로 세운다 (2026-10-12 사람 지시) ──

@@ -1031,31 +1031,76 @@ async def capture_reply(quote: dict[str, Any]) -> bytes:
         out.unlink(missing_ok=True)
 
 
-def _pad_body(blob: bytes) -> bytes:
-    """좌우(또는 위아래)에 **흰 여백**을 붙여 739:825 로 맞춘다.
+def _trim_margin(img, bg=(255, 255, 255), keep: int = 8):
+    """카드 둘레의 **빈 여백만** 잘라낸다 (2026-10-22 트립앤라이프 「댓글 내용만 잘라서
 
-    잘라내지 않고 **붙인다** — 카드를 자르면 계정 줄이나 좋아요 줄이 날아가고,
-    그러면 「X 캡처로 보이게」라는 규칙이 깨진다.
+    위 아래 흰색 여백 없어도 됨 · 전체 내용 보이게」). 글·버튼 줄은 그대로 두고
+    바깥 여백만 줄여서, 같은 칸에 넣었을 때 **글자가 더 크게** 보이게 한다.
+    """
+    from PIL import Image, ImageChops
+
+    ref = Image.new("RGB", img.size, bg)
+    box = ImageChops.difference(img.convert("RGB"), ref).getbbox()
+    if not box:
+        return img
+    l, t, r, b = box
+    w, h = img.size
+    return img.crop((max(0, l - keep), max(0, t - keep),
+                     min(w, r + keep), min(h, b + keep)))
+
+
+def stack_cards(blobs: list[bytes], gap: int = 24) -> bytes:
+    """캡처 여러 장을 **한 판에 위아래로 쌓는다** (2026-10-22 트립앤라이프 「한 장 안에
+
+    캡쳐 카드가 3-4개씩 배치되어 있는 것도 필요함」). 폭은 가장 넓은 것에 맞추고,
+    좁은 것은 비율 그대로 늘린다. 사이는 흰 띠 `gap` 만큼 띄운다.
+    """
+    from PIL import Image
+
+    cards = []
+    for blob in blobs:
+        img = Image.open(io.BytesIO(blob))
+        cards.append(img.convert("RGB") if img.mode != "RGB" else img)
+    if not cards:
+        raise RuntimeError("쌓을 캡처가 없습니다.")
+    if len(cards) == 1:
+        buf = io.BytesIO()
+        cards[0].save(buf, format="PNG")
+        return buf.getvalue()
+
+    width = max(c.width for c in cards)
+    sized = [c if c.width == width else
+             c.resize((width, max(1, round(c.height * width / c.width))), Image.LANCZOS)
+             for c in cards]
+    height = sum(c.height for c in sized) + gap * (len(sized) - 1)
+    sheet = Image.new("RGB", (width, height), "white")
+    y = 0
+    for c in sized:
+        sheet.paste(c, (0, y))
+        y += c.height + gap
+    buf = io.BytesIO()
+    sheet.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _pad_body(blob: bytes) -> bytes:
+    """**여백을 잘라낸 뒤** 739:825 비율에 맞춘다.
+
+    잘라내는 것은 바깥 여백뿐이다 — 계정 줄·좋아요 줄은 그대로 둔다
+    (「X 캡처로 보이게」가 여전히 목적이다). 2026-10-22 전에는 여백째 넣어서
+    글자가 작게 들어갔고, 낱장 배경으로 떨어지면 좌우가 잘렸다.
     """
     from PIL import Image
 
     img = Image.open(io.BytesIO(blob))
     if img.mode != "RGB":
         img = img.convert("RGB")
-    w, h = img.size
-    want = BODY_W / BODY_H
-
-    if w / h > want:            # 가로가 넓다 — 위아래에 여백
-        new_h = int(w / want)
-        canvas = Image.new("RGB", (w, new_h), "white")
-        canvas.paste(img, (0, (new_h - h) // 2))
-    else:                        # 세로가 길다 — 좌우에 여백
-        new_w = int(h * want)
-        canvas = Image.new("RGB", (new_w, h), "white")
-        canvas.paste(img, ((new_w - w) // 2, 0))
-
+    # **여백만 잘라 그대로 돌려준다.** 739:825 로 다시 채우면 잘라낸 흰 띠가 되살아난다
+    # (2026-10-22 — 그렇게 해서 카드 위아래에 460px 씩 흰 띠가 남아 있었다).
+    # 칸은 축이 사진 비율에 맞춰 다시 그린다(`studio_steps._unframe_item_images`).
+    img = _trim_margin(img)
     buf = io.BytesIO()
-    canvas.save(buf, format="PNG")
+    img.save(buf, format="PNG")
     return buf.getvalue()
 
 

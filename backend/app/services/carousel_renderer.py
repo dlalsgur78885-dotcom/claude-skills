@@ -25,9 +25,11 @@ from app.services.image_search import search_all
 # (e.g. zig-zag) and a regular rows×cols grid can't describe it.
 _CELL_ROLE_RE = re.compile(r"^cell_(title|subtitle|description)_r(\d+)c(\d+)$")
 # 번호 붙은 역할 — 한 낱장에 같은 역할 칸을 여럿 두고 칸마다 다른 문구를 넣는다.
-# headline2 → slide["headline2"], subheadline2 → slide["subtext2"], body2 → slide["body2"]
-# (1번은 기존 headline/subheadline/body).
-_NUMBERED_ROLE_RE = re.compile(r"^(headline|subheadline|body)([2-9])$")
+# headline2 → slide["headline2"], subheadline2 → slide["subtext2"], body2 → slide["body2"],
+# tag2 → slide["tag2"] (1번은 기존 headline/subheadline/body/tag).
+_NUMBERED_ROLE_RE = re.compile(r"^(headline|subheadline|body|tag)([2-9])$")
+# 태그 칸 — 번호가 붙어도 브랜드색 규칙은 같다.
+_TAG_ROLE_RE = re.compile(r"^tag[2-9]?$")
 
 logger = logging.getLogger(__name__)
 
@@ -491,7 +493,7 @@ async def render_slide_to_canvas(
         # Brand color fills accent text slots only when the slot has no color of
         # its own — a color picked in the template editor must win (2026-09-18:
         # 88 TAG was set blue but rendered brand black).
-        if role in ("tag", "cta_button") and brand.get("primary_color") and not style.get("fill"):
+        if (_TAG_ROLE_RE.match(role) or role == "cta_button") and brand.get("primary_color") and not style.get("fill"):
             style["fill"] = brand["primary_color"]
         # Auto-contrast: if no photo bg and the template's fill would be invisible
         # on the solid brand background, flip it to a readable color.

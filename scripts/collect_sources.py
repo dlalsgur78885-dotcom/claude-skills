@@ -1,4 +1,4 @@
-# 소재 한 번에 긁기 — Togetter · 일본 매체 RSS · 유튜브 · 스레드.
+# 소재 한 번에 긁기 — Togetter · 일본 매체 RSS · 유튜브 · 스레드 · 한국 커뮤니티.
 #
 # 규칙(문턱·등급·한국 접점)은 `docs/process/_유형공통.md` 와 `_일본매체_RSS.md` 다.
 # 여기서는 **긁어서 줄 세우기만** 한다. 무엇을 만들지는 사람이 고른다.
@@ -7,6 +7,8 @@
 #   python scripts/collect_sources.py                 # Togetter + RSS (빠름, 1분 안쪽)
 #   python scripts/collect_sources.py --youtube       # 유튜브까지 (키워드당 ~15초)
 #   python scripts/collect_sources.py --threads       # 스레드까지 (키워드당 ~40초, 건질 게 적다)
+#   python scripts/collect_sources.py --korea         # 한국 커뮤니티까지 (10초 안쪽)
+#   python scripts/collect_sources.py --all --json    # 추린 결과를 JSON 한 줄씩 (백엔드 1단계가 이걸 읽는다)
 #   python scripts/collect_sources.py --all --n 30
 #
 # 결과는 `tmp/수집_<날짜>.md` 에 쓰고, 요약을 화면에 찍는다.
@@ -16,6 +18,11 @@ import httpx
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36"}
+# 브라우저가 늘 같이 보내는 머리글. 아카라이브(Cloudflare)는 이게 없으면 「Just a moment...」만 준다.
+UA_FULL = {**UA,
+           "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+           "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+           "Upgrade-Insecure-Requests": "1"}
 TODAY = datetime.date.today().isoformat()
 
 # ── 문턱 — 플랫폼마다 수치의 뜻이 다르다. 2026-10-20 실측 분포로 잡았다.
@@ -23,6 +30,9 @@ THRESHOLD = {           # (A등급, B등급) — B 미만은 후보에서 뺀다
     "togetter": (90_000, 20_000),      # pv. 112건 분포에서 상위 10% / 중앙
     "youtube":  (1_000_000, 100_000),  # 조회수
     "threads":  (3_000, 500),          # 좋아요
+    # 2026-10-23 트립앤라이프 「한국커뮤니티도 뽑아서 넣어」. 루리웹 RSS 는 수치가 없어
+    # 등급이 '-' 로 지나가고(제목·접점으로만 거른다), 아카라이브·더쿠는 조회수가 붙는다.
+    "korea":    (50_000, 3_000),       # 조회수
 }
 
 TOGETTER = ["https://togetter.com/hot",
@@ -48,6 +58,33 @@ FEEDS = [
 YT_KEYWORDS = ["外国人インタビュー 日本", "初来日 驚いた", "日本 旅行 外国人 反応"]
 TH_KEYWORDS = ["まさかの", "韓国人"]
 
+# ── 한국 커뮤니티 (2026-10-23 신설) ─────────────────────────────────────────
+# RSS 가 살아 있는 곳은 RSS 로 받는다(모양이 안 바뀐다). 없는 곳만 목록 HTML 을 긁는다.
+# ⚠ 디시·클리앙·오늘의유머·네이트판은 **RSS 가 막혀 있다**(2026-10-23 직접 확인 — 404).
+#   아카라이브도 `/rss` 는 404 라 목록 HTML 을 본다.
+KR_FEEDS = [
+    ("한국커뮤(루리웹)", "https://bbs.ruliweb.com/community/board/300143/rss"),  # 유머 게시판
+    ("한국커뮤(루리웹)", "https://bbs.ruliweb.com/community/board/300006/rss"),  # 커뮤니티 종합
+]
+# (라벨, 목록 주소, 글 주소 정규식) — 라벨은 `studio_steps._SOURCE_HOSTS` 의 이름과 맞춘다.
+# `jp_only` = 그 게시판 자체가 일본 전용이라 **제목에 「일본」이 없어도** 일본 소재다
+# (더쿠 재팬 · 아카라이브 일본여행). 종합 게시판(루리웹)만 제목 키워드로 거른다.
+KR_PAGES = [
+    ("한국커뮤(더쿠)", "https://theqoo.net/japan", "theqoo", True),
+    # ⚠ 아카라이브 일본여행 채널은 **껐다**(2026-10-23 실측). 긁히기는 하는데(curl 경로로
+    #   20건) 올라오는 글이 「항공사 추천」·「도쿄는 언제 가는 게 좋을까요?」 같은 Q&A 잡담이라
+    #   캐러셀 소재가 아니다. 목록 HTML 에 조회수도 안 붙어 문턱으로 걸러낼 수도 없다.
+    #   되살리려면 이 줄의 주석만 풀면 된다 — 파서(`_kr_arca`)는 그대로 둔다.
+    # ("한국커뮤(아카라이브)", "https://arca.live/b/japantravel", "arca", True),
+]
+# 한국 커뮤 글은 **일본이 걸린 것만** 쓴다 — 한국어 제목이라 아래 일본어 키워드가 안 걸린다.
+KR_JP_HIT = ["일본", "도쿄", "오사카", "교토", "후쿠오카", "삿포로", "오키나와", "나고야", "홋카이도",
+             "엔화", "엔저", "엔저", "면세", "신칸센", "온천", "라멘", "스시", "돈키호테", "유니버설",
+             "일본어", "일본인", "재팬", "japan"]
+# 한국 커뮤에서 빼는 것 — 일본 정치·중범죄는 이 채널에서 쓰지 않는다(아래 DROP 과 같은 뜻).
+KR_DROP = ["정치", "대통령", "국회", "민주당", "국민의힘", "선거", "살인", "성폭행", "성추행",
+           "마약", "자살", "주식", "코인"]
+
 # 한국 독자와 닿는 말 — 하나도 안 걸리면 후보 아래로 내린다.
 KO_HIT = ["韓国", "ソウル", "釜山", "K-POP", "日韓"]
 TRAVEL_HIT = ["観光", "旅行", "インバウンド", "外国人", "空港", "新幹線", "ホテル", "旅館", "コンビニ",
@@ -64,9 +101,17 @@ def grade(kind, n):
     return "A" if n >= a else ("B" if n >= b else "C")
 
 
-def tag(title):
+def tag(title, kind="", jp_only=False):
     if any(k in title for k in DROP):
         return "제외"
+    # 한국 커뮤니티 글은 **일본이 걸린 것만** 남긴다. 남으면 그 자체가 「한국 접점」이다 —
+    # 한국 사람이 이미 반응한 글이라 이 채널에 그대로 맞는다(2026-10-23).
+    if kind == "korea":
+        if any(k in title for k in KR_DROP):
+            return "제외"
+        if jp_only:
+            return "한국"
+        return "한국" if any(k in title for k in KR_JP_HIT) else "제외"
     if any(k in title for k in KO_HIT):
         return "한국"
     if any(k in title for k in TRAVEL_HIT):
@@ -162,6 +207,88 @@ def fetch_threads():
     return out
 
 
+def fetch_korea():
+    """한국 커뮤니티 — 루리웹은 RSS, 아카라이브·더쿠는 목록 HTML (2026-10-23 신설).
+
+    한 곳이 모양을 바꿔도 **그 곳만 건너뛰고** 나머지는 그대로 들어온다.
+    """
+    out = []
+    for name, url in KR_FEEDS:
+        try:
+            r = httpx.get(url, headers=UA, timeout=30, follow_redirects=True)
+            root = ET.fromstring(r.content)
+        except Exception as e:
+            print(f"  ! {name} {url[-10:]} {e}", file=sys.stderr); continue
+        n = 0
+        for it in list(root.iter("item"))[:40]:
+            t = (it.findtext("title") or "").strip()
+            link = (it.findtext("link") or "").strip()
+            if not t or not link:
+                continue
+            out.append({"src": name, "kind": "korea", "title": t, "url": link,
+                        "num": None, "unit": "회", "date": (it.findtext("pubDate") or "")[:16]})
+            n += 1
+        print(f"  {name}: {n}건", file=sys.stderr)
+
+    for name, url, kind, jp_only in KR_PAGES:
+        h = _get_html(url)
+        if not h:
+            print(f"  ! {name} 빈 응답", file=sys.stderr); continue
+        got = _kr_arca(h) if kind == "arca" else _kr_theqoo(h)
+        for t, u, num in got:
+            out.append({"src": name, "kind": "korea", "title": t, "url": u,
+                        "num": num, "unit": "회", "date": "", "jp_only": jp_only})
+        print(f"  {name}: {len(got)}건", file=sys.stderr)
+    return out
+
+
+def _get_html(url):
+    """목록 HTML 받기. **아카라이브(Cloudflare)는 httpx 로는 막힌다** — 같은 주소를 curl 로
+    부르면 통과한다(2026-10-23 직접 확인). 그래서 막히면 curl 로 한 번 더 부른다."""
+    try:
+        h = httpx.get(url, headers=UA_FULL, timeout=30, follow_redirects=True).text
+        if "Just a moment" not in h[:400]:
+            return h
+    except Exception as e:
+        print(f"  ! httpx {url} {e}", file=sys.stderr)
+    try:
+        p = subprocess.run(["curl", "-sL", "-m", "25", "-A", UA["User-Agent"], url],
+                           capture_output=True, text=True, timeout=40, encoding="utf-8")
+        return p.stdout or ""
+    except Exception as e:
+        print(f"  ! curl {url} {e}", file=sys.stderr)
+        return ""
+
+
+def _kr_arca(h):
+    """아카라이브 일본여행 채널 목록. 공지(`notice`)는 클래스가 달라 저절로 빠진다."""
+    rows = []
+    for m in re.finditer(r'<a class="vrow column"\s+href="(/b/japantravel/\d+)[^"]*"', h):
+        seg = h[m.end():m.end() + 1500]
+        t = re.search(r'<span class="title">(?:\s*<[^>]*>\s*)*([^<]{2,120})', seg)
+        v = re.search(r'col-view[^>]*>\s*(?:<span>)?\s*([\d,]+)', seg)
+        if not t:
+            continue
+        title = htmllib.unescape(t.group(1)).strip()
+        if title:
+            rows.append((title, "https://arca.live" + m.group(1),
+                         int(v.group(1).replace(",", "")) if v else None))
+    return rows
+
+
+def _kr_theqoo(h):
+    """더쿠 재팬 카테고리 목록. 목록에 조회수가 없어 수치는 비운다(제목·접점으로만 거른다)."""
+    rows, seen = [], set()
+    for m in re.finditer(r'<a href="(/japan/\d+)"[^>]*>(.{0,200}?)</a>', h, re.S):
+        title = htmllib.unescape(re.sub(r"<[^>]+>", " ", m.group(2))).strip()
+        title = " ".join(title.split())
+        if not title or len(title) < 4 or m.group(1) in seen:
+            continue
+        seen.add(m.group(1))
+        rows.append((title, "https://theqoo.net" + m.group(1), None))
+    return rows
+
+
 def known_urls():
     """이미 다룬 소재 — 이력과 지난 후보 파일에 적힌 URL 은 빼고 보여준다."""
     seen = set()
@@ -175,7 +302,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--youtube", action="store_true")
     ap.add_argument("--threads", action="store_true")
+    ap.add_argument("--korea", action="store_true")
     ap.add_argument("--all", action="store_true")
+    ap.add_argument("--json", action="store_true", help="추린 결과를 JSON 한 줄씩 stdout 에 (백엔드용)")
     ap.add_argument("--n", type=int, default=30, help="추려서 보여줄 개수")
     a = ap.parse_args()
 
@@ -184,6 +313,8 @@ def main():
         rows += fetch_youtube()
     if a.threads or a.all:
         rows += fetch_threads()
+    if a.korea or a.all:
+        rows += fetch_korea()
 
     seen_url, old = set(), known_urls()
     picked = []
@@ -191,7 +322,7 @@ def main():
         if not r["url"] or r["url"] in seen_url:
             continue
         seen_url.add(r["url"])
-        r["tag"] = tag(r["title"])
+        r["tag"] = tag(r["title"], r["kind"], bool(r.get("jp_only")))
         r["grade"] = grade(r["kind"], r["num"]) if r["kind"] in THRESHOLD else "-"
         r["old"] = r["url"] in old
         if r["tag"] == "제외" or r["grade"] == "C" or r["old"]:
@@ -211,6 +342,16 @@ def main():
         out.append(f'| {r["tag"]} | {r["grade"]} | {num} | {r["src"]} | {r["title"][:60]} | {r["url"]} |')
     p = ROOT / "tmp" / f"수집_{TODAY}.md"
     p.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+    # 백엔드 1단계가 읽는 길(2026-10-23) — 사람이 보는 표는 그대로 파일에 쓰고,
+    # stdout 에는 JSON 만 흘린다. 진행 메시지는 모두 stderr 라 섞이지 않는다.
+    if a.json:
+        for r in top:
+            print(json.dumps({k: r.get(k) for k in
+                              ("src", "kind", "title", "url", "num", "unit", "date", "tag", "grade")},
+                             ensure_ascii=False))
+        print(f"긁은 것 {len(rows)} -> 통과 {len(picked)} -> 보여줄 것 {len(top)}", file=sys.stderr)
+        return
 
     from collections import Counter
     print(f'\n긁은 것 {len(rows)} → 문턱 통과 {len(picked)} → 보여줄 것 {len(top)}')

@@ -137,6 +137,11 @@ AXES: dict[str, dict[str, Any]] = {
         # 인물 5 + 음식 5(2026-09-09 사람 지시 — 「인물 5장, 주제와 관련된 음식 5장」).
         #   풍경은 안 그린다. 표지 후보 얘기다 — 본문 배경은 위 `body_photo_regen` 이 맡는다.
         "cover_shots": {"person": 5, "food": 5},
+        # 표지 음식 5장도 **본문 가게의 실사를 레퍼런스로** 다시 그린다(2026-10-23 솔희 지시 —
+        # 「표지 이미지가 여전히 부자연스러워. 이미지 자체도 인위적이고, 뒤에 나오는 식당
+        # 음식과도 달라서 이상해」). 글만 보고 그리던 길에서 본문과 같은 길로 옮겼다 —
+        # `studio_worker._cover_from_photos` · 일본맛집_3-2단계. 모둠 상차림은 이 길에 없다.
+        "cover_photo_regen": True,
         # 버튼을 눌러야만 그리는 종류(2026-09-22 사람 지시 — 「인물 사진은 미리 생성 안 해줘도 돼.
         # 인물 5장은 생성 버튼을 눌러야」). 밤에 미리 만들 때도 [다시 그리기] 때도 음식만 그린다.
         "cover_on_demand": ["person"],
@@ -1389,6 +1394,10 @@ async def get_context(axis: str = DEFAULT_AXIS) -> dict[str, Any]:
 # 개수 규칙의 원본은 `X인용_1단계_주제후보.md` 다. 여기 값은 **grok 을 몇 번 나눠 부르는가**
 # 를 정하는 것이라 코드에 둔다 — 지침서의 수량을 고치면 여기도 함께 고친다.
 X_TARGET = 50
+
+# X 밖 경로에서 올릴 후보 수(2026-10-23 트립앤라이프 「네 경로도 1단계에 꽂아둬」).
+# X 50 + 여기 20 = 화면에 70건. 수집·문턱은 `scripts/collect_sources.py` 가 정한다.
+OTHER_TARGET = 20
 # 한 번에 몰아서 받으면 답 형식이 한 번만 어긋나도 회차가 통째로 0건이 된다
 # (09-22 16:47 회차). 20개를 달라고 해도 14~16건밖에 못 채웠다.
 # 종류(텍스트·사진)와 기간으로 쪼개면 한 묶음이 어긋나도 나머지가 남는다.
@@ -1487,7 +1496,7 @@ async def _x_topics(axis: str, history: list[str]) -> list[dict[str, Any]]:
     이 함수가 아는 것은 **주고받는 모양**뿐이다 — 어떤 항목을 어떤 순서로 적어 달라는 것.
     grok 은 우리 지침서를 못 읽으므로 그 형식만 덧붙인다.
     """
-    from app.services import x_search
+    from app.services import other_sources, x_search
 
     if not x_search.is_available():
         raise HTTPException(
@@ -1521,6 +1530,11 @@ async def _x_topics(axis: str, history: list[str]) -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
     fails: list[str] = []
     last_raw = ""
+    # 유형 축은 **X 밖 경로도 함께** 긁는다(2026-10-23 트립앤라이프 「네 경로도 1단계에
+    # 꽂아둬 · 한국커뮤니티도 뽑아서 넣어」). X 검색이 40분이라 나란히 돌려 두고 끝에서 받는다 —
+    # 서로 기다리지 않는다. 막히면 빈 목록이라 X 후보만으로 간다(`other_sources.collect`).
+    other_task = (asyncio.create_task(other_sources.collect(OTHER_TARGET))
+                  if is_type_axis(axis) else None)
     # 유형 축은 **유형별 묶음**으로 찾는다(위 `_type_batches`). 다른 축은 예전 묶음 그대로다.
     # 아침 회차(12시 이전)는 **다음 묶음**을 돈다 — 밤 회차와 겹치지 않게.
     batches = (_type_batches(shift=1 if datetime.now().hour < 12 else 0)
@@ -1571,7 +1585,10 @@ async def _x_topics(axis: str, history: list[str]) -> list[dict[str, Any]]:
     # ⚠ 빈손일 때 **왜** 빈손인지 갈라서 말한다. 고치는 방법이 전혀 다른데
     #   예전엔 전부 같은 502 였고 grok 원문도 안 남아 원인을 볼 길이 없었다
     #   (2026-09-18 피드백 2번 — 화면에 「502: X 에서 쓸 만한 게시물을 찾지 못했습니다」만 떴다).
-    if not found:
+    # 나란히 돌린 X 밖 경로를 여기서 받는다(유형 축만 — 다른 축은 `None`).
+    other: list[dict[str, Any]] = await other_task if other_task is not None else []
+
+    if not found and not other:
         # 다음에 또 나면 이 로그가 유일한 단서다. 조사원 봇에서도 같은 실수를 했었다.
         logger.warning("[x] 후보 0건 — 실패한 묶음 %s · grok 원문 앞 800자:\n%s",
                        " · ".join(fails) or "(없음)", last_raw[:800])
@@ -1588,8 +1605,8 @@ async def _x_topics(axis: str, history: list[str]) -> list[dict[str, Any]]:
     # 원문을 열어 살아 있는 것만 남긴다(지침서 — 「못 열면 뺀다」).
     # 2026-10-16 트립앤라이프 「영상과 gif 까지 모두 풀자」 — 영상 글을 더는 빼지 않는다.
     # 목표 수를 채우려면 그보다 넉넉히 확인해야 한다(삭제·비공개 글이 빠지므로).
-    alive = await x_search.verify(found[:X_TARGET + 20])
-    if not alive:
+    alive = await x_search.verify(found[:X_TARGET + 20]) if found else []
+    if found and not alive and not other:
         logger.warning("[x] 원문 확인에서 전부 빠짐 — 후보 %d건", len(found))
         raise HTTPException(
             status_code=502,
@@ -1599,6 +1616,11 @@ async def _x_topics(axis: str, history: list[str]) -> list[dict[str, Any]]:
     # 지침서 「정렬 — 앞에 둘 글」 그대로 줄 세운다(답글 3개↑ → 48시간 이내 → 댓글 많은 순).
     # 원클릭은 앞에서부터 미리 만들어 두므로 이 순서가 곧 사람이 먼저 보는 순서다.
     ranked = await _mark_sensitive(x_search.sort_candidates(alive), axis)
+    # X 밖 후보는 X 정렬 잣대(48시간·댓글 수)에 맞출 값이 없어 **X 뒤에 그대로 붙인다.**
+    # 수집 쪽이 이미 접점(한국/여행)·등급으로 줄 세워 보냈다(`scripts/collect_sources.py`).
+    if other:
+        ranked = ranked[:X_TARGET] + other
+        logger.info("[소재] 후보 합침 — X %d건 + X 밖 %d건", min(len(ranked) - len(other), X_TARGET), len(other))
     # 주제 제목은 grok 이 붙인다 — 일본 가게·브랜드 이름이 일본어 그대로 올 때가 있다(「焼肉きんぐ 앱에서…」).
     # 제목은 캐러셀 이름·훅·캡션의 재료라 여기서 한국어 표기로 바꿔 둔다.
     ranked = await _fill_titles(ranked, axis)
@@ -1609,7 +1631,7 @@ async def _x_topics(axis: str, history: list[str]) -> list[dict[str, Any]]:
         ranked = await _classify_types(ranked, axis)
     # (답글은 사람이 고른 뒤에 받으므로 여기서 「답글 3개 이상」을 세면 늘 0 이다 — 세지 않는다.)
     # 추천은 **화면에 뜨는 만큼** 안에서만 고른다 — 잘려 나갈 글을 추천해도 쓸 데가 없다.
-    ranked = await _pick_recommended(ranked[:X_TARGET], axis)
+    ranked = await _pick_recommended(ranked if other else ranked[:X_TARGET], axis)
     logger.info("[x] 후보 %d건 — 사진 있는 글 %d건 · 민감 표시 %d건 · 추천 %d건 · 실패한 묶음 %s",
                 len(ranked),
                 sum(1 for r in ranked if int(r.get("photos") or 0) > 0),
@@ -1741,6 +1763,17 @@ _SOURCE_HOSTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("한국커뮤(웃대)",     ("humoruniv.com",)),
     ("한국커뮤(오유)",     ("todayhumor.co.kr",)),
     ("한국커뮤(네이트판)", ("pann.nate.com", "nate.com")),
+    ("한국커뮤(아카라이브)", ("arca.live",)),
+    # 일본 매체 RSS — 2026-10-23 1단계에 꽂으면서 이름까지 적는다(`other_sources`).
+    ("일본매체(넷라보)",       ("itmedia.co.jp",)),
+    ("일본매체(로켓뉴스)",     ("rocketnews24.com",)),
+    ("일본매체(J-CAST)",       ("j-cast.com",)),
+    ("일본매체(훈니치라보)",   ("honichi.com",)),
+    ("일본매체(TRAICY)",       ("traicy.com",)),
+    ("일본매체(트래블보이스)", ("travelvoice.jp",)),
+    ("일본매체(야마토고코로)", ("yamatogokoro.jp",)),
+    ("일본매체(트래블워치)",   ("travel.watch.impress.co.jp", "impress.co.jp")),
+    ("일본매체(데일리포털Z)",  ("dailyportalz.jp",)),
 )
 
 

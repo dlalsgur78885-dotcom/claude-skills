@@ -1323,6 +1323,81 @@ async def _do_images(chosen: dict[str, Any], axis: str,
     return {"images": post_images + (keep or []) + food_regen + images}
 
 
+# 기사 페이지에는 본문 사진 뒤로 **관련 기사 썸네일**이 줄줄이 붙는다(TRAICY 는 120x80
+# · 2KB — 2026-10-23 실측). 다른 기사 사진이고 본문 칸(739×825)에도 너무 작다.
+MIN_ARTICLE_PHOTO_PX = 600
+
+
+def _photo_big_enough(blob: bytes) -> bool:
+    """본문에 쓸 만한 크기인가. **못 열리는 것도 버린다** — 올려도 화면에서 깨진다."""
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        with Image.open(BytesIO(blob)) as img:
+            return max(img.size) >= MIN_ARTICLE_PHOTO_PX
+    except Exception as e:
+        logger.info("[studio-worker] 원문 사진을 못 열어 버립니다 — %s", str(e)[:100])
+        return False
+
+
+async def _do_body_web(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
+    """X 밖 후보(일본 매체·커뮤니티·유튜브)의 본문 — 이미지 칸은 **원문 기사 사진**이다.
+
+    2026-10-14 대표 확정 — 「**기사 사진을 그대로 쓴다.** 매체 사진을 표지로 쓰고
+    출처(`@매체명`)를 적는다」(`docs/계획_소재출처_확장.md` 4절 · essl2_2 방식).
+    X 카드 캡처를 쓰는 `_do_body_x` 는 찍을 게시물 id 가 없어 못 간다.
+
+    길은 **링크 입구(`_do_link`)와 같다** — 그쪽이 이미 웹 글에서 사진을 뽑아 본문 장에
+    앞에서부터 붙인다. 글은 다른 축과 똑같이 지침서대로 codex 가 짓고, 사진만 원문에서 온다.
+
+    ⚠ 사진은 **이 PC 가 받아 올린다** — 매체·커뮤니티 이미지 호스트가 서버(AWS)에서
+      막히는 곳이 있다(`link_ingest.download_photos` 주석).
+    ⚠ 원문에 사진이 한 장도 없으면(유튜브 썸네일만 있는 글·텍스트 기사) **웹에서 찾아
+      채운다** — 3-2 가 「글만 있는 글」에 쓰는 그 길이다(`x_search.web_covers`).
+    ⚠ 「일본 반응」 장은 **안 붙는다** — 답글 캡처는 X 게시물에만 있다.
+    """
+    from app.services import link_ingest, studio_remote, x_search
+    from app.services import studio_steps as studio
+
+    url = str(chosen.get("url") or "").strip()
+    topic = str(chosen.get("topic") or "")
+    photos: list[str] = []
+    if url:
+        try:
+            rec = await link_ingest.fetch(url)
+            # **넉넉히 받아 걸러낸다** — 아래 `_photo_big_enough` 가 버리는 몫이 있다.
+            blobs = await link_ingest.download_photos(
+                list(rec.get("photo_urls") or []), LINK_PHOTO_LIMIT * 2)
+            blobs = [b for b in blobs if _photo_big_enough(b)][:LINK_PHOTO_LIMIT]
+            for blob in blobs:
+                photos.append(await studio_remote.upload_image(
+                    blob, f"{secrets.token_hex(8)}.jpg"))
+        except Exception as e:
+            # 원문이 막혀도 회차는 살린다 — 아래 웹 검색으로 내려간다.
+            logger.warning("[studio-worker] 원문에서 사진을 못 받았습니다 — %s (%s)",
+                           url[:80], str(e)[:160])
+    if not photos:
+        for blob in await x_search.web_covers(topic, want=2):
+            photos.append(await studio_remote.upload_image(
+                blob, f"{secrets.token_hex(8)}.png"))
+    logger.info("[studio-worker] X 밖 후보 본문 — %s · 사진 %d장",
+                studio.source_label(url) or url[:60] or "출처 모름", len(photos))
+
+    r = await studio.make_body(studio.BodyBody(
+        axis=axis, topic=topic, hook=" ".join(chosen.get("hook_lines", []))))
+    items = list(r.get("items") or [])
+    # 장마다 앞에서부터 한 장씩. 사진이 모자란 장은 **글만** 남는다 — 없는 사진을 지어내지 않는다.
+    items = [({**it, "photo": photos[i]} if i < len(photos) else it)
+             for i, it in enumerate(items)]
+    if not items and photos:
+        items = [{"text": "", "photo": photos[0]}]
+    if not items:
+        raise RuntimeError("본문을 받지 못했습니다 — 잠시 뒤 다시 눌러 주세요.")
+    return {"body": items}
+
+
 async def _do_body_x(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     """X인용 본문 — 문구는 codex(지침서 규칙), 이미지 칸은 **X 화면 캡처**.
 
@@ -1338,15 +1413,10 @@ async def _do_body_x(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     if not post_id:
         raise RuntimeError("게시물 id 가 없습니다 — 1단계 후보를 다시 고르세요.")
     # X 밖 후보(일본 매체·커뮤니티·유튜브 — `other_sources`, id 가 `src_…`)는 **찍을 X
-    # 카드가 없다.** 1단계는 2026-10-23 부터 그 후보도 올리는데(X 50건 + X 밖 20건) 본문
-    # 이미지는 아직 X 캡처 하나뿐이다. 그냥 내려가면 codex 로 본문을 짓고 번역까지 한 뒤
-    # 캡처에서 「X 캡처에 실패했습니다」로 죽는다 — 돈·시간을 쓰기 전에 여기서 말한다.
-    # (본문을 어떻게 만들지는 **사람이 정할 것**이라 여기서 지어내지 않는다.)
+    # 카드가 없다.** 1단계는 2026-10-23 부터 그 후보도 올린다(X 50건 + X 밖 20건) —
+    # 그쪽은 원문 기사 사진으로 간다(`_do_body_web`).
     if not post_id.isdigit():
-        raise RuntimeError(
-            f"X 밖 후보라 본문을 만들 수 없습니다({chosen.get('url') or post_id}). "
-            "본문 이미지가 X 화면 캡처뿐이라 X 게시물 후보로 골라 주세요 — "
-            "이 소재를 쓰려면 본문을 어떻게 만들지 먼저 정해야 합니다.")
+        return await _do_body_web(chosen, axis)
 
     # 1) 문구 — 지침서를 실어 codex 에게 맡긴다(형식만 여기서 정한다).
     r = await studio.make_body(studio.BodyBody(

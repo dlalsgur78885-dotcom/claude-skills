@@ -75,8 +75,12 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _IMG_SRC_RE = re.compile(
     r"<img\b[^>]*?\ssrc\s*=\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
 # 아이콘·배너·버튼은 본문 사진이 아니다. 주소에 이런 말이 들어간 것은 뺀다.
+# ⚠ `ads?` 앞의 **글자 경계가 있어야 한다**(2026-10-23 고침). 없으면 `upl(oads/)` 이
+#    걸려 **`/wp-content/uploads/…` 기사 사진이 전부 광고로 버려졌다** — TRAICY·訪日ラボ
+#    기사에서 og:image 가 멀쩡히 있는데도 사진 0장으로 나왔다(실측).
 _JUNK_IMG_RE = re.compile(
-    r"(icon|logo|avatar|sprite|banner|button|badge|blank|spacer|pixel|ads?[-_/]|emoji"
+    r"(icon|logo|avatar|sprite|banner|button|badge|blank|spacer|pixel"
+    r"|(?<![a-z0-9])ads?[-_/]|emoji"
     # 사이트가 꾸미기로 쓰는 호스트·폴더 — 본문 사진은 여기 없다(2026-10-13 실측).
     r"|nstatic\.dcinside\.com|img\.ruliweb\.com|\$\{)",
     re.IGNORECASE)

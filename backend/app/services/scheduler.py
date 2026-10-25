@@ -59,6 +59,9 @@ LONG_LIVED_DAYS = 7
 # 2026-10-26 사람 결정 — 「30일 지난 캐러셀은 이미 올렸거나 버린 것」. 디스크가 91% 라
 # 그보다 오래된 캐러셀의 외부 사진 캐시는 지운다. 그런 캐러셀을 다시 열면 일부 사진이 안 뜬다.
 PROXY_REF_DAYS = 30
+# cleanup_old_carousels: 만든 지(created_at) 이만큼 지난 캐러셀은 **모든 계정**에서 지운다.
+# 2026-10-26 사람 결정(「만든 지 15일 지나면 삭제」, 모든 계정 적용 확인). 되돌릴 수 없다.
+CAROUSEL_TTL_DAYS = 15
 
 
 async def scrape_job(shard: int | None = None):
@@ -290,6 +293,32 @@ async def cleanup_proxy_cache():
         )
 
 
+async def cleanup_old_carousels():
+    """만든 지 CAROUSEL_TTL_DAYS 일 지난 캐러셀을 지운다(모든 계정).
+
+    지우는 방식은 화면의 [삭제]와 같다 — 행을 지우고 VACUUM 을 걸어 DB 파일과
+    시간별 백업이 실제로 줄게 한다. 그 캐러셀이 쓰던 외부 사진은 03:30
+    cleanup_proxy_cache 가 「참조 없음」으로 보고 함께 치운다.
+    """
+    from app.database import async_session
+    from app.models.carousel import GeneratedCarousel
+    from sqlalchemy import select
+
+    cutoff = datetime.now() - timedelta(days=CAROUSEL_TTL_DAYS)
+    async with async_session() as db:
+        old = (await db.execute(
+            select(GeneratedCarousel).where(GeneratedCarousel.created_at < cutoff)
+        )).scalars().all()
+        if not old:
+            return
+        ids = [c.id for c in old]
+        for c in old:
+            await db.delete(c)
+        await db.commit()
+    logger.info(f"[CarouselTTL] {CAROUSEL_TTL_DAYS}일 지난 캐러셀 {len(ids)}개 삭제: {ids}")
+    schedule_vacuum_soon("carousel-ttl")
+
+
 def _db_file() -> Path:
     return settings.DATA_DIR / "db.sqlite3"
 
@@ -421,6 +450,17 @@ def start_scheduler():
         trigger=CronTrigger(hour=3, minute=30, timezone="Asia/Seoul"),
         id="cleanup_proxy_cache",
         name=f"proxy_cache 정리 (미참조 + {LONG_LIVED_DAYS}일)",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+
+    # 오래된 캐러셀 삭제: 매일 03:20 KST — 위 proxy_cache 정리(03:30) 앞에 둬야
+    # 지운 캐러셀이 쓰던 외부 사진도 같은 밤에 함께 빠진다.
+    scheduler.add_job(
+        cleanup_old_carousels,
+        trigger=CronTrigger(hour=3, minute=20, timezone="Asia/Seoul"),
+        id="cleanup_old_carousels",
+        name=f"만든 지 {CAROUSEL_TTL_DAYS}일 지난 캐러셀 삭제",
         replace_existing=True,
         misfire_grace_time=3600,
     )

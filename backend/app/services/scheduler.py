@@ -55,6 +55,10 @@ PERMANENT_FOLDERS: set[str] = set(NEVER_DELETE_FOLDERS) | {"proxy_cache"}
 
 # cleanup_proxy_cache: 미참조 proxy 파일이 이만큼 지나면 삭제.
 LONG_LIVED_DAYS = 7
+# cleanup_proxy_cache: 이 기간 안에 손댄(updated_at) 캐러셀만 「참조 중」으로 본다.
+# 2026-10-26 사람 결정 — 「30일 지난 캐러셀은 이미 올렸거나 버린 것」. 디스크가 91% 라
+# 그보다 오래된 캐러셀의 외부 사진 캐시는 지운다. 그런 캐러셀을 다시 열면 일부 사진이 안 뜬다.
+PROXY_REF_DAYS = 30
 
 
 async def scrape_job(shard: int | None = None):
@@ -222,7 +226,8 @@ async def cleanup_proxy_cache():
     proxy_cache 는 캐러셀이 src 로 참조하는 외부 이미지의 디스크 캐시다. 캐러셀이
     아직 쓰는 파일을 지우면 편집기에서 이미지가 안 뜨고(=carousel 158), 소스가 이미
     죽었으면 영구 손실이 된다. 규칙:
-      - 어떤 캐러셀이라도 참조 → 영구 보존 (나이 무관)
+      - 최근 30일(PROXY_REF_DAYS) 안에 손댄 캐러셀이 참조 → 보존 (나이 무관)
+        그보다 오래된 캐러셀의 참조는 세지 않는다(2026-10-26 사람 결정 — 이미 올렸거나 버린 것).
       - 최근 7일 내 받은 파일 → 보존 (아직 저장 안 한 작업 중 픽 일 수 있음)
       - 미참조 + 7일 경과 (검색만 하고 안 고른 후보 잔해) → 삭제
     캐시 키 = sha1(요청 url). 저장 src 의 ?url= 값을 여러 디코딩 변형으로 모두 해시해
@@ -241,7 +246,10 @@ async def cleanup_proxy_cache():
 
     referenced: set[str] = set()
     async with async_session() as db:
-        rows = (await db.execute(select(GeneratedCarousel.canvas_data))).all()
+        ref_since = datetime.now() - timedelta(days=PROXY_REF_DAYS)
+        rows = (await db.execute(
+            select(GeneratedCarousel.canvas_data).where(GeneratedCarousel.updated_at >= ref_since)
+        )).all()
     for (cd,) in rows:
         data = cd if isinstance(cd, dict) else None
         if data is None:
@@ -278,7 +286,7 @@ async def cleanup_proxy_cache():
         logger.info(
             f"[ProxyCleanup] removed {deleted} unreferenced proxy files "
             f"(>{LONG_LIVED_DAYS}d old), freed {freed / 1024 / 1024:.1f}MB "
-            f"(kept {len(referenced)} referenced keys)"
+            f"(kept {len(referenced)} keys referenced by carousels edited in {PROXY_REF_DAYS}d)"
         )
 
 

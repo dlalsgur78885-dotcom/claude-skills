@@ -19,6 +19,7 @@ codex 는 이 PC 의 로그인 세션에 묶여 있어 서버로 못 옮긴다. 
 import asyncio
 import logging
 import zlib
+from collections import Counter
 from datetime import datetime
 import secrets
 from typing import Any
@@ -73,7 +74,10 @@ def is_enabled() -> bool:
 async def _do_topics(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     from app.services import studio_steps as studio
     r = await studio.make_topics(axis)
-    return {"topics": r["items"], "kept": r["kept"], "dropped": r["dropped"]}
+    # `built` = 최근 30회차에 만든 주제. 서버가 이것을 회차의 `built` 에 합쳐 화면이
+    # [완료] 로 보여준다(`api/studio_sessions._out`).
+    return {"topics": r["items"], "kept": r["kept"], "dropped": r["dropped"],
+            "built": r.get("built") or []}
 
 
 def _hook_source(t: dict[str, Any]) -> str:
@@ -239,6 +243,26 @@ STYLE = {
     ),
 }
 
+# 여행코스 표지 후보의 랜드마크 풍경 컷(2026-10-28 원클릭 신설). 원본은 `여행코스_3-2단계_썸네일이미지.md`
+# 「구도 — 왼쪽 글자 자리를 비운다」(2026-10-19 사람 지시 — 이 축은 방 지침서 「정중앙 1:1」을 덮는다)와
+# 「프롬프트」 절이고, 지침서가 「그 문장 그대로 적는다」고 가리킨 `.tmp/sol1019_c5d/gen2.mjs` 의 [구도]
+# 덩어리를 영어로 옮겼다 — 한쪽을 고치면 같이 고친다. 「밝은 하늘 장은 피한다」(흰 훅 글씨가 묻힌다)도 여기 있다.
+# 사진 결은 다른 풍경과 같다(`STYLE["scenery"]` — 그 자리에 서서 폰으로 찍은 눈높이 · 아이폰 색 · 글자).
+# ⚠ 다른 축 풍경처럼 컷마다 시간대·거리감을 돌려 붙이지 않는다(`scenery_looks`) — 「밝은 한낮」·「가장자리에
+#   큰 사물」이 이 구도와 정면으로 부딪힌다.
+STYLE["landmark"] = (
+    "Composition — the most important rule: leave a clear empty area for text on the LEFT of the frame. "
+    "From the left edge to 55% of the width, and from 33% to 67% of the height from the top, that "
+    "rectangle must contain no object at all — no building, tower, sign, statue, tree, person or vehicle. "
+    "Fill it only with something flat and even such as sky, clouds, a snowfield, the sea or mist, with "
+    "even color and brightness inside it, and never let a horizon or a building outline cut across it. "
+    "Put the main subject on the RIGHT side of the frame or in the BOTTOM third. Avoid a bright, pale sky "
+    "behind that empty area — white text sits on it, so prefer a deeper sky, dusk, night or snow. It must "
+    "still look like a naturally taken real photo: no stretched backgrounds and no awkwardly cut-off "
+    "subject. No person with a visible face; people only far away, from behind or as soft silhouettes. "
+    + STYLE["scenery"]
+)
+
 # 셀카 결은 **이 축만** 쓴다 (2026-09-30 사람 지시 — 「일본 맛집2 캐러셀 인물 이미지만 셀카를
 # 찍은 느낌으로 하고, 나머지 인물 사진은 원래대로 해줘」). 2026-09-29 에 모든 축에 넣었던 것을
 # 한 축으로 좁힌 것이다 — 다른 축은 남이 찍어 준 스냅 결로 돌아갔다.
@@ -294,10 +318,12 @@ AXIS_STYLE = {
             "Make it feel like the key visual of a quiet Japanese slice-of-life film poster — the "
             "understated, everyday kind, not a blockbuster — while still being a real place "
             "photographed on location, not a set and not an illustration or painting. Give it the "
-            "color of the hand-painted backgrounds in classic Japanese animated films: soft clear "
-            "blue skies with white clouds, fresh greens, warm gentle sunlight, clean and gently "
-            "saturated colors — fresh and lively but never flashy, neon or oversaturated. Soft "
-            "natural light, a calm, open composition with depth "
+            "color of the hand-painted backgrounds in classic Japanese animated films: clean, "
+            "gently saturated colors that stay fresh and lively but never flashy or "
+            "oversaturated — by day soft clear blue skies with white clouds, fresh greens and "
+            "warm gentle sunlight; after dark the warm glow of shop signs, lanterns and windows "
+            "lighting the street, still clean and calm rather than garish. Follow the time of day "
+            "given in the Time and light line above. A calm, open composition with depth "
             "and plenty of sky, street or wall around the subject so the frame feels airy and "
             "still. A fine film grain. Anyone should tell at a glance that this is Japan: show "
             "everyday Japanese details that fit the scene, such as {motifs}. Natural traces of "
@@ -515,9 +541,37 @@ _SCENERY_TIME = (
     "catch the light and a gentle haze sits in the distance.",
     "Time and light: the golden hour just before sunset, warm amber light washing the walls and "
     "the sky turning soft orange and pink, still bright and clear — not dark.",
+)
+# 밤 자리 (2026-10-28 솔희 지시 — 「썸네일 풍경이 너무 낮만 나와. 도시·밤 배경도 섞어서」).
+# ⚠ 2026-09-22 의 「칙칙하다」를 되살리지 않는다 — 그때 문제는 **어두운** 저녁·빈 실내였다.
+#   그래서 밤은 전부 **불빛으로 환한** 밤이다. 어둡게·텅 비게·침침하게 두지 않는다.
+_SCENERY_TIME_NIGHT = (
+    "Time and light: the blue hour just after sunset — a deep blue sky above while shop windows, "
+    "lanterns and signs are already lit, the street still clearly visible and inviting, never "
+    "dark, murky or empty.",
+    "Time and light: early evening after dark, the street lit warmly by shop signs, lanterns and "
+    "windows, that light pooling on the pavement, the sky a clean dark blue — bright and lively, "
+    "never gloomy or deserted.",
+    "Time and light: night on a lit street, signboards, shop fronts and street lamps glowing so "
+    "the whole frame reads clearly, colors clean and cheerful rather than harsh or washed in red.",
+    "Time and light: night around a station, platform and street lamps plus lit train or building "
+    "windows carrying the light, the sky dark but the place itself warm and clearly lit.",
+)
+# 비는 **주제나 훅 문구에 비가 있을 때만** 쓴다 (2026-10-28 솔희 지시 — 「비온 뒤 배경은 주제나
+# 문구에 없으면 빼줘」). 전에는 낮·밤 목록에 비가 섞여 있어 비 얘기가 없는 회차에도 젖은 바닥이 나왔다.
+# 겨울의 눈쌓인 풍경은 막지 않는다 — 같은 지시의 뒷말이고 `season_note` 가 계절대로 붙인다.
+_RAIN_WORDS = ("비 오", "비오", "비가 오", "비가 와", "빗길", "빗속", "빗방울", "빗물",
+               "장마", "우산", "소나기", "폭우", "호우", "젖은")
+_SCENERY_TIME_RAIN = (
     "Time and light: right after rain on a bright day, the ground still wet and reflecting the "
     "sky while the clouds break open and sunlight returns.",
 )
+_SCENERY_TIME_NIGHT_RAIN = (
+    "Time and light: night right after rain, the wet asphalt mirroring the lit signs and lamps, "
+    "the air clear and the scene bright enough to see every detail.",
+)
+# 밤이 들어가는 자리 — 다섯 장이면 2·4번째가 밤이고 나머지는 낮이다(섞어 달라는 지시 그대로).
+_NIGHT_EVERY = 2
 # 거리감은 「여백이 있는 트인 구도」(2026-09-22 사람 지시) 안에서 나눈다 — 꽉 찬 클로즈업은 없다.
 _SCENERY_DISTANCE = (
     "Distance and framing: a wide view taken from far back across the street, the place small in "
@@ -548,6 +602,19 @@ JAPAN_MOTIFS = (
     "a river embankment path with cherry trees along it",
     "paper lanterns and a hand-painted shop sign under the eaves",
 )
+# 도시 요소 (2026-10-28 솔희 지시 — 「배경도 다 비슷비슷하고, 도시·밤 배경도 섞어서」).
+# 위 `JAPAN_MOTIFS` 는 전부 동네·골목·시골 쪽이라 회차마다 섞어도 늘 주택가로 보였다.
+# 회차마다 **동네 둘 + 도시 하나**를 싣는다(`japan_motifs`).
+CITY_MOTIFS = (
+    "a station front where people cross in front of office buildings",
+    "a crossing with stacked signboards covering the building faces",
+    "a convenience store lit on a street corner",
+    "a subway entrance stairway going down from the sidewalk",
+    "a busy shopping street with tall signs on both sides",
+    "an elevated railway running over a city street",
+    "a wide scramble crossing with traffic lights and office towers behind it",
+    "a bus terminal in front of a department store",
+)
 
 
 def _rotate(items: tuple[str, ...], seed: str, n: int) -> list[str]:
@@ -573,22 +640,38 @@ def gaze_index(seed: str) -> int:
     return zlib.crc32(seed.encode("utf-8")) % len(_HAIRS) if seed else 1
 
 
-def scenery_looks(seed: str, n: int) -> list[str]:
+def scenery_looks(seed: str, n: int, topic: str = "") -> list[str]:
     """풍경 컷마다 붙는 **시간대·빛**과 **거리감**. 컷마다 다르고 조합은 씨앗으로 돌아간다.
 
     2026-10-12 사람 지시로 넣었다 — 다섯 장이 다 아침 햇살·트인 골목이라 같은 사진처럼 보였다.
     지침서 `상황별일본어_3-2단계_썸네일이미지.md` 「[풍경 이미지]」와 짝이다 — 한쪽을 고치면 같이 고친다.
+
+    **낮과 밤을 섞는다**(2026-10-28 솔희 지시 — 「너무 낮만 나와」). 두 장마다 한 장이 밤이라
+    다섯 장이면 2·4번째가 밤이다. 낮·밤 어느 쪽도 씨앗으로 돌아가므로 같은 주제를 다시 눌러도
+    같은 조합이 아니다.
+
+    **비는 `topic` 에 비가 적혀 있을 때만 섞인다**(2026-10-28 솔희 지시 — `_RAIN_WORDS`).
+    부르는 쪽이 주제와 훅 문구를 함께 넘긴다.
     """
     if n <= 0:
         return []
-    times = _rotate(_SCENERY_TIME, seed, n)
+    rain = any(w in (topic or "") for w in _RAIN_WORDS)
+    day = _rotate(_SCENERY_TIME + (_SCENERY_TIME_RAIN if rain else ()), seed, n)
+    night = _rotate(_SCENERY_TIME_NIGHT + (_SCENERY_TIME_NIGHT_RAIN if rain else ()),
+                    f"{seed}·n", n)
+    times = [night[i] if i % _NIGHT_EVERY == 1 else day[i] for i in range(n)]
     dists = _rotate(_SCENERY_DISTANCE, f"{seed}·d", n)
     return [f"{t} {d}" for t, d in zip(times, dists)]
 
 
 def japan_motifs(seed: str, n: int = 3) -> str:
-    """그 회차에 쓸 일본 일상 요소 `n` 개. 회차마다 섞인다(`JAPAN_MOTIFS`)."""
-    return ", ".join(_rotate(JAPAN_MOTIFS, f"{seed}·m", n))
+    """그 회차에 쓸 일본 일상 요소 `n` 개. 회차마다 섞인다(`JAPAN_MOTIFS` · `CITY_MOTIFS`).
+
+    **마지막 하나는 도시 것**이다 (2026-10-28 솔희 지시 — 배경이 다 주택가·골목으로 보였다).
+    """
+    town = _rotate(JAPAN_MOTIFS, f"{seed}·m", max(0, n - 1))
+    city = _rotate(CITY_MOTIFS, f"{seed}·c", 1) if n > 0 else []
+    return ", ".join([*town, *city])
 
 
 def season_now(today: datetime | None = None) -> str:
@@ -638,13 +721,19 @@ def season_note(topic: str) -> str:
     2026-10-16 사람 지시 — 「썸네일 이미지는 계절에 맞게 생성해줘」. 옷(`season_outfits`)만
     계절을 받고 있어서 배경·나무·빛은 10월에도 봄처럼 나왔다. 축을 가리지 않고 모든 컷에 붙인다.
     """
-    en = _SEASON_EN[topic_season(topic) or season_now()]
-    return (
+    season = topic_season(topic) or season_now()
+    en = _SEASON_EN[season]
+    note = (
         f"Season: it is {en} in Japan. Everything in frame that shows the time of year — the "
         f"trees and plants, the sky and the light, what people on the street wear — looks like "
         f"{en}. Do not draw another season's markers: no cherry blossoms unless it is spring, "
         f"no snow unless it is winter, no red autumn foliage unless it is autumn."
     )
+    # 겨울은 눈쌓인 풍경이 된다 (2026-10-28 솔희 지시 — 비 온 뒤는 빼지만 겨울 눈은 가능).
+    if season == "겨울":
+        note += (" Snow settled on the ground, the roofs and the branches is welcome here, kept"
+                 " bright and clean under clear winter light.")
+    return note
 
 def person_looks(seed: str, axis: str = "") -> list[str]:
     """인물 5장의 머리·시선. 앞 세 장(여성)은 머리 셋을 하나씩, 뒤 두 장은 머리를 비운다.
@@ -711,13 +800,16 @@ FOOD_COLLAGE = (
     "different amounts, never aligned in a tidy grid or ring. The table itself stays clean: "
     "no crumpled tissues or napkins, no crumbs or spilled sauce, no half-eaten dishes, empty "
     "plates or leftover glasses, no condiment bottles, menus or flyers. No people and no hands "
-    "in the frame. Do not render any text, signage or logos — leave the space clean instead of "
-    "generating lettering."
+    "in the frame. Lettering that really belongs in the scene — on the dishes, the wrappers, "
+    "a menu board or the shop's own sign — may show, as accurate Japanese or English, never "
+    "garbled glyphs or invented characters."
 )
 
 # 프롬프트에 「인물(person) 5장」처럼 적으려고 쓴다. 영어 키만 주면 무엇을 그리라는 건지
 # 모델이 한 번 더 번역해야 한다.
-KIND_KO = {"person": "인물", "scenery": "풍경", "food": "음식", "hotel": "호텔"}
+KIND_KO = {"person": "인물", "scenery": "풍경", "food": "음식", "hotel": "호텔",
+           # 여행코스 표지(2026-10-28) — 풍경이지만 **지역 랜드마크**이고 왼쪽 글자 자리를 비우는 구도다.
+           "landmark": "랜드마크 풍경"}
 
 
 async def _scene_context(session_id: str,
@@ -863,60 +955,87 @@ def _hook_scene_block(hook: str, cands: list[str]) -> str:
     return block
 
 
-async def _cover_from_photos(items: list[dict[str, Any]], axis: str, want: int
+async def _cover_from_photos(items: list[dict[str, Any]], want: int
                              ) -> list[dict[str, Any]]:
-    """표지 음식 후보를 **본문 가게의 구글 실사를 레퍼런스로** 다시 그린다 (2026-10-23 솔희 지시).
+    """표지 음식 후보를 **본문 가게의 구글 실사에서** 만든다 (2026-10-23 솔희 지시).
 
     사람 말 그대로 — 「표지 이미지가 여전히 부자연스러워. 이미지 자체도 인위적이고,
     뒤에 나오는 식당 음식과도 달라서 이상해」. 원인은 **표지만 딴 길**이었다 — 본문 8장은
-    실사를 레퍼런스로 다시 그리는데(`studio_steps._regen_backgrounds`) 표지는 글만 보고
+    실사에서 오는데(`studio_steps._regen_backgrounds`) 표지는 글만 보고
     새로 그려(`codex_image.generate_images`) 실물 근거가 없었다. 프롬프트로 「인위적」을
     깎는 것은 10/21 에 이미 해 보고 한계가 났다(`image_regen.PROMPT` 주석).
 
-    그래서 표지도 본문과 **같은 길**로 보낸다 — 가게마다 한 장씩, 서로 다른 가게의 실사를
-    레퍼런스로 `want` 장을 그려 사람이 그중 1장을 고른다. 모둠 상차림(`FOOD_COLLAGE`)은
+    그래서 표지도 본문과 **같은 길**로 보낸다 — 가게마다 한 장씩, 서로 다른 가게의 실사로
+    `want` 장을 만들어 사람이 그중 1장을 고른다. 모둠 상차림(`FOOD_COLLAGE`)은
     이 길에 없다 — 실사 한 장에서 여러 가게의 상을 지어낼 수 없다.
 
-    **한 장도 못 그리면 빈 목록을 돌려준다** — 부르는 쪽이 옛 길(글→그림)로 내려간다.
+    **그 실사를 다시 그리지 않는다**(2026-10-28 솔희 지시 — 교토 소바 2곳 A/B 비교에서 B 선택).
+    `from_reference`(레퍼런스 보고 새로 그리기)는 음식 모양·그릇이 실물에서 멀어졌다.
+    `clean_expand` 는 고른 사진을 그대로 두고 얹힌 글자만 지우고 4:5 로 이어 그린다 —
+    본문 태그 글 사진과 같은 길이다.
+
+    **음식이 찍힌 사진만 쓴다**(2026-10-28 솔희 지시 — 「맛집 캐러셀 표지는 무조건 음식 사진이어야
+    해」 · 일본맛집_3-2단계 ★ 절). 가게마다 후보를 눈으로 가려(`photo_vision.pick_food`) 음식 컷을
+    집고, **음식 컷이 없는 가게는 건너뛴다.** 실사를 그대로 쓰기로 한 뒤 생긴 규칙이다 — 다시 그릴
+    때는 프롬프트가 음식을 그렸지만, 그대로 쓰면 외관·간판 컷이 표지로 올라올 수 있다.
+
+    **한 장도 못 만들면 빈 목록을 돌려준다** — 부르는 쪽이 옛 길(글→그림)로 내려간다.
     표지 없이 회차를 버리는 것보다 낫다.
     """
-    from app.services import image_regen, studio_remote
-    from app.services import studio_steps as studio
+    from app.services import image_regen, photo_vision, studio_remote
 
-    prompt = image_regen.prompt_for(str(studio.axis_conf(axis).get("regen_prompt") or ""))
     # ⚠ 같은 사진이 `=s1024` · `=s2048` 처럼 크기만 달라 두 번 오는 일이 많다(본문도 같은
     #   덫을 피한다 — `studio_steps.build`). 글자로만 비교하면 같은 그림을 두 번 그린다.
+    async def food_of(item: dict[str, Any]) -> tuple[str, str]:
+        """가게 하나 → (가게 이름, 음식 컷 주소). 음식 컷이 없으면 주소가 빈 문자열이다.
+
+        본문에 쓰는 대표 한 장(`photo`)부터 보고, 그게 음식이 아니면 그 가게의 다른 후보
+        (`photos` — 이미 음식 컷이 앞으로 세워져 있다)를 본다.
+        """
+        cands: list[str] = []
+        seen_one: set[str] = set()
+        for url in [str((item or {}).get("photo") or ""),
+                    *[str(u) for u in ((item or {}).get("photos") or [])]]:
+            key = url.split("=")[0]
+            if url and key not in seen_one:
+                seen_one.add(key)
+                cands.append(url)
+        return str((item or {}).get("name") or "").strip(), await photo_vision.pick_food(cands)
+
     picks: list[tuple[str, str]] = []
     seen: set[str] = set()
-    for item in items:
-        url = str((item or {}).get("photo") or "")
+    found = await asyncio.gather(*(food_of(it) for it in items))
+    for name, url in found:
         key = url.split("=")[0]
         if not url or key in seen:
             continue
         seen.add(key)
-        picks.append((str((item or {}).get("name") or "").strip(), url))
+        picks.append((name, url))
         if len(picks) >= want:
             break
+    skipped = sum(1 for _, u in found if not u)
+    if skipped:
+        logger.info("[studio-worker] 음식 컷이 없어 표지 후보에서 뺀 가게 %d곳", skipped)
     if not picks:
-        logger.warning("[studio-worker] 표지 레퍼런스로 쓸 실사가 없습니다 — 글로 그립니다.")
+        logger.warning("[studio-worker] 표지로 쓸 음식 실사가 없습니다 — 글로 그립니다.")
         return []
 
     async def one(name: str, url: str) -> dict[str, Any] | None:
         try:
-            blob = await image_regen.from_reference(url, prompt=prompt)
+            blob = await image_regen.clean_expand(url)
             return {
                 "kind": "food",
                 # 갤러리 설명이자 [다시 뽑기] 때 피할 무대다 — 어느 가게 것인지 남긴다.
-                "prompt": f"{name} 실사 레퍼런스".strip(),
+                "prompt": f"{name} 실사 정리본".strip(),
                 "url": await studio_remote.upload_image(blob, f"{secrets.token_hex(8)}.png"),
             }
         except Exception as e:
-            logger.warning("[studio-worker] 표지 레퍼런스 재생성 실패(%s): %s", name, str(e)[:160])
+            logger.warning("[studio-worker] 표지 실사 정리 실패(%s): %s", name, str(e)[:160])
             return None
 
     done = await asyncio.gather(*(one(n, u) for n, u in picks))
     out = [x for x in done if x]
-    logger.info("[studio-worker] 표지 음식 %d/%d장을 실사 레퍼런스로 그렸습니다", len(out), len(picks))
+    logger.info("[studio-worker] 표지 음식 %d/%d장을 실사 그대로 정리했습니다", len(out), len(picks))
     return out
 
 
@@ -999,12 +1118,12 @@ async def _do_images(chosen: dict[str, Any], axis: str,
         shots = {k: (0 if k in on_demand else v) for k, v in shots.items()}
     # 그릴 종류만 남긴다 — 축마다 다르다(상황별일본어 인물·풍경 / 일본맛집 인물·음식).
     kinds = [k for k, v in shots.items() if v]
-    # 표지 음식 컷은 **본문 가게의 구글 실사를 레퍼런스로** 다시 그린다
-    # (`AXES[축].cover_photo_regen` — 2026-10-23 솔희 지시). 글만 보고 새로 그리던 길에서
-    # 옮겨 온 것이다 — 아래 `_cover_from_photos` 주석에 이유가 있다.
+    # 표지 음식 컷은 **본문 가게의 구글 실사**에서 온다 — 그 사진 그대로 두고 얹힌 글자만
+    # 지우고 4:5 로 이어 그린다 (`AXES[축].cover_photo_regen` — 2026-10-23 솔희 지시,
+    # 2026-10-28 다시 그리기에서 실사 정리로 바꿈). 아래 `_cover_from_photos` 주석에 이유가 있다.
     food_regen: list[dict[str, Any]] = []
     if "food" in kinds and studio.axis_conf(axis).get("cover_photo_regen"):
-        food_regen = await _cover_from_photos(list(chosen.get("items") or []), axis,
+        food_regen = await _cover_from_photos(list(chosen.get("items") or []),
                                               shots.get("food", 0))
         if food_regen:
             shots = {**shots, "food": 0}
@@ -1145,16 +1264,19 @@ async def _do_images(chosen: dict[str, Any], axis: str,
             "다섯 번 내지 마라(위 「다섯 장이 모두 다른 장소일 필요는 없다」는 인물 컷 "
             "이야기다). 다섯 장 모두 주제·훅과 이어지는 자리여야 하는 것은 그대로다.\n"
             "- **풍경 컷의 시간대·빛·거리감은 네가 적지 마라 — 화면이 컷마다 순서대로 "
-            "붙인다.** 아침·낮·해 질 참, 멀리서·눈높이·올려다본 구도 같은 것을 쓰지 말고 "
+            "붙인다.** 아침·낮·해 질 참·밤, 멀리서·눈높이·올려다본 구도 같은 것을 쓰지 말고 "
             "**그 자리와 무엇이 보이는지만** 쓴다. 담을 일본 일상 요소도 화면이 회차마다 "
-            "바꿔 붙이니 골목·자판기·건널목으로 못박지 마라."
+            "바꿔 붙이니 골목·자판기·건널목으로 못박지 마라.\n"
+            "- **다섯 자리 중 한두 곳은 도시로 섞어라** (2026-10-28 사람 지시 — 「배경이 다 "
+            "비슷비슷하다. 도시도 섞어서」). 역 앞·번화가·지하철 입구·편의점 앞·빌딩 사이 "
+            "같은 자리도 주제와 이어지면 쓴다 — 다섯 장이 다 주택가 골목·시골 역이 되지 않게."
         )
     # 음식 컷은 이 축에만 있다(일본맛집). 안 적으면 「음식 든 사람」이 나와 인물 컷과 겹친다.
     if "food" in kinds:
         task += (
             "\n- **음식 컷에는 사람이 나오지 않는다.** 그 주제의 지역·메뉴에 실제로 있는 음식을 "
             "손님이 자리에 앉아 폰으로 찍은 **후기 사진** 장면으로 잡는다 — 그 가게 테이블·쟁반·"
-            "젓가락·물컵이 함께 보이게. 가게 간판·메뉴판 글자를 그리지 마라. "
+            "젓가락·물컵이 함께 보이게. **가게 간판·메뉴판 글자가 보여도 된다**(2026-10-28 솔희 지시 — 글자는 위 결대로 또렷한 일본어로, 뭉개진 글자는 안 된다). "
             f"앞 {FOOD_REVIEW_SHOTS}장은 같은 접시 클로즈업으로 채우지 말고 위에서 본 상차림·45° 대표 메뉴·"
             "가른 단면·곁들이까지 담은 자리처럼 시점을 나눈다."
             # 2026-10-12 사람 지시 — 누끼 스티커를 버리고 **모둠 상차림**으로. 모양은 화면이 붙인다(`FOOD_COLLAGE`).
@@ -1190,6 +1312,23 @@ async def _do_images(chosen: dict[str, Any], axis: str,
             "수영장·조식 같은 것 — 중에서 주제가 약속하는 것을 고른다(주제가 「대욕장」이면 대욕장, "
             "「야경」이면 창밖 야경). 주제와 상관없는 일반 호텔 사진으로 도망가지 마라."
             "\n- **실제 그 호텔이 아니다** — 호텔 이름·간판·로고·글자를 그리지 마라. 장면만 쓴다."
+        )
+    # 랜드마크 풍경은 여행코스 표지에만 있다(2026-10-28). 원본은 `여행코스_3-2단계_썸네일이미지.md` 「규격」·
+    # 「프롬프트」 — 지침서에도 있지만 codex 가 긴 문서에서 흘리므로 장면을 짓는 쪽에서 다시 못박는다.
+    # 구도(왼쪽 글자 자리)·결은 화면이 붙인다(`STYLE["landmark"]`).
+    if "landmark" in kinds:
+        stops = [str((s or {}).get("name") or "").strip()
+                 for it in (chosen.get("items") or []) if isinstance(it, dict)
+                 for s in (it.get("stops") or []) if isinstance(s, dict)]
+        task += (
+            "\n- **랜드마크 풍경 컷은 그 지역의 랜드마크·대표 풍경이다.** 랜드마크는 **이름을 적어** 넣는다"
+            "(지역만 적으면 어디인지 모를 그림이 나온다). 훅의 결(먹방·쇼핑·힐링…)에 맞는 장면으로 고른다. "
+            "위의 「풍경 컷은 그 말을 쓰는 장소…명소·자연 풍경으로 빠지지 마라」·「말이 오가는 자리」는 다른 축 "
+            "이야기다 — 이 컷은 **그 지역 명소가 주인공**이다. 위 인물 규칙(20대 한국인 여성 등)도 인물 컷 "
+            "이야기다 — 이 컷에는 주인공 인물을 넣지 마라(3-2 「인물 컷은 사람이 따로 요청할 때만」)."
+            "\n- **구도·사진 결은 네가 적지 마라 — 화면이 붙인다.** 그 자리와 무엇이 보이는지만 쓴다."
+            + (("\n- 아래는 이 캐러셀 본문 코스다 — 랜드마크를 고를 때 참고한다(본문에 없는 대표 명소도 된다): "
+                + " · ".join(dict.fromkeys(x for x in stops if x))) if stops else "")
         )
     # 인물 컷을 음식 인증샷으로 짜는 축(`PERSON_FOOD_AXES`, 2026-10-15 사람 지시 — 「인물이 음식을
     # 먹고 있거나, 그릇을 들어 음식을 보여주는 듯한 인증샷을 찍는 느낌으로」). 결은 코드가 붙이지만
@@ -1264,7 +1403,7 @@ async def _do_images(chosen: dict[str, Any], axis: str,
     # 풍경은 **누를 때마다** 시간대·요소가 바뀌어야 한다(2026-10-12) — 주제로만 돌리면
     # 「풍경만 다시」를 눌러도 같은 아침 햇살·같은 요소가 다시 나온다.
     scenery_seed = f"{topic}·{secrets.token_hex(4)}"
-    scenery = scenery_looks(scenery_seed, shots.get("scenery", 0))
+    scenery = scenery_looks(scenery_seed, shots.get("scenery", 0), f"{topic} {hook}")
     motifs = japan_motifs(scenery_seed)
     # 계절은 모든 컷에 같은 줄로 붙는다(주제 계절 우선, 없으면 오늘 — `season_note`).
     season = season_note(topic)
@@ -1398,6 +1537,43 @@ async def _do_body_web(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     return {"body": items}
 
 
+# 첨부 사진을 본문 장으로 쓸 **최대 장수**. 3-3 「사진이 많아도 다 쓰지 않는다」 —
+# 같은 얘기를 하는 사진은 한 장만 쓰고, 본문은 3장 안쪽이 기본이다.
+POST_PHOTO_SLIDES = 2
+
+
+# 사진 전용 유형이 본문에 쓸 **최대 장수.** X 글에 붙는 사진이 4장까지라 그만큼이다
+# (일본미녀 지침서 「사진이 있는 만큼 쓴다 — 억지로 늘리지 않는다」).
+PHOTO_ONLY_SLIDES = 4
+
+
+async def _do_body_photos(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
+    """본문을 **원글 사진만**으로 짠다 (2026-10-26 대표 지시 — 일본미녀).
+
+    장마다 사진 한 장이고 자막이 없다. 낱장은 `사진`(4:5 를 꽉 채우는 배경)이다 —
+    글칸이 없는 낱장이라 문구를 지어도 들어갈 자리가 없다.
+
+    사진이 한 장도 없으면 **그 후보는 이 유형으로 못 만든다**(영상·글만 있는 글).
+    다음에도 같은 결과라 `TopicUnfit` 으로 올려 이번 회차에서 뺀다.
+    """
+    from app.services import studio_steps as studio
+    from app.services import studio_remote, x_search
+
+    urls = [u for u in (chosen.get("photo_urls") or []) if u]
+    if not urls:
+        raise studio.TopicUnfit("원글에 사진이 없어 사진으로만 만들 수 없습니다")
+    blobs = await x_search.body_images(urls, PHOTO_ONLY_SLIDES)
+    if not blobs:
+        raise studio.TopicUnfit("원글 사진을 한 장도 받지 못했습니다")
+    items: list[dict[str, Any]] = []
+    for blob in blobs:
+        url = await studio_remote.upload_image(blob, f"{secrets.token_hex(8)}.jpg")
+        # 낱장 이름은 **글자 그대로**여야 한다 — 틀리면 렌더러가 조용히 표지로 떨어뜨린다.
+        items.append({"text": "", "photo": url, "layout": "사진"})
+    logger.info(f"[studio-worker] 사진 전용 본문 {len(items)}장 (원글 사진 {len(urls)}장)")
+    return {"body": items}
+
+
 async def _do_body_x(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     """X인용 본문 — 문구는 codex(지침서 규칙), 이미지 칸은 **X 화면 캡처**.
 
@@ -1418,6 +1594,12 @@ async def _do_body_x(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     if not post_id.isdigit():
         return await _do_body_web(chosen, axis)
 
+    # 사진으로만 가는 유형(일본미녀 · `_TYPES` 의 `photo_only`)은 **여기서 끝낸다** —
+    # 원글 사진을 장마다 한 장씩 쓰고 문구·원글 캡처·반응 장을 붙이지 않는다
+    # (2026-10-26 대표 지시 「일본미녀는 사진으로만 구성」).
+    if studio.axis_conf(axis).get("photo_only"):
+        return await _do_body_photos(chosen, axis)
+
     # 1) 문구 — 지침서를 실어 codex 에게 맡긴다(형식만 여기서 정한다).
     r = await studio.make_body(studio.BodyBody(
         axis=axis,
@@ -1433,12 +1615,42 @@ async def _do_body_x(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     korean = str(chosen.get("body_korean") or "")
     if not korean:
         korean = await studio.translate_post(str(chosen.get("text") or ""), axis)
-    shot = await x_search.capture_card(post_id, korean)
+    # 글이 없는 글(사진만 올린 글)은 **사진을 빼면 빈 카드**가 된다 — 그때는 통으로 찍는다.
+    has_text = bool(korean.strip())
+    shot = await x_search.capture_card(post_id, korean, hide_media=has_text)
     url = await studio_remote.upload_image(shot, f"{secrets.token_hex(8)}.png")
+    # 원글 캡처도 **칸**에 들어가야 한다. 낱장을 안 달면 배경(`사진+자막`)으로 떨어져
+    # 4:5 를 꽉 채우고 **자막 위를 덮는다**(2026-10-23 대표 제보 — 캐러셀 962 2장).
+    # 반응 캡처는 2026-10-22 에 같은 이유로 이미 낱장을 달고 있다(`_reply_slides`).
+    conf = studio.axis_conf(axis)
+    card = str(conf.get("no_photo_layout") or "")
+    lay = {"layout": card} if card in (conf.get("cell_layouts") or []) else {}
     if items:
-        items[0] = {**items[0], "photo": url}
+        items[0] = {**items[0], "photo": url, **lay}
     else:
-        items = [{"text": "", "photo": url}]
+        items = [{"text": "", "photo": url, **lay}]
+
+    # 2-2) 첨부 사진은 **다음 장으로 나눈다** (2026-10-23 대표 지시 — 「글 카드와 첨부
+    #      스샷을 장을 나눠 각각 폭 1080으로 키워라」). 캡처에서 뺐으니(`hide_media`)
+    #      여기서 안 붙이면 사진이 통째로 사라진다. 빈 장에 넣고, 빈 장이 없을 때만 끼운다
+    #      — 장수는 사진 수가 아니라 이야기가 정한다(3-3 「사진이 많아도 다 쓰지 않는다」).
+    photos = [u for u in (chosen.get("photo_urls") or []) if u] if has_text else []
+    if photos:
+        blobs = await x_search.body_images(photos, POST_PHOTO_SLIDES)
+        # 마지막 장은 **감탄 한 줄**이라 사진을 안 붙인다(2026-10-22 대표 지시).
+        end = len(items) - 1 if conf.get("closing_item") and len(items) > 1 else len(items)
+        at = 1
+        for blob in blobs:
+            photo_url = await studio_remote.upload_image(blob, f"{secrets.token_hex(8)}.jpg")
+            while at < end and items[at].get("photo"):
+                at += 1
+            if at < end:
+                items[at] = {**items[at], "photo": photo_url, **lay}
+            else:
+                items.insert(at, {"text": "", "photo": photo_url, **lay})
+                end += 1
+            at += 1
+        logger.info(f"[studio-worker] 첨부 사진 {len(blobs)}장을 글 카드 다음 장으로 나눴습니다")
 
     # 3) 「일본 반응」 장 — 답글 **1개 = 1장**으로 2~3장을 맨 뒤에 붙인다(3-3 지침서 2026-10-13).
     #    2026-09-21~10-12 은 답글 3개를 손으로 그려 **한 장**에 몰았다. 사람 지시로 폐기 —
@@ -1522,23 +1734,40 @@ async def _reply_slides(quotes: list[dict[str, Any]], chosen: dict[str, Any],
     card = str(studio.axis_conf(axis).get("no_photo_layout") or "")
     lay = {"layout": card} if card in cells else {}
 
-    # **셋 이상이면 한 판에 쌓는다** (2026-10-22 대표 지시 — 「한 장 안에 캡쳐 카드가
-    # 3-4개씩 배치되어 있는 것도 필요함」). 같은 모양의 카드 장이 연달아 나오는 것보다
-    # 한 판에 모아 보는 쪽이 읽힌다. 둘 이하면 지금처럼 한 장에 한 개다.
-    if len(shots) >= 3:
-        sheet = await asyncio.to_thread(x_search.stack_cards, [s for s, _ in shots[:4]])
-        url = await studio_remote.upload_image(sheet, f"{secrets.token_hex(8)}.png")
-        text = await studio.make_reply_line(
-            chosen.get("topic", ""), [{"korean": k} for _, k in shots[:4]], axis)
-        logger.info(f"[studio-worker] 반응 캡처 {len(shots[:4])}개를 한 판에 쌓았습니다")
-        return [{"text": text, "photo": url, **lay}]
+    # **몇 개든 한 장에 하나씩 넣는다** (2026-10-23 대표 지시 — 「캡쳐 카드 여러장이 있는
+    # 경우 한장의 이미지로 합쳐졌음. 개별적인 캡쳐 이미지를 삽입하는 걸로 변경하기」).
+    # 2026-10-22 의 「3-4개를 한 판에」를 되돌린 것이다 — 쌓으면 한 장이 1080 폭에
+    # 맞춰 줄어들어 캡처 속 글자를 못 읽고, 길어진 사진이 자막까지 덮었다(967 3장).
+    # **짧은 캡처는 한 장에 3~4개까지 나란히** 올린다 (2026-10-23 대표 지시 — 「캡쳐 카드가
+    # 슬라이드 한 장에 개별 이미지로 3-4개까지 들어가도 괜찮아」). 금지된 것은 **합치는 것**
+    # (`stack_cards`)이지 같은 장에 **개별 이미지로 놓는 것**이 아니다.
+    # ⚠ 모으려고 폭을 줄이지 않는다 — 1080 폭 그대로 넣어 **높이가 남을 때만** 더 올린다.
+    #   줄여 가며 모으면 글자가 작아져 합친 판(967)과 같아진다.
+    groups: list[list[tuple[bytes, str]]] = []
+    room = 0.0
+    for shot, korean in shots:
+        need = x_search.card_ratio(shot) * 1080
+        if (groups and len(groups[-1]) < x_search.CARDS_PER_SLIDE
+                and need + x_search.CARD_GAP <= room):
+            groups[-1].append((shot, korean))
+            room -= need + x_search.CARD_GAP
+        else:
+            groups.append([(shot, korean)])
+            room = x_search.CARD_AREA_H - need
+    if len(groups) < len(shots):
+        logger.info(f"[studio-worker] 캡처 {len(shots)}장을 {len(groups)}장에 나란히 넣습니다")
 
     out: list[dict[str, Any]] = []
-    for shot, korean in shots:
-        url = await studio_remote.upload_image(shot, f"{secrets.token_hex(8)}.png")
-        # 문구는 **그 답글 한 개**를 여는 한 줄이다 — 장마다 따로 짓는다.
-        text = await studio.make_reply_line(chosen.get("topic", ""), [{"korean": korean}], axis)
-        out.append({"text": text, "photo": url, **lay})
+    for group in groups:
+        urls = [await studio_remote.upload_image(shot, f"{secrets.token_hex(8)}.png")
+                for shot, _ in group]
+        # 문구는 **그 장에 올라간 답글들**을 여는 한 줄이다 — 장마다 따로 짓는다.
+        text = await studio.make_reply_line(
+            chosen.get("topic", ""), [{"korean": k} for _, k in group], axis)
+        out.append({"text": text, "photo": urls[0],
+                    # 둘째 장부터는 `photo_cards` 로 간다 — 같은 장에 개별 이미지로 쌓인다
+                    # (`studio_steps._unframe_item_images`).
+                    **({"photo_cards": urls[1:]} if len(urls) > 1 else {}), **lay})
     return out
 
 
@@ -1616,6 +1845,124 @@ async def _do_build(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
 LINK_PHOTO_LIMIT = 4
 
 
+# ── 경쟁사 레퍼런스 링크 — 사진은 안 쓰고 글만 읽는다 ─────────────────────────────
+#
+# 2026-10-28 트립앤라이프 지시 — 「레퍼런스 링크를 넣으면 그 게시물 이미지는 쓰지 않고,
+# 비전으로 문구만 읽어 소재를 뽑는다. 소재마다 자막·로고 없는 원본 사진을 새로 찾아
+# 트립앤라이프 템플릿으로 다시 렌더한다」. 같은 날 「스튜디오에서 링크 넣고 생성하게 하고
+# 싶어」 — 만들기 화면(`/create` → `generate-content`)에만 있던 길을 스튜디오
+# 「링크로 만들기」 칸에 붙인 것이다.
+#
+# **인스타 링크만** 이 길로 간다. X·뉴스 링크는 원문 사진이 곧 소재라 그대로 쓴다.
+REF_CARD_LIMIT = 6      # 눈으로 읽을 카드 장수 — 앞쪽 여섯 장이면 소재가 다 나온다
+REF_SUBJECT_MAX = LINK_PHOTO_LIMIT
+
+_REF_READ = """붙인 그림은 인스타그램 카드뉴스 한 편이다. FRAME 0 이 표지다.
+
+그림 안의 **글자만** 읽어라. 사진에 무엇이 찍혀 있는지는 적지 마라.
+
+- `text`: 카드에 적힌 글을 장 순서대로 옮겨 적어라(장 사이는 빈 줄로 띄운다).
+- `topic`: 이 카드뉴스가 무엇을 다루는지 한국어 한 줄.
+- `subjects`: 카드에 나온 **소재**(가게·장소·제품·사건) 이름을 나온 순서대로 적어라.
+  사진을 새로 찾는 검색어로 쓸 것이라 「도쿄 시부야 미야시타파크」처럼 지역을 붙인다.
+  소재가 따로 없는 글이면 빈 목록으로 둬라.
+
+{"text": "...", "topic": "...", "subjects": ["...", "..."]} 모양의 JSON 만 내라."""
+
+
+_REF_SCHEMA = {
+    "type": "object",
+    "properties": {"text": {"type": "string"}, "topic": {"type": "string"},
+                   "subjects": {"type": "array", "items": {"type": "string"}}},
+    "required": ["text", "topic", "subjects"],
+    "additionalProperties": False,
+}
+
+
+async def _ask_cards(paths: list[str], prompt: str) -> dict[str, Any]:
+    """카드를 **눈으로 보게** 한다 — gemini vision 먼저, 막히면 codex 세션.
+
+    ⚠ 이 PC 에서는 gemini 열쇠가 IP 로 막혀 있다(2026-10-28 확인 — 403 IP restriction).
+      그래서 codex 쪽이 실제로 쓰이는 길이다. `x_search._ask_frames` 와 같은 구조다.
+    """
+    from app.agents.llm_client import MODELS, _call_codex_cli, gemini_vision
+    from app.services import x_search
+    import json
+
+    try:
+        raw = await gemini_vision(paths, prompt, max_tokens=2048,
+                                  image_labels=[f"FRAME {i}" for i in range(len(paths))])
+        if isinstance(raw, dict) and raw.get("topic"):
+            return raw
+        logger.warning("[studio-worker] gemini 답이 모양에 안 맞습니다 — codex 로 다시 묻습니다")
+    except Exception as e:
+        logger.info(f"[studio-worker] gemini vision 이 막혀 codex 로 묻습니다 — {str(e)[:120]}")
+    hint = f"{chr(10)}{chr(10)}붙인 그림은 FRAME 0 번부터 차례대로다."
+    out = await _call_codex_cli(prompt + hint,
+                                model=MODELS[x_search._FRAME_PICK_MODEL]["cli_model"],
+                                json_schema=_REF_SCHEMA, images=paths, timeout=300)
+    return json.loads(out)
+
+
+async def _read_reference(cards: list[bytes], caption: str) -> dict[str, Any]:
+    """레퍼런스 카드를 **눈으로 읽어** 글·주제·소재를 받는다.
+
+    못 읽었으면 빈 칸을 돌려준다 — 부르는 쪽이 평소 길(캡션 + 원문 사진)로 돌아간다.
+    """
+    import tempfile
+    from pathlib import Path
+
+    if not cards:
+        return {}
+    tail = f"{chr(10)}{chr(10)}게시물 캡션: {caption.strip()[:500]}" if caption.strip() else ""
+    prompt = _REF_READ + tail
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for i, blob in enumerate(cards):
+                shot = Path(tmp) / f"c{i}.jpg"
+                shot.write_bytes(blob)
+                paths.append(str(shot))
+            raw = await _ask_cards(paths, prompt)
+    except Exception as e:
+        logger.warning(f"[studio-worker] 레퍼런스 카드 글을 못 읽었습니다 — {str(e)[:200]}")
+        return {}
+    if not isinstance(raw, dict):
+        logger.warning("[studio-worker] 레퍼런스 읽은 답이 모양에 안 맞습니다 — 캡션으로 갑니다")
+        return {}
+    subjects = [str(s).strip() for s in (raw.get("subjects") or []) if str(s or "").strip()]
+    out = {"text": str(raw.get("text") or "").strip(),
+           "topic": str(raw.get("topic") or "").strip(),
+           "subjects": subjects[:REF_SUBJECT_MAX]}
+    logger.info(f"[studio-worker] 레퍼런스 {len(cards)}장을 읽어 소재 {len(out['subjects'])}개 — "
+                f"{out['topic'][:40]}")
+    return out
+
+
+async def _ref_photos(subjects: list[str], topic: str) -> list[bytes]:
+    """소재마다 사진을 **새로** 찾는다 — 레퍼런스 게시물 사진은 쓰지 않는다.
+
+    찾는 길은 X 글에 사진이 없을 때 쓰던 것과 같다(`x_search.web_covers` — 한국어·현지어
+    검색 → 눈으로 주제 확인 → 4:5). 소재 이름으로 한 장씩 받아 장마다 다른 사진이 간다.
+    소재를 못 뽑았거나 한 장도 못 찾으면 **주제 한 줄로** 다시 찾는다.
+
+    ⚠ 그래도 없으면 **빈 손으로** 돌아간다 — 경쟁사 카드를 사진 자리에 넣지 않는다
+      (2026-10-28 「그 게시물 이미지는 쓰지 않고」). 칸이 비면 사람이 편집기에서 끼운다.
+    """
+    from app.services import x_search
+
+    out: list[bytes] = []
+    for q in subjects[:REF_SUBJECT_MAX]:
+        if len(out) >= LINK_PHOTO_LIMIT:
+            break
+        out += await x_search.web_covers(q, want=1)
+    if not out and topic.strip():
+        out = await x_search.web_covers(topic, want=LINK_PHOTO_LIMIT)
+    if not out:
+        logger.warning(f"[studio-worker] 레퍼런스 소재로 쓸 사진을 못 찾아 칸을 비워 둡니다 — {topic[:30]}")
+    return out[:LINK_PHOTO_LIMIT]
+
+
 def _first_option(item: dict[str, Any]) -> dict[str, Any]:
     """A·B·C 세 안으로 온 본문 장을 **A 안**으로 눌러 둔다.
 
@@ -1631,6 +1978,39 @@ def _first_option(item: dict[str, Any]) -> dict[str, Any]:
             "text": str(ops[0].get("text") or "")}
 
 
+async def _usable_photos(blobs: list[bytes], topic: str) -> list[bytes]:
+    """레퍼런스 사진에서 **로고·자막이 안 박힌 것만** 남긴다. 남는 게 없으면 원본을 찾아온다.
+
+    2026-10-28 트립앤라이프 지시 — 「경쟁사 계정의 로고나 자막이 붙어 있는 이미지는 가공이
+    어려우니, 소재를 찾아 **가공 없는 원본 사진**으로 다시 만든다」. 판별은 봇이 자동으로
+    한다(같은 날 「자동 판별로 진행」).
+
+    찾아오는 길은 X 글에 쓸 사진이 없을 때 쓰던 것을 그대로 쓴다 — `x_search.web_covers`
+    (검색 → 눈으로 주제 확인 → 4:5). 사진이 **아예 없는** 링크는 건드리지 않는다. 그 길은
+    글만 있는 소재라 `_attach_captures` 가 원글 캡처로 채운다.
+    """
+    from app.services import x_search
+
+    if not blobs:
+        return []
+    clean = [blobs[i] for i in await x_search.clean_shots(blobs, topic)]
+    if clean:
+        if len(clean) < len(blobs):
+            logger.info(f"[studio-worker] 레퍼런스 사진 {len(blobs)}장 중 "
+                        f"맨 사진 {len(clean)}장만 씁니다")
+        return clean
+    logger.info(f"[studio-worker] 레퍼런스 사진 {len(blobs)}장이 모두 가공돼 있어 "
+                f"원본을 다시 찾습니다 — {topic[:30]}")
+    found = await x_search.web_covers(topic, want=LINK_PHOTO_LIMIT)
+    if found:
+        return found
+    # 못 찾았으면 **받은 것을 그대로 쓴다.** 사진이 아예 없는 캐러셀이 나오는 것보다,
+    # 로고가 박힌 채로 나와 사람이 편집기에서 갈아 끼우는 쪽이 낫다. 한국·일본 검색에
+    # 안 잡히는 소재(중국 지역 뉴스 등)가 여기로 떨어진다.
+    logger.warning(f"[studio-worker] 원본을 못 찾아 레퍼런스 사진을 그대로 씁니다 — {topic[:30]}")
+    return blobs
+
+
 async def _do_link(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     """**링크 하나로 캐러셀까지** 만든다 (2026-10-13 트립앤라이프 지시).
 
@@ -1643,6 +2023,9 @@ async def _do_link(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
       응답하지 않고, 디시는 레퍼러를 요구한다(`link_ingest.download_photos`).
     ⚠ X 링크라도 `_do_body_x`(캡처+답글)를 타지 않는다. 트립초초처럼 **원문 사진·글만**
       쓰는 길이다(2026-10-13 사람 승인).
+    ⚠ **인스타 링크는 다르다** — 경쟁사 카드뉴스라 보고, 카드 글을 눈으로 읽어 소재를 뽑고
+      사진은 그 소재로 새로 찾는다. 받은 사진은 쓰지 않는다(2026-10-28 지시 ·
+      `_read_reference` · `_ref_photos`).
     """
     from app.services import link_ingest, studio_remote, x_search
     from app.services import studio_steps as studio
@@ -1652,6 +2035,17 @@ async def _do_link(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
         raise RuntimeError("링크가 없습니다 — link_url 을 넣어 주세요.")
 
     rec = await link_ingest.fetch(url)
+    # 경쟁사 카드뉴스는 **글이 사진 안에** 있다 — 캡션만 읽으면 주제가 해시태그 줄이 된다.
+    # 카드를 눈으로 읽어 글·주제·소재를 받고, 그 게시물 사진은 쓰지 않는다
+    # (2026-10-28 지시 · 위 §경쟁사 레퍼런스 링크).
+    ref: dict[str, Any] = {}
+    if rec.get("source") == link_ingest.SOURCE_INSTAGRAM and rec.get("photo_urls"):
+        ref = await _read_reference(
+            await link_ingest.download_photos(list(rec.get("photo_urls") or []), REF_CARD_LIMIT),
+            str(rec.get("text") or ""))
+        if ref.get("text") or ref.get("topic"):
+            rec = {**rec, "text": ref.get("text") or rec.get("text"),
+                   "topic": ref.get("topic") or rec.get("topic")}
     topic = str(rec.get("topic") or "").strip()
     # X·인스타는 제목 자리에 **원문 첫 줄**이 들어온다 — 일본어 글이면 그대로 일본어다
     # (2026-10-13 시험에서 캐러셀 이름이 「初！マムズタッチ…」가 됐다). 1단계가 쓰는
@@ -1664,7 +2058,13 @@ async def _do_link(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     logger.info(f"[studio-worker] 링크({rec.get('source')}) — 「{topic[:40]}」 사진 {rec.get('photos')}장")
 
     # 1) 사진 — 원문 것을 받아 서버로 옮긴다. 표지는 4:5 로 잘라 따로 올린다.
-    blobs = await link_ingest.download_photos(list(rec.get("photo_urls") or []), LINK_PHOTO_LIMIT)
+    #    레퍼런스(인스타)는 받은 사진을 쓰지 않고 **소재로 새로 찾는다.**
+    if ref:
+        blobs = await _ref_photos(list(ref.get("subjects") or []), topic)
+    else:
+        blobs = await _usable_photos(
+            await link_ingest.download_photos(list(rec.get("photo_urls") or []), LINK_PHOTO_LIMIT),
+            topic)
     body_photos: list[str] = []
     for blob in blobs:
         body_photos.append(await studio_remote.upload_image(blob, f"{secrets.token_hex(8)}.jpg"))
@@ -1880,8 +2280,9 @@ async def _prepare_one(t: dict[str, Any], axis: str, need_places: int,
         # 주제마다 채울 수가 다를 수 있다 — 일본숙소는 모음 8곳 · 호텔 하나 1곳(`places_for`).
         # 문턱은 노리는 수보다 낮을 수 있다 — 일본맛집은 6곳이면 그대로 만든다(`min_places`).
         need = studio.min_places_for(axis, name) if need_places else 0
-        if need and len(items) < need:
-            return name, None, "unfit", f"{need}곳 중 {len(items)}곳뿐"
+        # 항목 수가 아니라 **장소 수**로 센다 — 여행코스는 항목 하나가 하루(코스 여섯 곳)다(2026-10-28).
+        if need and studio.count_places(items) < need:
+            return name, None, "unfit", f"{need}곳 중 {studio.count_places(items)}곳뿐"
 
         # 본문을 함께 넘긴다 — 인물 컷이 그 줄을 쓰는 순간이어야 한다(`_lines_block`).
         # 훅으로 장면을 잡는 축(`HOOK_SCENE_AXES`)은 훅이 아직 안 골라졌으니 **후보 전체**를
@@ -1907,6 +2308,15 @@ async def _prepare_one(t: dict[str, Any], axis: str, need_places: int,
             caption = await studio.make_caption(studio.CaptionBody(
                 axis=axis, topic=name, hook="", items=items))
             entry["caption"] = caption.get("caption") or ""
+        # 무인 생성 축은 **여기서 캐러셀까지** 만든다(2026-10-26 대표 승인).
+        # ⚠ 실패해도 만든 것을 버리지 않는다 — 훅·본문·사진이 그대로 회차에 남아야
+        #   아침에 사람이 [생성] 한 번으로 끝낼 수 있다. 이유는 로그와 `build_error` 에 남긴다.
+        if studio.axis_conf(axis).get("auto_build"):
+            try:
+                entry["built"] = await _auto_build(lower, entry, axis)
+            except Exception as e:
+                entry["build_error"] = str(e)[:300]
+                logger.warning(f"[studio-worker] 자동 생성 실패 — {name}: {str(e)[:200]}")
         return name, entry, "ok", ""
     except studio.TopicUnfit as e:
         # 「가게를 하나도 못 찾았다」 같은 **주제 탓**이다 — 내일도 같은 답이 나온다.
@@ -1915,6 +2325,79 @@ async def _prepare_one(t: dict[str, Any], axis: str, need_places: int,
         # 이쪽은 주제 탓이 아니다(codex CLI 오류·조회 실패). 제외하지 않고 넘어간다 —
         # 일시적인 실패로 멀쩡한 주제를 영영 지우면 안 된다.
         return name, None, "fail", str(e)[:200]
+
+
+async def _auto_build(lower: dict[str, Any], entry: dict[str, Any],
+                      axis: str) -> dict[str, Any]:
+    """미리 만든 것으로 **캐러셀까지** 만든다 (2026-10-26 트립앤라이프 승인).
+
+    사람이 고를 자리가 없으므로 **첫 안**으로 간다 — 링크 한 건 길(`_do_link`)과 같은
+    규칙이다. 훅은 첫 후보, 본문 멘트는 A 안, 표지는 **원글 사진이 1순위**다.
+
+    마음에 안 들면 아침에 화면에서 그 단계만 다시 뽑으면 된다 — 미리 만든 후보가
+    회차에 그대로 남아 있다.
+    """
+    hooks = entry.get("hooks") or {}
+    first = next((c for group in ("two", "three") for c in (hooks.get(group) or [])
+                  if (c or {}).get("lines")), None)
+    hook_lines = [str(x).strip() for x in ((first or {}).get("lines") or []) if str(x).strip()]
+    if not hook_lines:
+        raise RuntimeError("훅 후보가 비어 있습니다")
+    items = [_first_option(i) for i in (entry.get("body") or [])]
+    if not items:
+        raise RuntimeError("본문이 비어 있습니다")
+    # 표지 — `_do_images` 가 원글에서 받아 온 것에 `kind: post` 를 붙여 둔다. 그린 컷은 그 다음이다
+    # (X인용_3-2단계 「이미지가 있는데 왜 또 생성된거야」와 같은 순서).
+    images = [i for i in (entry.get("images") or []) if (i or {}).get("url")]
+    cover = next((i for i in images if i.get("kind") == "post"), None) or (images[0] if images else {})
+    got = await _do_build({**lower, "hook_lines": hook_lines,
+                           "image_url": str(cover.get("url") or ""),
+                           "items": items,
+                           "caption": entry.get("caption") or ""}, axis)
+    r = dict(got.get("__result__") or {})
+    spills = r.get("text_overflow") or []
+    logger.info(f"[studio-worker] 자동 생성 — 캐러셀 {r.get('id')} · {r.get('slides')}장"
+                + (f" · ⚠ 칸 넘는 줄 {len(spills)}개" if spills else "")
+                + f" · {r.get('url')}")
+    return r
+
+
+def _auto_pool(pool: list[dict[str, Any]], axis: str) -> list[dict[str, Any]]:
+    """무인으로 만들 후보만 남긴다 — **게이트 4점 이상 · 민감 아님 · 유형 붙은 것**.
+
+    사람이 보고 거르는 자리가 없는 길이다(`_auto_build`). 1단계가 붙여 둔 꼬리표
+    (`studio_steps._classify_types`·`_mark_sensitive`)로만 거른다 — 문턱은 코드가 아니라
+    `_유형공통.md` 게이트 5문항이 정하고, 그 선을 `AUTO_GATE_MIN` 이 따라간다.
+
+    한 유형이 후보를 많이 가져온 날 그 유형으로만 하루가 채워지지 않게 **유형당
+    `AUTO_PER_TYPE` 건까지**만 둔다(1단계 정렬이 유형 번호 순이라 안 자르면 몰린다).
+    """
+    from app.services import studio_steps as studio
+
+    kept: list[dict[str, Any]] = []
+    per: Counter[str] = Counter()
+    skipped: Counter[str] = Counter()
+    # 유형당 한 건만 만들므로 **그 유형에서 점수가 가장 높은 것**을 집는다. 안정 정렬이라
+    # 점수가 같으면 1단계가 매긴 순서(추천 3건이 맨 앞)가 그대로 남는다.
+    for t in sorted(pool, key=lambda x: -int(x.get("gate") or 0)):
+        name = studio.canon_type(t.get("type"))
+        gate = int(t.get("gate") or 0)
+        if not name:
+            skipped["유형없음"] += 1
+        elif t.get("sensitive"):
+            skipped["민감"] += 1
+        elif gate < studio.AUTO_GATE_MIN:
+            skipped[f"게이트 {gate}점"] += 1
+        elif per[name] >= studio.AUTO_PER_TYPE:
+            skipped[f"{name} 초과"] += 1
+        else:
+            per[name] += 1
+            kept.append(t)
+    logger.info("[studio-worker] 자동 생성 후보 %d건 — %s%s", len(kept),
+                " · ".join(f"{k} {v}" for k, v in per.most_common()) or "없음",
+                (" / 건너뜀 " + " · ".join(f"{k} {v}" for k, v in skipped.most_common())
+                 if skipped else ""))
+    return kept
 
 
 async def _do_prepare(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
@@ -1970,6 +2453,21 @@ async def _do_prepare(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     if not pool:
         raise RuntimeError("주제 후보가 비었습니다.")
 
+    # 화면에 올릴 후보는 **거르기 전 목록**이다 — 자동 생성에서 빠진 후보도 사람이
+    # 고를 수 있어야 한다(아래 `shown`). 거른 것은 밤에 만들지 않을 뿐이다.
+    shown_pool = list(pool)
+
+    # 무인으로 캐러셀까지 만드는 축(유형)은 **여기서 거른다** — 게이트·민감·유형당 건수.
+    # 사람에게 보여 줄 후보는 그대로 다 올린다(아래 `shown`) — 거른 것은 만들지 않을 뿐이다.
+    auto = bool(studio.axis_conf(axis).get("auto_build"))
+    if auto:
+        pool = _auto_pool(pool, axis)
+        if not pool:
+            logger.info("[studio-worker] 문턱을 넘은 후보가 없어 자동 생성은 건너뜁니다")
+        # 만들 수를 **후보 수로 맞춘다** — 유형당 건수로 이미 잘랐으니 하루치(count)까지
+        # 억지로 채우면 안 된다(채우려고 1단계를 다시 돌리면 40분이 또 간다).
+        count = min(count, len(pool))
+
     # 장소를 다루는 축은 **그 수를 채운 주제만** 사람에게 준다(2026-09-09 사람 지시 —
     # 「식당 8곳을 못 찾으면 그 주제는 제외하고 다른 주제로 찾아라」). 못 채운 주제는
     # 제외 목록으로 보내고 다음 후보로 넘어간다.
@@ -1988,6 +2486,11 @@ async def _do_prepare(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     i = 0
     while i < max_tries and len(topics) < count:
         if i >= len(pool):
+            # 자동 생성 축은 **더 뽑지 않는다** — 문턱을 넘은 후보만 만들기로 한 것이라
+            # 수를 채우려고 1단계(수집·분류 40분)를 다시 돌리면 취지가 거꾸로 된다.
+            if auto:
+                logger.info("[studio-worker] 문턱을 넘은 후보를 다 돌았습니다 — 여기서 멈춥니다")
+                break
             # 후보가 떨어졌는데 하루치를 못 채웠다 — 새 후보를 더 뽑아 이어간다(2026-09-14
             # 사람 지시 — 「10개를 채울 때까지(최대 20번)」). 전에는 처음 뽑은 10개에서 멈춰
             # 일본맛집이 이틀 연달아 4개만 남았다. 제외한 주제는 이미 제외 목록에 올라 다시
@@ -2053,7 +2556,7 @@ async def _do_prepare(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     shown = list(topics)
     if needs_source:
         seen_names = {str(t.get("topic") or "").strip() for t in topics} | set(excluded)
-        for t in pool:
+        for t in shown_pool:
             name = str(t.get("topic") or "").strip()
             if not name or name in seen_names:
                 continue
@@ -2066,6 +2569,8 @@ async def _do_prepare(chosen: dict[str, Any], axis: str) -> dict[str, Any]:
     return {"topics": shown,
             "kept": [k for k in kept if k not in excluded],
             "dropped": [*(first.get("dropped") or []), *excluded],
+            # 최근 30회차에 만든 주제 — 화면 [완료] 표시의 근거다(`_do_topics` 주석).
+            "built": first.get("built") or [],
             "prepared": prepared}
 
 
@@ -2172,7 +2677,9 @@ async def _handle(job: dict[str, Any]) -> None:
     # 유형 축 — 1단계가 후보에 붙여 둔 유형으로 축을 좁힌다(`유형` → `유형:치이카와`).
     # 회차에 적힌 축은 「유형」 그대로 둔다(화면·이력이 한 축으로 보게).
     axis = studio.axis_with_type(job.get("axis") or "", chosen.get("type"))
-    if studio.is_type_axis(axis) and step != "topics":
+    # 미리 만들기는 **후보마다** 그 유형으로 좁혀 돌므로 유형 없이 들어와도 된다
+    # (`_prepare_one`). 사람이 고른 뒤의 단계만 막는다.
+    if studio.is_type_axis(axis) and step not in ("topics", "prepare"):
         # 유형 없이 2단계를 돌면 공통 규칙만으로 글이 나간다 — 조용히 가느니 멈춘다.
         msg = "유형이 안 붙은 후보입니다 — 1단계를 다시 돌려 유형이 붙은 후보를 고르세요."
         logger.warning(f"[studio-worker] {session_id} · {step} — {msg}")
@@ -2312,11 +2819,14 @@ async def _maybe_start_nightly(done: set[str]) -> None:
             logger.info(f"[studio-worker] {at} — 「{axis}」 아직 안 쓴 회차가 있어 건너뜁니다")
             continue
 
-        # 유형 축은 **1단계(수집·자동 분류)만** 미리 돌린다 — 유형이 붙기 전이라 2단계부터는
-        # 못 간다(`_handle` 이 막는다). 아침에 사람이 후보를 고르면 거기서 이어진다
-        # (2026-10-22 트립앤라이프 「1단계 미리 해서 평일 오전 9시에 바로 착착」).
+        # 2026-10-26 — 유형 축도 **미리 만들기로 연다**(대표 승인 「캐러셀 생성까지 자동」).
+        # 전에는 1단계만 돌렸다 — 유형이 붙기 전이라 2단계를 못 간다고 봤기 때문인데,
+        # 미리 만들기는 후보마다 그 유형으로 좁혀 돈다(`_prepare_one`). 문턱을 넘은 후보만
+        # 캐러셀까지 만들고(`_auto_pool`), 나머지는 후보로만 올라간다.
+        # `auto_build` 가 없는 축은 예전처럼 1단계까지만이다.
         from app.services import studio_steps as _studio
-        step = "topics" if _studio.is_type_axis(axis) else "prepare"
+        step = ("topics" if _studio.is_type_axis(axis) and not conf.get("auto_build")
+                else "prepare")
         what = "1단계 수집" if step == "topics" else f"미리 만들기 (주제 {settings.STUDIO_PREPARE_COUNT}개)"
         logger.info(f"[studio-worker] {at} — 「{axis}」 {what} 시작")
         try:

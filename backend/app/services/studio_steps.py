@@ -3816,6 +3816,70 @@ VERIFY_REVIEW_SOURCE = "resolver"
 BODY_REVIEW_SOURCE = "elfsight"
 
 
+# 값을 내세운 주제 — 「가격 공개」·「가성비」·「N엔 이하」처럼 **금액이 본문에 들어가야 하는** 조건이다.
+# 어떤 금액을 어디에 쓰는지는 지침서가 정한다(`일본맛집_3-3단계_본문.md` 「가성비와 관련된 주제는
+# 여덟 장 모두에 금액을 넣는다」·「가격 공개」 절). 여기 있는 것은 **값 든 리뷰를 따로 받아 올 신호**다.
+_PRICE_TOPIC_RE = re.compile(r"가격\s*공개|가성비|저렴|가격\s*착한|값\s*싼|엔\s*이하|원\s*이하")
+# 구글 리뷰에서 값을 찾을 때 쓰는 말. 곳마다 조회가 늘어나니 한국어·일본어 하나씩만 둔다.
+PRICE_TERMS = ["엔", "円"]
+_PRICE_IN_TEXT = re.compile(r"(?:¥|￥)\s*\d|\d[\d,]*\s*(?:엔|円)")
+
+
+def _price_topic(topic: str, axis: str | None = None) -> bool:
+    """그 주제가 **금액을 내걸었는지**. 맛집 계열에서만 본다 — 쇼핑·숙소·코스는 값 규칙이 따로 있다."""
+    if axis and any(axis_conf(axis).get(k) for k in ("shop", "lodging", "course")):
+        return False
+    return bool(_PRICE_TOPIC_RE.search(_topic_keyword(topic, axis) or str(topic or "")))
+
+
+def _has_price(revs: list[dict[str, Any]]) -> bool:
+    """그 가게 리뷰 묶음에 **금액이 적힌 줄**이 있는가."""
+    return any(_PRICE_IN_TEXT.search(str(r.get("text") or "")) for r in (revs or []))
+
+
+async def _price_reviews(good: list[dict[str, Any]], revs: list[list[dict[str, Any]]]
+                         ) -> list[list[dict[str, Any]]]:
+    """값을 내세운 주제 — 곳마다 **금액이 든 리뷰를 따로 받아 앞에 싣는다.**
+
+    왜 — 리뷰 검색어가 분류(「맛집」)뿐이면 프롬프트에 실리는 열두 줄에 값이 한 번도 안 나와,
+    지침서가 요구하는 금액을 모델이 쓸 수가 없다(2026-11-18 솔희 신고 — 「후쿠오카, 맛집, 가격 공개」
+    회차 본문에 금액이 하나도 없었다). 값을 지어내는 것보다 안 쓰는 것이 맞으니, **쓸 값을 손에 쥐어 준다.**
+    """
+    from app.services import place_lookup
+
+    got = await place_lookup.reviews_many(good, cap=REVIEW_CAP, terms=PRICE_TERMS, source="resolver")
+    out: list[list[dict[str, Any]]] = []
+    for g, base, extra in zip(good, revs, got):
+        hit = [r for r in (extra or []) if _PRICE_IN_TEXT.search(str(r.get("text") or ""))]
+        seen = {str(r.get("text") or "")[:40] for r in hit}
+        rest = [r for r in (base or []) if str(r.get("text") or "")[:40] not in seen]
+        out.append(hit + rest)
+        logger.info(f"[studio] 값 리뷰 — {g.get('name')}: {len(hit)}개")
+    return out
+
+
+def _price_screen(good: list[dict[str, Any]], revs: list[list[dict[str, Any]]], least: int
+                  ) -> tuple[list[dict[str, Any]], list[list[dict[str, Any]]], str]:
+    """값을 내세운 주제 — **값을 못 찾은 가게를 뺀다**. 돌려주는 셋째는 프롬프트에 붙일 말이다.
+
+    3-3 지침서 「값을 확인 못 한 가게는 구성으로 때우지 않고 가게를 바꾼다」를 코드가 하는 자리다.
+    다만 **문턱(`least`)을 깨면서까지 빼지 않는다** — 그러면 멀쩡한 주제가 통째로 떨어진다.
+    그때는 다 두고 「그 가게 금액은 지어내지 마라」를 붙인다.
+    """
+    ok = [i for i, r in enumerate(revs) if _has_price(r)]
+    if len(ok) == len(good):
+        return good, revs, ""
+    missing = [str(good[i].get("name") or "") for i in range(len(good)) if i not in set(ok)]
+    if len(ok) >= least:
+        logger.info(f"[studio] 값을 못 찾아 뺀 가게 {len(missing)}곳: {missing}")
+        return [good[i] for i in ok], [revs[i] for i in ok], ""
+    logger.info(f"[studio] 값을 못 찾은 가게 {len(missing)}곳 — 문턱({least}곳) 때문에 두고 짓습니다: {missing}")
+    return good, revs, (
+        "⚠ 아래 가게 중 **리뷰에서 값을 못 찾은 곳**이 있다: " + " · ".join(missing)
+        + ". 그 가게의 금액은 **지어내지 마라** — 값 대신 구성·양으로 쓴다. "
+        "나머지 가게는 지침서대로 금액을 앞에 둔다.")
+
+
 async def _rich_reviews(good: list[dict[str, Any]], revs: list[list[dict[str, Any]]]
                         ) -> list[list[dict[str, Any]]]:
     """본문용 리뷰 — 확인 단계가 얇은 묶음("resolver")을 담아 뒀으면 Elfsight 로 다시 받는다.
@@ -4466,11 +4530,19 @@ async def make_place_body(body: "BodyBody") -> dict[str, Any]:
             f"확인된 가게가 {len(good)}곳뿐입니다(최소 {least}곳) — 이 주제로는 본문을 만들지 "
             "않습니다. 1단계에서 주제를 다시 고르세요.")
 
+    # 값을 내세운 주제는 **금액이 든 리뷰를 따로 받아** 앞에 싣고, 값을 못 찾은 가게는
+    # 빼고 짓는다(3-3 「값을 확인 못 한 가게는 구성으로 때우지 않고 가게를 바꾼다」).
+    # 문턱(5곳)을 깨면서까지 빼지는 않는다 — 그때는 다 두고 「지어내지 마라」만 붙인다.
+    price_note = ""
+    if _price_topic(body.topic, body.axis):
+        revs = await _price_reviews(good, revs)
+        good, revs, price_note = _price_screen(good, revs, least)
+
     facts = (chr(10) * 2).join(_place_facts(g, r) for g, r in zip(good, revs))
     # 한 가게를 두 장으로 쓰는 축(일본맛집2)은 칸이 여섯이다 — 스키마가 형식을 강제하므로
     # 여기서 갈라야 한다. 82 스키마로 물으면 name/where/desc 로 답해 **네 칸이 빈다.**
     diary = bool(conf.get("body_pages"))
-    items = await _ask_place_body(body.axis, body.topic, conf, facts, len(good))
+    items = await _ask_place_body(body.axis, body.topic, conf, facts, len(good), price_note)
     from app.services import ig_tagged, photo_vision
 
     # 사진은 사실 확인에서 같이 받아 둔다 — 4단계에서 낱장 배경으로 쓴다.

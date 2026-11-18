@@ -196,6 +196,11 @@ AXES: dict[str, dict[str, Any]] = {
         # 이 키가 없으면 `_drop_lookalikes` 가 지역·분류만 보고 중복으로 빼서, 후보 10개 중
         # 8~9개가 떨어졌다(10/13 — 화면에 남은 후보가 1개였다).
         "dup_by_keyword": True,
+        # 키워드 칸이 「<연예인>이 다녀간」이면 가게를 **X 근거에서** 받는다 (2026-11-18 솔희 지시 —
+        # 「맛집 캐러셀 주제에 연예인이 다녀간 맛집 추가해줘 … 원클릭에도 가능하게」 ·
+        # `_celeb_of` → `_celeb_evidence` · 규칙은 1단계 지침서 「연예인이 다녀간 맛집」).
+        # 모델 기억으로 가게를 대면 「갔다는 말」이 지어내진다 — 그래서 이 꼴만 길이 다르다.
+        "celeb_keyword": True,
         # 캐러셀에 나간 가게를 적어 두는 곳. **기록만 한다** — 2026-11-11 솔희 지시로
         # 본문에 같은 가게가 다시 나가도 되게 풀었다(아래 `reuse_places`).
         # 일본맛집2 와 **같은 파일**이다 — 이력·제외를 공유하는 것과 같은 이유다.
@@ -3406,6 +3411,22 @@ def _topic_keyword(topic: str, axis: str | None = None) -> str:
     return _topic_wo_rating(" ".join(parts[2:])).strip()
 
 
+# 「<연예인>이 다녀간」 꼴의 키워드 칸 — 이 꼴이면 가게를 모델 기억이 아니라 X 근거에서 받는다
+# (`일본맛집_1단계_주제후보.md` 「연예인이 다녀간 맛집」 · 2026-11-18 솔희 지시).
+_CELEB_KW = re.compile(r"^(.+?)(?:이|가)?\s*(?:다녀간|다녀온|갔던|방문한)$")
+
+
+def _celeb_of(topic: str, axis: str | None = None) -> str:
+    """주제 키워드 칸이 「<연예인>이 다녀간」이면 그 **연예인 이름**. 아니면 빈 문자열.
+
+    이 꼴을 쓰는 축만 본다(`celeb_keyword`) — 다른 축에서 우연히 같은 말이 와도 길이 갈리지 않게.
+    """
+    if axis and not axis_conf(axis).get("celeb_keyword"):
+        return ""
+    m = _CELEB_KW.match(_topic_keyword(topic, axis).strip())
+    return m.group(1).strip() if m else ""
+
+
 def _search_queries(topic: str, axis: str | None = None) -> list[str]:
     """평점형 주제를 **구글 검색어 몇 개**로 바꾼다.
 
@@ -3815,6 +3836,61 @@ async def _rich_reviews(good: list[dict[str, Any]], revs: list[list[dict[str, An
     return out
 
 
+# 연예인 근거를 찾을 때 grok 에 주는 X 검색 횟수 — 찾는 것이 한 사람의 방문 글이라
+# 1단계 후보 찾기(`X_TOPIC_MAX_SEARCHES`)보다 적게 둔다.
+CELEB_MAX_SEARCHES = 10
+
+
+async def _celeb_evidence(celeb: str, topic: str, axis: str, pick: int) -> list[dict[str, str]]:
+    """「<연예인>이 다녀간」 주제의 가게를 **X 에서 근거째** 받는다 — `[{name, url}]`.
+
+    ⚠ **규칙을 여기 베껴 넣지 않는다** — 어떤 글을 근거로 인정하는지(본인·방송·가게 / 전언 금지)는
+    `일본맛집_1단계_주제후보.md` 「연예인이 다녀간 맛집」 이 정하고, 여기서는 그 글을 grok
+    요청문에 통째로 실어 보낸다(`_x_topics` 와 같은 방식). 이 함수가 아는 것은 주고받는 모양뿐이다.
+
+    받은 글은 `x_search.verify` 로 **원문이 실제로 열리는지** 확인하고 못 연 글은 버린다 —
+    지어낸 주소가 근거로 통과하는 자리를 여기서 막는다. 가게 이름은 그 뒤 구글 지도가
+    다시 확인하고(`_find_places` 의 ②③), 5곳을 못 채우면 그 주제는 이 회차에서 버려진다.
+    """
+    from app.services import x_search
+
+    if not x_search.is_available():
+        raise TopicUnfit("grok 헬퍼가 없어 연예인 방문 근거를 확인할 수 없습니다.")
+    ask = "\n\n".join([
+        f"아래 규칙대로 X(트위터)에서 **{celeb} 이(가) 일본에서 다녀간 음식점·카페**를 찾아 줘. "
+        "규칙은 우리 팀 지침서 원문이다.",
+        _rules_for("topics", axis, only="1단계"),
+        "\n".join([
+            "===== 이번 요청 =====",
+            f"주제는 「{topic}」 이다. 그 지역·분류에 맞는 가게만 찾는다.",
+            f"가게는 **{pick}곳까지**다. 근거가 있는 가게가 모자라면 억지로 채우지 말고 있는 만큼만 적는다.",
+            f"⚠ **근거는 {celeb} 본인 계정 글, 방송·소속사 공식 계정 글, 그 가게 공식 계정 글만** 인정한다 "
+            "— 팬 정리글·「갔다더라」 전언은 근거가 아니다(위 지침서 「전언은 근거가 아니다」).",
+            "===== 돌려줄 형식 =====",
+            "가게마다 아래 **두 줄만** 적는다:",
+            "  가게 이름 한 줄 — 간판 표기 + 도시(보기: 麺匠たか松 京都)",
+            "  그 방문 근거 게시물의 원문 URL",
+            "계정·시각·조회수·좋아요·요약은 **적지 마라** — 원문에서 따로 확인한다.",
+            "⚠ 가게 이름을 못 적을 글은 아예 빼라 — 이름 없는 근거는 쓸 수 없다.",
+        ]),
+    ])
+    raw = await x_search.search(ask, max_searches=CELEB_MAX_SEARCHES)
+    items = [i for i in x_search.parse(raw) if str(i.get("title") or "").strip()]
+    live = await x_search.verify(items)
+    got: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for it in live:
+        name = str(it.get("title") or "").strip()
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        got.append({"name": name, "url": str(it.get("url") or "")})
+    logger.info(f"[studio] 「{celeb}」 근거 — grok {len(items)}곳 · 원문이 열린 곳 {len(got)}곳")
+    if not got:
+        raise TopicUnfit(f"{celeb} 의 방문 근거를 X 에서 하나도 확인하지 못했습니다.")
+    return got[:pick]
+
+
 async def _find_places(topic: str, axis: str, want: int
                        ) -> tuple[list[dict[str, Any]], list[list[dict[str, Any]]], list[str]]:
     """그 주제에 쓸 가게를 모아 **실존·평점·주제 적합성**까지 거른다 — (쓸 곳, 리뷰, 뺀 곳).
@@ -3839,6 +3915,12 @@ async def _find_places(topic: str, axis: str, want: int
     floor = _min_rating(topic)
     # 주제의 키워드 칸 — 가게를 고를 때·가릴 때 조건으로 함께 싣는다(2026-11-16 솔희 지시).
     kw = _topic_keyword(topic, axis)
+    # 「<연예인>이 다녀간」 주제는 가게를 **X 근거에서** 받는다(2026-11-18 솔희 지시 ·
+    # `_celeb_evidence`). 키워드는 조건에서 뗀다 — 연예인 방문은 구글 소개·리뷰에 없어서
+    # 조건으로 싣으면 멀쩡한 가게가 전부 떨어진다. 그 일은 근거가 한다.
+    celeb = _celeb_of(topic, axis)
+    if celeb:
+        kw = ""
     pick = want + (SINGLE_PICK_EXTRA if want == 1 else PICK_EXTRA)
     used = {} if reuse else _used_places(axis)
     # 모델에게 「빼라」고 알릴 이름 — 쓴 목록에 더해 이력의 숙소 칸도 싣는다(`_history_lodgings`).
@@ -3847,9 +3929,16 @@ async def _find_places(topic: str, axis: str, want: int
 
     names: list[str] = []
     # 호텔 하나 주제는 검색이 아니라 그 호텔 이름이 답이다 — 검색 먼저는 모음 주제만(2026-10-30).
-    search_first = want > 1
+    # 연예인 주제는 검색으로 덮지 않는다 — 근거가 있는 가게만 써야 한다.
+    search_first = want > 1 and not celeb
     search_hits: dict[str, dict[str, Any]] = {}
-    if floor:
+    # 가게 이름 → 그 가게의 방문 근거 URL(연예인 주제만). 확인된 카드에 붙여 둔다.
+    evidence: dict[str, str] = {}
+    if celeb:
+        got = await _celeb_evidence(celeb, topic, axis, pick)
+        names = [g["name"] for g in got]
+        evidence = {g["name"].lower(): g["url"] for g in got}
+    if floor and not celeb:
         # 평점형 주제는 **구글 검색에서 먼저 고른다.** 모델이 대는 이름은 체인점이 많아
         # 확인된 열여섯 곳 중 한 곳만 4.7 을 넘었다(2026-10-06 실측 · 신주쿠 이자카야).
         # 구글은 검색 결과에 평점을 함께 주므로 기준을 넘는 곳만 골라 올 수 있다.
@@ -3857,7 +3946,9 @@ async def _find_places(topic: str, axis: str, want: int
         logger.info(f"[studio] 평점 {floor} 이상 — 구글 검색에서 {len(names)}곳 받았습니다")
 
     # 구글에서 다 찼으면 문구 모델을 부르지 않는다 — 부를 일이 없는 호출이다.
-    need = pick - len(names)
+    # 연예인 주제는 **모자라도 모델에게 묻지 않는다** — 근거 없는 가게로 자리를 메우는 것이
+    # 이 주제에서 가장 하지 말아야 할 일이다(모자라면 아래 최소 곳수에서 주제째 떨어진다).
+    need = 0 if celeb else pick - len(names)
     picked: Any = {}
     if need > 0 and lodging:
         # 숙소 축은 묻는 말이 다르다 — 아래 맛집 말은 「숙박은 넣지 마라」다(`_lodging_pick`).
@@ -3933,6 +4024,10 @@ async def _find_places(topic: str, axis: str, want: int
         place_lookup.verify_many(by_name) if by_name else asyncio.sleep(0, []))
     done = {id(n): c for n, c in zip(by_hit, got_hit)} | {id(n): c for n, c in zip(by_name, got_name)}
     checked = [done[id(n)] for n in names[:pick]]
+    # 연예인 주제 — 그 가게를 받아 온 근거 글을 카드에 붙여 둔다(세션에 남아 되짚을 수 있게).
+    for _n, _c in zip(names[:pick], checked):
+        if isinstance(_c, dict) and evidence.get(_n.lower()):
+            _c["evidence"] = evidence[_n.lower()]
     logger.info(f"[studio] 시간 「{topic}」 확인 {len(checked)}곳 {time.monotonic() - _t0:.0f}초"
                 f" (검색 목록 {len(by_hit)} · 이름 {len(by_name)})")
     good = [c for c in checked if c.get("ok")]
@@ -4517,13 +4612,15 @@ async def make_product_body(body: "BodyBody") -> dict[str, Any]:
             "place_id": str(p.get("jan") or ""),
         })
 
-    # 사진은 **공식 사진 그대로 + 위아래 여백만** 이어 4:5 로 만든다(3-2 「공식 제품 사진 그대로」).
+    # 사진은 **공식 사진 그대로 + 바탕만 회차 색으로** 바꿔 4:5 로 만든다(3-2 「공식 제품 사진 그대로」).
     # 올려 둔 주소를 그대로 낱장 배경으로 쓰므로 4단계의 배경 다시 그리기는 걸리지 않는다.
+    # 배경색은 **회차에 한 색** — 제품들에서 같이 뽑는다(2026-11-18 솔희 지시).
+    sheet = shop_products.sheet_bg([p["photo"] for p in prods])
     for it, p in zip(items, prods):
         url = ""
         try:
             url = await studio_remote.upload_image(
-                shop_products.padded_png(p["photo"]), f"{p.get('jan')}.png")
+                shop_products.padded_png(p["photo"], sheet=sheet), f"{p.get('jan')}.png")
         except Exception as e:
             logger.warning(f"[studio] 제품 사진 올리기 실패 — {p.get('name_ja')}: {type(e).__name__} {e}")
         it["photo"] = url
